@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "absis-capital-sync": "capital-sync",
+    "ABSIS": "absis-capital-sync"
+  },
+  "targets": {},
+  "etags": {}
+}

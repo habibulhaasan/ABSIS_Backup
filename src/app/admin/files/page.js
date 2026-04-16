@@ -1,0 +1,706 @@
+// src/app/admin/files/page.js
+'use client';
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { db } from '@/lib/firebase';
+import {
+  collection, onSnapshot, addDoc, deleteDoc, doc,
+  updateDoc, serverTimestamp, orderBy, query,
+} from 'firebase/firestore';
+import { useAuth } from '@/context/AuthContext';
+import Modal from '@/components/Modal';
+
+// ✅ GAS CONFIG
+const GAS_URL = "https://script.google.com/macros/s/AKfycbymijcqicl0oQoYZsCA5B1UjtqmJAsWDM-KQqvQzmaGZeD7GK8j2y9w8tZ6lr0c0H4A/exec";
+const SECRET = "absis-secret-123";
+
+// 🔹 Convert file → base64
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+  });
+}
+
+// 🔹 Upload via GAS
+async function uploadFileToGAS(file) {
+  const base64 = await toBase64(file);
+
+  const res = await fetch(GAS_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "upload",
+      secret: SECRET,
+      file: base64.split(",")[1],
+      fileName: file.name,
+      mimeType: file.type,
+    }),
+  });
+
+  return await res.json();
+}
+
+// 🔹 Delete via GAS
+async function deleteFileFromGAS(fileId) {
+  await fetch(GAS_URL, {
+    method: "POST",
+    body: JSON.stringify({
+      action: "delete",
+      secret: SECRET,
+      fileId,
+    }),
+  });
+}
+
+const CATS = ['General','Finance','Legal','Minutes','Announcement','Form','Other'];
+
+function fmtSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024)          return bytes + ' B';
+  if (bytes < 1024 * 1024)   return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function fileIcon(mime) {
+  if (!mime) return '📄';
+  if (mime.startsWith('image/'))                                    return '🖼️';
+  if (mime.includes('pdf'))                                         return '📕';
+  if (mime.includes('word') || mime.includes('document'))           return '📝';
+  if (mime.includes('sheet') || mime.includes('excel'))             return '📊';
+  if (mime.includes('presentation') || mime.includes('powerpoint')) return '📑';
+  if (mime.includes('zip') || mime.includes('rar'))                 return '📂';
+  if (mime.startsWith('video/'))                                    return '🎬';
+  if (mime.startsWith('audio/'))                                    return '🎵';
+  if (mime.includes('text/'))                                       return '📃';
+  return '📄';
+}
+
+function fileType(mime) {
+  if (!mime) return { label:'File',       color:'#475569', bg:'#f1f5f9' };
+  if (mime.startsWith('image/'))                           return { label:'Image',      color:'#7c3aed', bg:'#f5f3ff' };
+  if (mime.includes('pdf'))                               return { label:'PDF',         color:'#dc2626', bg:'#fef2f2' };
+  if (mime.includes('word') || mime.includes('document')) return { label:'Word Doc',    color:'#1d4ed8', bg:'#eff6ff' };
+  if (mime.includes('sheet') || mime.includes('excel'))   return { label:'Spreadsheet', color:'#15803d', bg:'#f0fdf4' };
+  if (mime.includes('presentation') || mime.includes('powerpoint')) return { label:'Slides', color:'#d97706', bg:'#fffbeb' };
+  if (mime.includes('zip') || mime.includes('rar') || mime.includes('tar')) return { label:'Archive', color:'#92400e', bg:'#fef3c7' };
+  if (mime.includes('video'))  return { label:'Video',  color:'#be185d', bg:'#fdf2f8' };
+  if (mime.includes('audio'))  return { label:'Audio',  color:'#0369a1', bg:'#f0f9ff' };
+  if (mime.includes('text'))   return { label:'Text',   color:'#475569', bg:'#f8fafc' };
+  return { label:'File', color:'#475569', bg:'#f1f5f9' };
+}
+
+function FileTypeBadge({ mime }) {
+  const t = fileType(mime);
+  return (
+    <span style={{ display:'inline-block', padding:'2px 7px', borderRadius:5,
+      fontSize:10, fontWeight:700, color:t.color, background:t.bg, whiteSpace:'nowrap' }}>
+      {t.label}
+    </span>
+  );
+}
+
+async function compressImage(file, maxPx = 1400, quality = 0.82) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let { width, height } = img;
+      if (width <= maxPx && height <= maxPx) { resolve(file); return; }
+      if (width > height) { height = Math.round(height * maxPx / width); width = maxPx; }
+      else                { width  = Math.round(width * maxPx / height); height = maxPx; }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        blob => resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' })),
+        'image/jpeg', quality
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+async function prepareFile(file) {
+  if (file.type.startsWith('image/')) return compressImage(file);
+  return file;
+}
+
+function FileCard({ f, onView }) {
+  return (
+    <div
+      onClick={() => onView(f)}
+      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,.10)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'none'; }}
+      style={{ background:'var(--surface,#fff)', border:'1.5px solid var(--border,#e2e8f0)', borderRadius:12, overflow:'hidden', cursor:'pointer', transition:'all 0.15s' }}
+    >
+      <div style={{ height:80, display:'flex', alignItems:'center', justifyContent:'center', background:'#f8fafc', fontSize:36 }}>
+  {fileIcon(f.mimeType)}
+</div>
+      <div style={{ padding:'12px 14px 14px' }}>
+        <div style={{ fontWeight:600, fontSize:13, color:'var(--text,#0f172a)', marginBottom:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {f.title}
+        </div>
+        {f.description && (
+          <div style={{ fontSize:11, color:'var(--text-muted,#64748b)', marginBottom:6, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+            {f.description}
+          </div>
+        )}
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:4 }}>
+          <FileTypeBadge mime={f.mimeType} />
+          <span className="badge badge-gray" style={{ fontSize:10 }}>{f.category}</span>
+        </div>
+        <div style={{ display:'flex', gap:6, alignItems:'center', justifyContent:'flex-end' }}>
+          <span style={{ fontSize:10, color:'var(--text-dim,#94a3b8)' }}>{fmtSize(f.size)}</span>
+        </div>
+        {f.originalSize && f.size < f.originalSize && (
+          <div style={{ marginTop:4, fontSize:10, color:'#16a34a', fontWeight:600 }}>
+            ↓ Compressed {Math.round((1 - f.size / f.originalSize) * 100)}%
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── UploadModal ──────────────────────────────────────────────────────────
+// - Reads driveFolderId from orgData (already loaded in AuthContext)
+// - Sends it to the API so files go into the correct folder
+// - If API creates a new folder, saves its ID back to Firestore via client SDK
+function UploadModal({ onClose, orgId, orgName, orgData, userData }) {
+  const [form,       setForm]       = useState({ title:'', description:'', category:'' });
+  const [pickedFile, setPickedFile] = useState(null);
+  const [progress,   setProgress]   = useState(0);
+  const [uploading,  setUploading]  = useState(false);
+  const [error,      setError]      = useState('');
+  const fileRef = useRef();
+
+  const setTitle       = useCallback(e => setForm(p => ({ ...p, title:       e.target.value })), []);
+  const setDescription = useCallback(e => setForm(p => ({ ...p, description: e.target.value })), []);
+  const setCategory    = useCallback(e => setForm(p => ({ ...p, category:    e.target.value })), []);
+
+  const handleFilePick = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 50 * 1024 * 1024) { setError('File too large. Max 50 MB.'); return; }
+    setPickedFile(f);
+    setForm(p => ({ ...p, title: p.title || f.name.replace(/\.[^.]+$/, '') }));
+    setError('');
+  };
+
+  const handleSubmit = async () => {
+    setError('');
+    if (!pickedFile)        { setError('Please select a file.');  return; }
+    if (!form.title.trim()) { setError('Title is required.');     return; }
+    setUploading(true); setProgress(10);
+    try {
+      const prepared = await prepareFile(pickedFile);
+      setProgress(30);
+
+      setProgress(50);
+
+    // ✅ GAS upload (replacing API)
+    const data = await uploadFileToGAS(prepared);
+    setProgress(80);
+
+    if (!data.success) throw new Error(data.error || 'Upload failed');
+
+
+      await addDoc(collection(db, 'organizations', orgId, 'files'), {
+        title:        form.title.trim(),
+        description:  form.description.trim(),
+        category:     form.category || 'General',
+        fileId:       data.fileId,
+        fileName:     prepared.name,
+        originalName: pickedFile.name,
+        originalSize: pickedFile.size,
+        viewUrl:      data.url,              // ✅ GAS
+        thumbUrl:     data.url,
+        mimeType:     prepared.type,
+        size:         prepared.size,
+        uploadedBy:   userData?.nameEnglish || 'Admin',
+        createdAt:    serverTimestamp(),
+      });
+
+      setProgress(100);
+      onClose();
+    } catch (err) { setError(err.message); }
+    setUploading(false);
+  };
+
+  return (
+    <Modal title="Upload File" onClose={onClose}>
+      {error && <div className="alert alert-error" style={{ marginBottom:14 }}>{error}</div>}
+
+      <div className="form-group">
+        <label className="form-label">File *</label>
+        <div
+          onClick={() => fileRef.current?.click()}
+          onMouseEnter={e => e.currentTarget.style.borderColor = '#2563eb'}
+          onMouseLeave={e => e.currentTarget.style.borderColor = '#cbd5e1'}
+          style={{ border:'2px dashed #cbd5e1', borderRadius:10, padding:20, textAlign:'center', cursor:'pointer',
+            background: pickedFile ? '#f0fdf4' : 'var(--surface-2,#f8fafc)', transition:'border-color 0.15s' }}
+        >
+          {pickedFile ? (
+            <div>
+              <div style={{ fontSize:28, marginBottom:4 }}>{fileIcon(pickedFile.type)}</div>
+              <div style={{ fontSize:13, fontWeight:600, color:'var(--text,#0f172a)' }}>{pickedFile.name}</div>
+              <div style={{ fontSize:11, color:'var(--text-muted,#64748b)', marginTop:2 }}>{fmtSize(pickedFile.size)} · click to change</div>
+              {pickedFile.type.startsWith('image/') && (
+                <div style={{ fontSize:11, color:'#7c3aed', marginTop:4 }}>✶ Will be compressed before upload</div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize:32, marginBottom:8 }}>📂</div>
+              <div style={{ fontSize:13, fontWeight:600, color:'var(--text-muted,#475569)' }}>Click to browse file</div>
+              <div style={{ fontSize:11, color:'var(--text-dim,#94a3b8)', marginTop:2 }}>Max 50 MB · Images auto-compressed · Stored on Google Drive</div>
+            </div>
+          )}
+        </div>
+        <input ref={fileRef} type="file" style={{ display:'none' }} onChange={handleFilePick} />
+      </div>
+
+      <div className="form-group">
+        <label className="form-label">Title *</label>
+        <input value={form.title} onChange={setTitle} placeholder="File title" />
+      </div>
+      <div className="form-group">
+        <label className="form-label">Short Description</label>
+        <input value={form.description} onChange={setDescription} placeholder="What is this file about?" />
+      </div>
+      <div className="form-group">
+        <label className="form-label">Category</label>
+        <select value={form.category} onChange={setCategory}>
+          <option value="">Select category…</option>
+          {CATS.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </div>
+
+      {uploading && (
+        <div style={{ marginBottom:16 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, color:'var(--text-muted,#64748b)', marginBottom:4 }}>
+            <span>{progress < 50 ? 'Compressing…' : progress < 80 ? 'Uploading to Drive…' : 'Saving…'}</span>
+            <span>{progress}%</span>
+          </div>
+          <div style={{ height:6, background:'var(--border,#e2e8f0)', borderRadius:99, overflow:'hidden' }}>
+            <div style={{ height:'100%', width:`${progress}%`, background:'#2563eb', borderRadius:99, transition:'width 0.3s' }} />
+          </div>
+        </div>
+      )}
+
+      <button onClick={handleSubmit} disabled={uploading} className="btn-primary"
+        style={{ width:'100%', justifyContent:'center' }}>
+        {uploading ? `${progress < 50 ? 'Compressing' : 'Uploading'} ${progress}%…` : 'Upload to Drive'}
+      </button>
+    </Modal>
+  );
+}
+
+function ViewModal({ file, onClose, onDelete }) {
+  const [tab, setTab] = useState('preview');
+  const canEmbed   = !!file.fileId;
+  const previewUrl = file.fileId
+    ? `https://drive.google.com/file/d/${file.fileId}/preview`
+    : null;
+
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position:'fixed', inset:0, zIndex:9999,
+        background:'rgba(0,0,0,0.65)',
+        display:'flex', alignItems:'center', justifyContent:'center',
+        padding:16,
+      }}
+    >
+      <div style={{
+        background:'#fff', borderRadius:14,
+        width:'min(920px,100%)',
+        height:'calc(100dvh - 32px)',
+        display:'flex', flexDirection:'column',
+        overflow:'hidden',
+        boxShadow:'0 32px 80px rgba(0,0,0,0.35)',
+      }}>
+
+        {/* Header */}
+        <div style={{
+          display:'flex', alignItems:'center', gap:8,
+          padding:'10px 14px',
+          borderBottom:'1px solid #e2e8f0',
+          flexShrink:0,
+        }}>
+          <FileTypeBadge mime={file.mimeType}/>
+          <div style={{
+            flex:1, fontWeight:700, fontSize:14, color:'var(--text,#0f172a)',
+            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+          }}>
+            {file.title}
+          </div>
+          {file.size && (
+            <span style={{ fontSize:11, color:'#94a3b8', flexShrink:0 }}>{fmtSize(file.size)}</span>
+          )}
+          <span className="badge badge-gray" style={{ fontSize:10, flexShrink:0 }}>{file.category}</span>
+          {file.originalSize && file.size < file.originalSize && (
+            <span style={{ fontSize:10, color:'#16a34a', fontWeight:700, flexShrink:0 }}>
+              ↓{Math.round((1 - file.size / file.originalSize) * 100)}%
+            </span>
+          )}
+          <a href={file.viewUrl} target="_blank" rel="noopener noreferrer"
+            style={{
+              padding:'5px 12px', borderRadius:7,
+              background:'#eff6ff', color:'#1d4ed8',
+              fontSize:12, fontWeight:700, textDecoration:'none',
+              flexShrink:0, whiteSpace:'nowrap',
+            }}>
+            ↗ Open
+          </a>
+          <button
+            onClick={onClose}
+            style={{
+              width:32, height:32, borderRadius:8,
+              border:'1px solid #e2e8f0', background:'#fff',
+              cursor:'pointer', fontSize:17, color:'#64748b',
+              flexShrink:0, display:'flex',
+              alignItems:'center', justifyContent:'center',
+              lineHeight:1,
+            }}>
+            ✕
+          </button>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{
+          display:'flex', gap:0,
+          borderBottom:'2px solid #e2e8f0',
+          flexShrink:0,
+        }}>
+          {[['preview', canEmbed ? '👁 Preview' : '📄 Info'], ['info', 'ℹ️ Details']].map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)}
+              style={{
+                padding:'9px 18px', border:'none', background:'none', cursor:'pointer',
+                fontSize:13, fontWeight: tab===id ? 700 : 400,
+                color: tab===id ? '#2563eb' : '#64748b',
+                borderBottom: tab===id ? '2px solid #2563eb' : '2px solid transparent',
+                marginBottom:-2,
+              }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Body — fills all remaining height */}
+        <div style={{ flex:1, minHeight:0, overflow:'hidden', display:'flex', flexDirection:'column', background:'#f8fafc' }}>
+
+          {/* Preview tab */}
+          {tab === 'preview' && (
+            canEmbed ? (
+              file.mimeType?.startsWith('image/') ? (
+                <div style={{
+                  flex:1, minHeight:0,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  padding:16, overflow:'hidden',
+                }}>
+                  <img
+                    src={`https://drive.google.com/thumbnail?id=${file.fileId}&sz=w1600`}
+                    alt={file.title}
+                    style={{ maxWidth:'100%', maxHeight:'100%', objectFit:'contain', borderRadius:8 }}
+                  />
+                </div>
+              ) : (
+                <iframe
+                  src={previewUrl}
+                  title={file.title}
+                  allow="autoplay"
+                  style={{ flex:1, width:'100%', border:'none', display:'block', minHeight:0 }}
+                />
+              )
+            ) : (
+              <div style={{
+                flex:1, display:'flex', flexDirection:'column',
+                alignItems:'center', justifyContent:'center',
+                color:'#94a3b8', gap:12,
+              }}>
+                <div style={{ fontSize:48 }}>{fileIcon(file.mimeType)}</div>
+                <div style={{ fontSize:13 }}>Preview not available for this file type.</div>
+                <a href={file.viewUrl} target="_blank" rel="noopener noreferrer"
+                  className="btn-primary" style={{ textDecoration:'none' }}>
+                  ↗ Open in Drive
+                </a>
+              </div>
+            )
+          )}
+
+          {/* Info tab */}
+          {tab === 'info' && (
+            <div style={{ flex:1, minHeight:0, overflowY:'auto', padding:16 }}>
+              {file.description && (
+                <div style={{
+                  background:'var(--surface-2,#f8fafc)', borderRadius:8,
+                  padding:'12px 14px', marginBottom:14, fontSize:13,
+                  color:'var(--text-muted,#475569)',
+                  border:'1px solid #e2e8f0',
+                }}>
+                  {file.description}
+                </div>
+              )}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
+                {[
+                  ['File type',     fileType(file.mimeType).label],
+                  ['Original name', file.originalName || file.fileName],
+                  ['File size',     fmtSize(file.size)],
+                  ['Uploaded by',   file.uploadedBy],
+                  ['Category',      file.category],
+                  ['Compression',   file.originalSize && file.size < file.originalSize
+                    ? `${Math.round((1 - file.size / file.originalSize) * 100)}% smaller` : '—'],
+                ].map(([l, v]) => (
+                  <div key={l} style={{ background:'var(--surface-2,#f8fafc)', borderRadius:8, padding:'10px 12px', border:'1px solid #e2e8f0' }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:'var(--text-dim,#94a3b8)',
+                      textTransform:'uppercase', letterSpacing:'.05em', marginBottom:2 }}>{l}</div>
+                    <div style={{ fontSize:12, color:'var(--text,#0f172a)', fontWeight:500,
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v || '—'}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Delete + open actions inside info tab */}
+              <div style={{ display:'flex', gap:8, paddingTop:4 }}>
+                <button onClick={() => onDelete(file)} className="btn-danger" style={{ flexShrink:0 }}>
+                  Delete
+                </button>
+                <a href={file.viewUrl} target="_blank" rel="noopener noreferrer" className="btn-primary"
+                  style={{ flex:1, justifyContent:'center', textDecoration:'none' }}>
+                  ↗ Open in Drive
+                </a>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export default function AdminFiles() {
+  const { userData, orgData } = useAuth();
+  const [files,    setFiles]    = useState([]);
+  const [modal,    setModal]    = useState(false);
+  const [viewFile, setViewFile] = useState(null);
+  const [filter,   setFilter]   = useState('All');
+  const [search,   setSearch]   = useState('');
+
+  const orgId   = userData?.activeOrgId;
+  const orgName = orgData?.name;
+
+  useEffect(() => {
+    if (!orgId) return;
+    const q = query(collection(db, 'organizations', orgId, 'files'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => setFiles(snap.docs.map(d => ({ id:d.id, ...d.data() }))));
+  }, [orgId]);
+
+  const handleDelete = useCallback(async (file) => {
+    if (!confirm(`Delete "${file.title}"?`)) return;
+    try {
+      if (file.fileId) {
+        await deleteFileFromGAS(file.fileId);
+      }
+      await deleteDoc(doc(db, 'organizations', orgId, 'files', file.id));
+    } catch (err) { alert(err.message); }
+    setViewFile(null);
+  }, [orgId]);
+
+  const handleSearchChange = useCallback(e => setSearch(e.target.value), []);
+  const handleView         = useCallback(f => setViewFile(f), []);
+  const openUpload         = useCallback(() => setModal(true), []);
+  const closeUpload        = useCallback(() => setModal(false), []);
+  const closeView          = useCallback(() => setViewFile(null), []);
+
+  const cats  = ['All', ...CATS];
+  const shown = files.filter(f => {
+    const matchCat    = filter === 'All' || f.category === filter;
+    const matchSearch = !search
+      || f.title.toLowerCase().includes(search.toLowerCase())
+      || (f.description || '').toLowerCase().includes(search.toLowerCase());
+    return matchCat && matchSearch;
+  });
+
+  return (
+    <div className="page-wrap animate-fade">
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:24, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          {orgData?.logoURL && (
+            <div style={{ width:40, height:40, borderRadius:10, overflow:'hidden', flexShrink:0 }}>
+              <img src={orgData.logoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
+            </div>
+          )}
+          <div>
+            <div className="page-title">File Library</div>
+            <div className="page-subtitle">
+              {files.length} file{files.length !== 1 ? 's' : ''} · Stored on Google Drive
+            </div>
+          </div>
+        </div>
+        <button onClick={openUpload} className="btn-primary">+ Upload File</button>
+      </div>
+
+      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+        <input
+          value={search}
+          onChange={handleSearchChange}
+          placeholder="Search files…"
+          style={{ flex:1, minWidth:160 }}
+        />
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+          {cats.map(c => (
+            <button key={c} onClick={() => setFilter(c)}
+              className={filter === c ? 'btn-primary' : 'btn-ghost'}
+              style={{ padding:'7px 12px', fontSize:12 }}>
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Responsive CSS: table on desktop, cards on mobile */}
+      <style>{`
+        .af-table-wrap { display: none; }
+        .af-card-wrap  { display: block; }
+        @media (min-width: 768px) {
+          .af-table-wrap { display: block; }
+          .af-card-wrap  { display: none; }
+        }
+      `}</style>
+
+      {shown.length === 0 ? (
+        <div className="card" style={{ textAlign:'center', padding:'48px 20px', color:'var(--text-dim,#94a3b8)' }}>
+          {files.length === 0
+            ? 'No files yet. Click "+ Upload File" to add one.'
+            : 'No files match your filter.'}
+        </div>
+      ) : (
+        <>
+          {/* ── DESKTOP: table view ───────────────────────────────── */}
+          <div className="af-table-wrap">
+            <div style={{ borderRadius:12, border:'1.5px solid var(--border,#e2e8f0)', overflow:'hidden' }}>
+
+              {/* Header */}
+              <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 130px 120px',
+                gap:12, padding:'9px 16px', background:'var(--surface-2,#f8fafc)',
+                borderBottom:'1px solid var(--border,#e2e8f0)', alignItems:'center' }}>
+                {['', 'Title', 'Type', 'Category', 'Size', 'Uploaded by', ''].map((h, i) => (
+                  <div key={i} style={{ fontSize:11, fontWeight:700, color:'#64748b',
+                    textTransform:'uppercase', letterSpacing:'0.06em' }}>{h}</div>
+                ))}
+              </div>
+
+              {/* Rows */}
+              {shown.map((f, i) => (
+                <div key={f.id}
+                  style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 130px 120px',
+                    gap:12, padding:'10px 16px', alignItems:'center', cursor:'pointer',
+                    background: i % 2 === 0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)',
+                    borderBottom:'1px solid var(--border-light,#f1f5f9)', transition:'background 0.1s' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
+                  onMouseLeave={e => e.currentTarget.style.background = i%2===0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)'}
+                  onClick={() => handleView(f)}
+                >
+                  {/* Icon / thumb */}
+                  <div style={{ fontSize:20, textAlign:'center', flexShrink:0 }}>
+                    {fileIcon(f.mimeType)}
+                  </div>
+
+                  {/* Title + description */}
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontWeight:600, fontSize:13, color:'var(--text,#0f172a)',
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {f.title}
+                    </div>
+                    {f.description && (
+                      <div style={{ fontSize:11, color:'var(--text-muted,#64748b)',
+                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        {f.description}
+                      </div>
+                    )}
+                    {f.originalSize && f.size < f.originalSize && (
+                      <div style={{ fontSize:10, color:'#16a34a', fontWeight:600 }}>
+                        ↓ Compressed {Math.round((1 - f.size / f.originalSize) * 100)}%
+                      </div>
+                    )}
+                  </div>
+
+                  {/* File type */}
+                  <div>
+                    <FileTypeBadge mime={f.mimeType} />
+                  </div>
+
+                  {/* Category */}
+                  <div>
+                    <span className="badge badge-gray" style={{ fontSize:10 }}>{f.category}</span>
+                  </div>
+
+                  {/* Size */}
+                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)' }}>
+                    {fmtSize(f.size) || '—'}
+                  </div>
+
+                  {/* Uploaded by */}
+                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)',
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {f.uploadedBy || '—'}
+                  </div>
+
+                  {/* Actions */}
+                  <div style={{ display:'flex', gap:6 }} onClick={e => e.stopPropagation()}>
+                    <a href={f.viewUrl} target="_blank" rel="noopener noreferrer"
+                      style={{ padding:'5px 10px', borderRadius:6, background:'#eff6ff',
+                        color:'#1d4ed8', fontSize:12, fontWeight:600, textDecoration:'none', whiteSpace:'nowrap' }}>
+                      ↗ Open
+                    </a>
+                    <button onClick={() => handleDelete(f)}
+                      style={{ padding:'5px 10px', borderRadius:6, border:'1px solid #fca5a5',
+                        background:'#fff', color:'#dc2626', fontSize:12, cursor:'pointer', whiteSpace:'nowrap' }}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── MOBILE: original card grid (unchanged) ────────────── */}
+          <div className="af-card-wrap">
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:12 }}>
+              {shown.map(f => (
+                <FileCard key={f.id} f={f} onView={handleView} />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {modal && (
+        <UploadModal
+          onClose={closeUpload}
+          orgId={orgId}
+          orgName={orgName}
+          orgData={orgData}
+          userData={userData}
+        />
+      )}
+      {viewFile && (
+        <ViewModal
+          file={viewFile}
+          onClose={closeView}
+          onDelete={handleDelete}
+        />
+      )}
+    </div>
+  );
+}

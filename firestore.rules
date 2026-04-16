@@ -1,0 +1,281 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role','') == 'superadmin';
+    }
+
+    // Single get() — reuse result for all checks on same member doc
+    function memberData(orgId) {
+      return get(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid)).data;
+    }
+
+    function memberExists(orgId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/organizations/$(orgId)/members/$(request.auth.uid));
+    }
+
+    function isOrgAdmin(orgId) {
+      return memberExists(orgId)
+        && memberData(orgId).get('role','') == 'admin';
+    }
+
+    // Cashier: role == 'cashier' AND approved == true (single get)
+    function isOrgCashier(orgId) {
+      return memberExists(orgId)
+        && memberData(orgId).get('role','') == 'cashier'
+        && memberData(orgId).get('approved', false) == true;
+    }
+
+    // Any approved member (includes cashiers since they must also be approved)
+    function isApprovedMember(orgId) {
+      return memberExists(orgId)
+        && memberData(orgId).get('approved', false) == true;
+    }
+
+    function isOwnDoc(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+
+    // ── Users ─────────────────────────────────────────────────────────────
+    match /users/{userId} {
+      allow read:   if isSignedIn();
+      allow create: if isOwnDoc(userId);
+      allow update: if isOwnDoc(userId) || isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+
+    // ── Organizations ─────────────────────────────────────────────────────
+    match /organizations/{orgId} {
+      allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+      allow create: if isSignedIn();
+
+      // Org admin may NOT touch superadmin-controlled fields: features, limits, status
+      // Org admin may write settings and orgFeatures only
+      allow update:
+        if isSuperAdmin()
+        || (isOrgAdmin(orgId)
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['features', 'limits', 'status']));
+
+      allow delete: if isSuperAdmin();
+
+
+      // ── Members ─────────────────────────────────────────────────────────
+      match /members/{memberId} {
+        allow read:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || isOwnDoc(memberId)
+          // Approved members can read the directory when the feature is on
+          || (isApprovedMember(orgId)
+              && get(/databases/$(database)/documents/organizations/$(orgId)).data
+                  .get('orgFeatures',{}).get('memberDirectory', false) == true);
+
+        allow create:
+          if isSuperAdmin() || isOrgAdmin(orgId) || isOwnDoc(memberId);
+
+        // Members may update their own profile, but CANNOT touch
+        // role / approval / cashier assignments / committee role / entry fee / ID number
+        allow update:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isOwnDoc(memberId)
+              && !request.resource.data.diff(resource.data).affectedKeys()
+                  .hasAny(['role','approved','cashierMethods','cashierAccountIds',
+                           'committeeRole','entryFeePaid','idNo']));
+
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Investments (installment payments) ───────────────────────────────
+      match /investments/{investmentId} {
+        // All approved members (including cashiers) can read and create payments
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Cashier may ONLY flip status + set verifiedAt/verifiedBy — nothing else
+        allow update:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isOrgCashier(orgId)
+              && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['status','verifiedAt','verifiedBy']));
+
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Cashier Transfers ────────────────────────────────────────────────
+      match /cashierTransfers/{transferId} {
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isOrgCashier(orgId);
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId) || isOrgCashier(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Expenses ─────────────────────────────────────────────────────────
+      // Separated from catch-all so cashiers can auto-create fee expenses
+      match /expenses/{expenseId} {
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Cashier may only CREATE (auto fee expense from transfer); cannot edit or delete
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId) || isOrgCashier(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Notifications ────────────────────────────────────────────────────
+      match /notifications/{notifId} {
+        // Users can read/update/delete their own notifications
+        allow read:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        allow update:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        allow delete:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        // Admin and cashier can create notifications (e.g. verify, transfer alerts)
+        allow create:
+          if isSuperAdmin() || isOrgAdmin(orgId) || isOrgCashier(orgId);
+      }
+
+
+      // ── File Library ──────────────────────────────────────────────────────
+      match /files/{fileId} {
+        allow read:  if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+        allow write: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Entry Fees ────────────────────────────────────────────────────────
+      // One-time membership entry fee records
+      match /entryFees/{entryFeeId} {
+        // Members can read their own entry fee record; admin reads all
+        allow read:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        // Only admin creates/updates/deletes entry fee records
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Assets ────────────────────────────────────────────────────────────
+      // Org-owned physical and financial assets registry
+      match /assets/{assetId} {
+        // All approved members can view the asset registry
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin manages asset records
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Investment Projects ───────────────────────────────────────────────
+      // Shariah-compliant investment project records (Musharaka, Mudaraba, etc.)
+      match /investmentProjects/{projectId} {
+        // All approved members can view investment projects
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin creates/updates/deletes projects
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Profit Distributions ──────────────────────────────────────────────
+      // Annual/periodic profit distribution records per member
+      match /profitDistributions/{distributionId} {
+        // All approved members can view distributions (to see their own share)
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin creates/updates/deletes distribution records
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Qard al-Hasan Loans ───────────────────────────────────────────────
+      // Interest-free benevolent loan applications and records
+      match /loans/{loanId} {
+        // Members can read their own loan records; admin reads all
+        allow read:
+          if isSuperAdmin()
+          || isOrgAdmin(orgId)
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        // Any approved member may submit a loan application (create)
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin can approve, update status, or record repayments
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Catch-all ─────────────────────────────────────────────────────────
+      // Covers: income, penalties, subscriptions, specialSubscriptions,
+      // distributions, reports, etc.
+      // Note: expenses, cashierTransfers, notifications, files, entryFees,
+      // assets, investmentProjects, profitDistributions, loans are matched
+      // ABOVE with finer-grained rules and will NOT fall through to this catch-all.
+      match /{collection}/{docId} {
+        allow read:  if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+        allow write: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+    } // end organizations/{orgId}
+
+
+    // ── Invite Links ──────────────────────────────────────────────────────
+    match /invites/{inviteId} {
+      allow read:   if true;
+      allow create:
+        if isSuperAdmin()
+        || (isSignedIn() && isOrgAdmin(request.resource.data.get('orgId','')));
+      allow delete:
+        if isSuperAdmin()
+        || (isSignedIn() && isOrgAdmin(resource.data.get('orgId','')));
+      allow update: if false;
+    }
+
+
+    // ── Platform settings ─────────────────────────────────────────────────
+    match /platform/{docId} {
+      allow read:  if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+  }
+}

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>No Internet Connection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --primary: #3b82f6;
+            --bg: #ffffff;
+        }
+
+        body {
+            background-color: var(--bg);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100vw;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            color: #1f2937;
+        }
+
+        .container {
+            text-align: center;
+            padding: 1.5rem;
+            width: 100%;
+            max-width: 450px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Animation Container */
+        .animation-wrapper {
+            position: relative;
+            height: 240px;
+            width: 240px;
+            margin-bottom: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* The Animated Logo */
+        .animated-logo {
+            width: 140px;
+            height: auto;
+            z-index: 10;
+            animation: float 3s ease-in-out infinite;
+            filter: drop-shadow(0 10px 15px rgba(0,0,0,0.1));
+        }
+
+        /* Ripple Waves */
+        .wave {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border: 2px solid var(--primary);
+            border-radius: 50%;
+            opacity: 0;
+            animation: ripple 4s cubic-bezier(0, 0.2, 0.8, 1) infinite;
+        }
+
+        .wave:nth-child(2) { animation-delay: 1s; }
+        .wave:nth-child(3) { animation-delay: 2s; }
+        .wave:nth-child(4) { animation-delay: 3s; }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-15px); }
+        }
+
+        @keyframes ripple {
+            0% { transform: scale(1); opacity: 0.8; }
+            100% { transform: scale(4); opacity: 0; }
+        }
+
+        /* Mobile touch optimization */
+        .btn-retry {
+            -webkit-tap-highlight-color: transparent;
+            transition: transform 0.1s active, background-color 0.2s;
+            touch-action: manipulation;
+        }
+
+        .btn-retry:active {
+            transform: scale(0.96);
+        }
+
+        /* Status Toast for mobile feedback */
+        #status-toast {
+            position: fixed;
+            bottom: 30px;
+            background: rgba(31, 41, 55, 0.95);
+            color: white;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            transform: translateY(150%);
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+            z-index: 100;
+        }
+
+        #status-toast.show {
+            transform: translateY(0);
+        }
+
+        /* Subtle background patterns */
+        .bg-dots {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: radial-gradient(#e5e7eb 1px, transparent 1px);
+            background-size: 30px 30px;
+            opacity: 0.5;
+            z-index: -1;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="bg-dots"></div>
+
+    <div class="container">
+        <!-- Central Animated Section -->
+        <div class="animation-wrapper">
+            <div class="wave"></div>
+            <div class="wave"></div>
+            <div class="wave"></div>
+            <div class="wave"></div>
+            <img src="https://absisbd.vercel.app/logo.png" alt="Company Logo" class="animated-logo" onerror="this.src='https://via.placeholder.com/150x80?text=LOGO'">
+        </div>
+
+        <!-- Typography -->
+        <h1 class="text-3xl font-extrabold tracking-tight text-gray-900 mb-3">Connection Lost</h1>
+        <p class="text-lg text-gray-600 mb-10 px-6 leading-relaxed">
+            We're having trouble reaching our servers. Please check your internet connection.
+        </p>
+
+        <!-- Large Mobile Touch Target -->
+        <button onclick="checkConnection()" class="btn-retry w-full py-4 px-8 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-lg shadow-lg flex items-center justify-center space-x-3">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>Try Reconnecting</span>
+        </button>
+
+        <p class="mt-8 text-sm text-gray-400 font-medium uppercase tracking-widest">
+            Automatic retry in progress...
+        </p>
+    </div>
+
+    <div id="status-toast">Checking connection...</div>
+
+    <script>
+        function showToast(message) {
+            const toast = document.getElementById('status-toast');
+            toast.innerText = message;
+            toast.classList.add('show');
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function checkConnection() {
+            // Check network status
+            if (navigator.onLine) {
+                showToast("Connection restored! Loading...");
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
+            } else {
+                showToast("Still offline. Please check your settings.");
+            }
+        }
+
+        // Auto-reload when connection comes back
+        window.addEventListener('online', () => {
+            showToast("You're back online! Redirecting...");
+            setTimeout(() => window.location.reload(), 1500);
+        });
+
+        // Prevent rubber-banding/scrolling on some mobile browsers
+        document.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 1) e.preventDefault();
+        }, { passive: false });
+    </script>
+</body>
+</html>

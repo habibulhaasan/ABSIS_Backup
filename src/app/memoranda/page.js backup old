@@ -1,0 +1,456 @@
+// src/app/memoranda/page.js — Member view of published memoranda
+'use client';
+import { useState, useEffect } from 'react';
+import { db } from '@/lib/firebase';
+import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { useAuth } from '@/context/AuthContext';
+import { createPortal } from 'react-dom';
+
+// ── Load Bangla font ──────────────────────────────────────────────────────────
+const BANGLA_FONT_CSS = `
+  @import url('https://fonts.maateen.me/solaiman-lipi/font.css');
+  .bn { font-family: 'SolaimanLipi', 'Noto Sans Bengali', sans-serif; }
+`;
+
+const CATS = {
+  NOT: { label:'Notice',      color:'#1d4ed8', bg:'#eff6ff' },
+  MIN: { label:'Minutes',     color:'#15803d', bg:'#f0fdf4' },
+  FIN: { label:'Finance',     color:'#92400e', bg:'#fef3c7' },
+  INV: { label:'Investment',  color:'#7c3aed', bg:'#faf5ff' },
+  MEM: { label:'Membership',  color:'#0369a1', bg:'#f0f9ff' },
+  LTR: { label:'Letter',      color:'#b45309', bg:'#fffbeb' },
+  COM: { label:'Committee',   color:'#be185d', bg:'#fdf2f8' },
+  SHR: { label:"Shari'ah",    color:'#064e3b', bg:'#ecfdf5' },
+};
+
+function fmt(ts) {
+  if (!ts) return '—';
+  const d = ts.seconds ? new Date(ts.seconds*1000) : new Date(ts);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+}
+function fmtShort(ts) {
+  if (!ts) return '—';
+  const d = ts.seconds ? new Date(ts.seconds*1000) : new Date(ts);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+}
+
+function CatBadge({ code }) {
+  const c = CATS[code]||{label:code,color:'#475569',bg:'#f1f5f9'};
+  return (
+    <span style={{padding:'2px 8px',borderRadius:5,fontSize:11,fontWeight:700,
+      background:c.bg,color:c.color,whiteSpace:'nowrap'}}>
+      {code} · {c.label}
+    </span>
+  );
+}
+
+// ── Detail modal with org letterhead ─────────────────────────────────────────
+function DetailModal({ memo, orgData, onClose }) {
+  const org = orgData || {};
+  const c   = CATS[memo.category] || { color:'#475569', bg:'#f1f5f9' };
+
+  if (typeof document === 'undefined') return null;
+
+  const PRINT_CSS = `
+    @media print {
+      body * { visibility: hidden !important; }
+      #memo-print, #memo-print * { visibility: visible !important; }
+      #memo-print { position: fixed !important; top: 0; left: 0; width: 100%;
+        font-family: 'SolaimanLipi', 'Times New Roman', serif; }
+      .no-print { display: none !important; }
+      @page { margin: 15mm 18mm; }
+    }
+    @import url('https://fonts.maateen.me/solaiman-lipi/font.css');
+    .bn { font-family: 'SolaimanLipi', 'Noto Sans Bengali', sans-serif; }
+  `;
+
+  return createPortal(
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}}
+      style={{position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.65)',
+        display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
+      <style>{PRINT_CSS}</style>
+
+      <div style={{background:'#fff',borderRadius:14,
+        width:'min(760px,100%)',height:'calc(100dvh - 32px)',
+        display:'flex',flexDirection:'column',overflow:'hidden',
+        boxShadow:'0 32px 80px rgba(0,0,0,0.35)'}}>
+
+        {/* Controls bar */}
+        <div className="no-print" style={{display:'flex',alignItems:'center',gap:8,
+          padding:'10px 14px',borderBottom:'1px solid #e2e8f0',flexShrink:0}}>
+          <CatBadge code={memo.category}/>
+          <span style={{fontFamily:'monospace',fontSize:12,color:'#64748b',flex:1}}>
+            {memo.memoNo}
+          </span>
+          <button onClick={()=>window.print()}
+            style={{padding:'5px 14px',borderRadius:8,background:'#0f172a',
+              color:'#fff',border:'none',cursor:'pointer',fontSize:12,fontWeight:700}}>
+            🖨 Print
+          </button>
+          <button onClick={onClose}
+            style={{width:32,height:32,borderRadius:8,border:'1px solid #e2e8f0',
+              background:'#fff',cursor:'pointer',fontSize:16,color:'#64748b',
+              display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{flex:1,minHeight:0,overflowY:'auto',background:'#f0f0f0',padding:20}}>
+          <div id="memo-print"
+            style={{background:'#fff',maxWidth:700,margin:'0 auto',
+              padding:'28px 32px',fontFamily:"'SolaimanLipi','Times New Roman',serif",
+              boxShadow:'0 2px 12px rgba(0,0,0,0.10)'}}>
+
+            {/* ── LETTERHEAD ── */}
+            <div style={{borderBottom:'2.5px solid #000',paddingBottom:14,marginBottom:18,
+              display:'flex',alignItems:'flex-start',gap:16}}>
+              {org.logoURL && (
+                <img 
+                  src={orgData?.logoURL} 
+                  alt="ABSIS Logo"
+                  style={{ 
+                    width: 75, 
+                    height: 75, 
+                    objectFit: 'contain',
+                    // This removes white backgrounds dynamically:
+                    mixBlendMode: 'multiply', 
+                    filter: 'contrast(1.1)' // Makes the logo pop against the paper
+                  }} 
+                />
+              )}
+              <div style={{flex:1}}>
+                <div style={{fontSize:20,fontWeight:900,color:'#000',
+                  fontFamily:"'SolaimanLipi','Arial',sans-serif",lineHeight:1.2}}>
+                  {org.name_bn||'Organization'}<br/>
+                  <div style={{fontSize:12,color:'#64748b'}}>
+                    {org.name_en||'Organization'}
+                  </div>
+                </div>
+                {org.slogan && (
+                  <div className="bn" style={{fontSize:12,color:'#444',fontStyle:'italic',
+                    marginTop:3,marginBottom:4}}>{org.slogan}</div>
+                )}
+                <div style={{marginTop:5,fontSize:10.5,color:'#333',
+                  display:'flex',flexWrap:'wrap',gap:'3px 14px'}}>
+                  {org.email   && <span>✉ {org.email}</span>}
+                  {org.phone   && <span>☎ {org.phone}</span>}
+                  {org.website && <span>🌐 {org.website}</span>}
+                </div>
+              </div>
+            </div>
+
+            {/* Memo reference + date line */}
+            <div style={{display:'flex',justifyContent:'space-between',
+              marginBottom:16,fontSize:11,color:'#444'}}>
+              <span><strong>স্মারক নং:</strong>{' '}
+                <span style={{fontFamily:'monospace',color:'#1d4ed8',fontWeight:700}}>
+                  {memo.memoNo}
+                </span>
+              </span>
+              <span>
+                  <strong>তারিখ:</strong> {
+                    memo.date 
+                      ? new Date(memo.date).toLocaleDateString('bn-BD', {
+                          day: '2-digit',
+                          month: '2-digit',
+                          year: 'numeric'
+                        }).replace(/,/g, '') // Removes any accidental commas
+                      : new Date(memo.createdAt.seconds * 1000).toLocaleDateString('bn-BD')
+                  }
+                </span>
+            </div>
+
+            {/* Category banner */}
+            <div style={{textAlign:'center',marginBottom:16}}>
+              <div style={{display:'inline-block',padding:'4px 20px',
+                borderRadius:4,background:c.bg,border:`1px solid ${c.color}44`,
+                fontSize:11,fontWeight:700,color:c.color,
+                letterSpacing:'0.06em',textTransform:'uppercase'}}>
+                {CATS[memo.category]?.label||memo.category}
+              </div>
+            </div>
+
+            {/* Subject */}
+            <div style={{textAlign:'center',marginBottom:20}}>
+              <div style={{fontSize:16,fontWeight:900,color:'#000',
+                fontFamily:"'SolaimanLipi','Arial',sans-serif",
+                borderBottom:'1px solid #ccc',paddingBottom:8,
+                display:'inline-block',minWidth:'60%'}}>
+                {memo.title}
+              </div>
+            </div>
+
+            {/* From / To */}
+            {/* {(memo.sender||memo.recipient) && (
+              <table style={{width:'100%',borderCollapse:'collapse',
+                marginBottom:16,fontSize:11}}>
+                <tbody>
+                  {memo.sender && (
+                    <tr>
+                      <td style={{width:100,fontWeight:700,padding:'3px 0',
+                        color:'#555',verticalAlign:'top'}}>From:</td>
+                      <td style={{padding:'3px 0',color:'#000'}}>{memo.sender}</td>
+                    </tr>
+                  )}
+                  {memo.recipient && (
+                    <tr>
+                      <td style={{width:100,fontWeight:700,padding:'3px 0',
+                        color:'#555',verticalAlign:'top'}}>To:</td>
+                      <td style={{padding:'3px 0',color:'#000'}}>{memo.recipient}</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )} */}
+
+            {/* Body content */}
+            {memo.content && (
+              <div className="bn" style={{fontSize:13,color:'#111',lineHeight:1.9,
+                marginBottom:20,whiteSpace:'pre-wrap',
+                padding:'12px 0',borderTop:'1px solid #eee',borderBottom:'1px solid #eee'}}>
+                {memo.content}
+              </div>
+            )}
+
+            {/* Attachment */}
+            {memo.fileId && (
+              <div className="no-print" style={{marginBottom:16}}>
+                <a href={`https://drive.google.com/file/d/${memo.fileId}/view`}
+                  target="_blank" rel="noreferrer"
+                  style={{display:'inline-flex',alignItems:'center',gap:6,
+                    padding:'8px 14px',borderRadius:8,background:'#eff6ff',
+                    color:'#1d4ed8',textDecoration:'none',fontSize:13,fontWeight:600}}>
+                  📎 View Attachment ↗
+                </a>
+              </div>
+            )}
+
+            {/* Prepared/Approved */}
+            {(memo.preparedBy||memo.approvedBy) && (
+              <div style={{marginTop:24,display:'flex',justifyContent:'flex-end',
+                fontSize:10.5,color:'#555'}}>
+                {/* {memo.preparedBy && (
+                  <div>
+                    <div style={{borderTop:'1px solid #aaa',paddingTop:4,marginTop:24,
+                      minWidth:120,textAlign:'center'}}>
+                      {memo.preparedBy}<br/>
+                      <span style={{color:'#888'}}>Prepared by</span>
+                    </div>
+                  </div>
+                )} */}
+                {memo.approvedBy && (
+                  <div>
+                    <div style={{borderTop:'1px solid #aaa',paddingTop:4,marginTop:24,
+                      minWidth:150,textAlign:'center'}}>
+                      {memo.approvedBy}<br/>
+                      <span style={{color:'#888'}}>{org.name_bn||'Organization'}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{marginTop:32,paddingTop:8,borderTop:'1px solid #ddd',
+              display:'flex',justifyContent:'space-between',fontSize:8.5,color:'#888'}}>
+              <span>{org.name||'Organization'}</span>
+              <span>{memo.memoNo} | {memo.date||fmt(memo.createdAt)}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
+export default function MemorandaPage() {
+  const { userData, orgData } = useAuth();
+  const orgId = userData?.activeOrgId;
+
+  const [memos,    setMemos]    = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [catFilter,setCatFilter]= useState('all');
+  const [search,   setSearch]   = useState('');
+
+  useEffect(() => {
+    if (!orgId) return;
+    getDocs(query(
+      collection(db,'organizations',orgId,'memoranda'),
+      where('visibleToMembers','==',true),
+      orderBy('createdAt','desc')
+    )).then(snap => {
+      setMemos(snap.docs.map(d=>({id:d.id,...d.data()})));
+      setLoading(false);
+    });
+  }, [orgId]);
+
+  const cats    = [...new Set(memos.map(m=>m.category))].sort();
+  const filtered = memos.filter(m => {
+    if (catFilter !== 'all' && m.category !== catFilter) return false;
+    if (search &&
+      !m.title?.toLowerCase().includes(search.toLowerCase()) &&
+      !m.memoNo?.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div className="page-wrap animate-fade">
+      <style>{BANGLA_FONT_CSS}</style>
+
+      <div className="page-header">
+        <div className="page-title">Notices & Memoranda</div>
+        <div className="page-subtitle">
+          {orgData?.name} · {memos.length} published
+        </div>
+      </div>
+
+      {/* Search + category filter */}
+      <div style={{display:'flex',gap:8,marginBottom:16,flexWrap:'wrap'}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Search notices…"
+          style={{flex:1,minWidth:160,padding:'8px 12px',borderRadius:8,
+            border:'1px solid #e2e8f0',fontSize:13}}/>
+        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+          {['all',...cats].map(c=>(
+            <button key={c} onClick={()=>setCatFilter(c)}
+              style={{padding:'7px 12px',borderRadius:8,fontSize:12,
+                fontWeight:catFilter===c?700:400,
+                border:catFilter===c?'2px solid #2563eb':'1px solid #e2e8f0',
+                background:catFilter===c?'#eff6ff':'#fff',
+                color:catFilter===c?'#1d4ed8':'#475569',cursor:'pointer'}}>
+              {c==='all'?'All':c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Responsive: table desktop, cards mobile */}
+      <style>{`
+        .mem-table{display:none} .mem-cards{display:block}
+        @media(min-width:768px){.mem-table{display:block}.mem-cards{display:none}}
+      `}</style>
+
+      {loading ? (
+        <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>
+      ) : filtered.length===0 ? (
+        <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>
+          <div style={{fontSize:36,marginBottom:10}}>📋</div>
+          <div style={{fontWeight:600,color:'#0f172a'}}>No notices published yet</div>
+        </div>
+      ) : (
+        <>
+          {/* ── Desktop table ── */}
+          <div className="mem-table">
+            <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+              {/* Header */}
+              <div style={{display:'grid',
+                gridTemplateColumns:'120px 1fr 90px 100px 100px',
+                gap:12,padding:'9px 16px',background:'#f8fafc',
+                borderBottom:'1px solid #e2e8f0'}}>
+                {['Memo No.','Title','Category','Date',''].map((h,i)=>(
+                  <div key={i} style={{fontSize:11,fontWeight:700,color:'#64748b',
+                    textTransform:'uppercase',letterSpacing:'0.06em'}}>{h}</div>
+                ))}
+              </div>
+              {/* Rows */}
+              {filtered.map((m,i)=>{
+                const c = CATS[m.category]||{color:'#475569',bg:'#f1f5f9'};
+                return (
+                  <div key={m.id}
+                    onClick={()=>setSelected(m)}
+                    style={{display:'grid',
+                      gridTemplateColumns:'120px 1fr 90px 100px 100px',
+                      gap:12,padding:'11px 16px',cursor:'pointer',alignItems:'center',
+                      background:i%2===0?'#fff':'#fafafa',
+                      borderBottom:'1px solid #f1f5f9',transition:'background 0.1s'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#eff6ff'}
+                    onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'#fff':'#fafafa'}>
+                    <div style={{fontFamily:'monospace',fontSize:11,fontWeight:700,
+                      color:'#1d4ed8'}}>{m.memoNo}</div>
+                    <div>
+                      <div className="bn" style={{fontWeight:600,fontSize:13,color:'#0f172a',
+                        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {m.title}
+                      </div>
+                      {m.content && (
+                        <div className="bn" style={{fontSize:11,color:'#94a3b8',
+                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                          {m.content.slice(0,80)}{m.content.length>80?'…':''}
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <span style={{padding:'2px 7px',borderRadius:5,fontSize:10,
+                        fontWeight:700,background:c.bg,color:c.color}}>
+                        {m.category}
+                      </span>
+                    </div>
+                    <div style={{fontSize:12,color:'#64748b'}}>
+                      {m.date||fmtShort(m.createdAt)}
+                    </div>
+                    <div>
+                      <button onClick={e=>{e.stopPropagation();setSelected(m);}}
+                        style={{padding:'5px 12px',borderRadius:7,border:'none',
+                          background:'#eff6ff',color:'#1d4ed8',fontSize:12,
+                          fontWeight:600,cursor:'pointer'}}>
+                        View ↗
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Mobile cards ── */}
+          <div className="mem-cards"
+            style={{display:'flex',flexDirection:'column',gap:10}}>
+            {filtered.map(m=>{
+              const c = CATS[m.category]||{color:'#475569',bg:'#f1f5f9'};
+              return (
+                <div key={m.id}
+                  onClick={()=>setSelected(m)}
+                  style={{background:'#fff',borderRadius:12,
+                    border:`1.5px solid ${c.color}22`,
+                    padding:'14px 16px',cursor:'pointer',transition:'all 0.15s'}}
+                  onMouseEnter={e=>{e.currentTarget.style.boxShadow='0 4px 14px rgba(0,0,0,.08)';}}
+                  onMouseLeave={e=>{e.currentTarget.style.boxShadow='none';}}>
+                  <div style={{display:'flex',justifyContent:'space-between',
+                    alignItems:'center',gap:8,marginBottom:8}}>
+                    <CatBadge code={m.category}/>
+                    <span style={{fontSize:11,color:'#94a3b8',flexShrink:0}}>
+                      {m.date||fmtShort(m.createdAt)}
+                    </span>
+                  </div>
+                  <div className="bn" style={{fontWeight:700,fontSize:14,color:'#0f172a',
+                    marginBottom:4}}>
+                    {m.title}
+                  </div>
+                  <div style={{fontSize:11,fontFamily:'monospace',color:'#64748b',
+                    marginBottom:4}}>{m.memoNo}</div>
+                  {m.content && (
+                    <div className="bn" style={{fontSize:12,color:'#475569',
+                      display:'-webkit-box',WebkitLineClamp:2,
+                      WebkitBoxOrient:'vertical',overflow:'hidden',lineHeight:1.6}}>
+                      {m.content}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {selected && (
+        <DetailModal
+          memo={selected}
+          orgData={orgData}
+          onClose={()=>setSelected(null)}
+        />
+      )}
+    </div>
+  );
+}
