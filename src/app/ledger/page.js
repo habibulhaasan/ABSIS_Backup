@@ -92,8 +92,7 @@ function StatCard({ label, value, sub, color='#0f172a', bg='#f8fafc', border='#e
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function Ledger() {
-  const { user, userData, orgData, membership: membershipCtx, isSuperAdmin, impersonateMemberId } = useAuth();
-  // Support superadmin impersonation: show ledger for the target member
+const { user, userData, orgData, membership, isSuperAdmin, impersonateMemberId } = useAuth();  // Support superadmin impersonation: show ledger for the target member
   const viewUid = (isSuperAdmin && impersonateMemberId) ? impersonateMemberId : user?.uid;
   const orgId    = userData?.activeOrgId;
   const settings = orgData?.settings || {};
