@@ -737,14 +737,11 @@ export default function AdminAccountBook() {
       alloc:computeFundAlloc('benevolent',totalCapital,settings), used:usedBenevolent,
       budgetType:fb.benevolent?.type, budgetValue:fb.benevolent?.value},
     {key:'expenses', label:'Expenses Fund', icon:'🧾', color:'#d97706', bg:'#fffbeb',
-      desc:'Operational expenses, entry fees and re-registration fees',
+      desc:'Operational running costs paid out of the Expenses Fund',
       alloc:computeFundAlloc('expenses',totalCapital,settings),
-      // Expenses fund usage = admin-recorded expenses + entry fees (both collections) + re-reg fees
-      used:totalExpenses + totalFees + payments
-        .filter(p => p.status==='verified'
-          && (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee')
-          && p.isContribution === false)
-        .reduce((s,p)=>s+(p.amount||0),0),
+      // Expenses fund USED = only actual expenditures from the /expenses collection.
+      // Entry fees are INCOME that replenishes this fund — they are not spending.
+      used: totalExpenses,
       budgetType:fb.expenses?.type, budgetValue:fb.expenses?.value},
   ];
   const hasBudgets = Object.values(fb).some(f=>f?.value);
