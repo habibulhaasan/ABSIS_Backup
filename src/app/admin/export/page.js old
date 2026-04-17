@@ -1,15 +1,10 @@
 // src/app/admin/export/page.js
+// Full org data export to multi-sheet XLSX using SheetJS (cdn loaded in artifact)
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, getDocs, query, orderBy, doc, getDoc } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
-
-// Add this helper at the top of admin_export_page.js
-function xl(v, max = 32700) {
-  const s = String(v ?? '');
-  return s.length > max ? s.slice(0, max) + '…' : s;
-}
 
 function fmtDate(ts) {
   if (!ts) return '';
@@ -49,10 +44,9 @@ function buildMembersSheet(members) {
     'Heir Name (En)','Heir Name (Bn)','Heir Relation','Heir NID','Heir Phone',
     'Application No','Application Date','Agreement No','Agreement Date',
     'Joining Date','Role','Status','Profile Submitted','Last Updated',
-    'Drive Folder ID','Photo URL',
   ];
   const rows = members.map(m => [
-    m.idNo, m.nameEnglish, m.nameBengali,
+    m.idNo, m.nameEnglish, m.nameBangla,
     m.fatherNameEn||m.fatherName, m.fatherNameBn,
     m.motherNameEn||m.motherName, m.motherNameBn,
     m.dob, m.nid, m.bloodGroup, m.maritalStatus, m.education, m.occupation,
@@ -67,65 +61,6 @@ function buildMembersSheet(members) {
     m.approved?'Active':'Pending',
     m.profileSubmitted?'Yes':'No',
     fmtTS(m.profileUpdatedAt),
-    m.memberDriveFolderId||'',
-    m.photoURL||'',
-  ]);
-  return [hdr, ...rows];
-}
-
-// ── NEW: Member files sheet — one row per file, with Drive links ──────────────
-function buildMemberFilesSheet(members) {
-  const hdr = [
-    'Member ID','Member Name',
-    'File Title','Category','Description',
-    'Uploaded By','Uploaded At','Drive URL','Drive File ID',
-    'MIME Type','File Name on Drive',
-  ];
-  const rows = [];
-  members.forEach(m => {
-    const files = m.legalFiles || [];
-    if (files.length === 0) {
-      // Still include member row so admins know there are no files
-      rows.push([
-        m.idNo||m.id, m.nameEnglish||'—',
-        '(no files)','','','','','','','','',
-      ]);
-    } else {
-      files.forEach(f => {
-        rows.push([
-          m.idNo||m.id,
-          m.nameEnglish||'—',
-          f.title || f.name || '—',
-          f.category || '—',
-          f.description || '',
-          f.uploadedBy || '—',
-          f.uploadedAt ? fmtTS({ seconds: Math.floor(new Date(f.uploadedAt).getTime()/1000) }) : '',
-          f.url || f.viewUrl || '',
-          f.fileId || '',
-          f.mimeType || '',
-          f.driveFileName || f.name || '',
-        ]);
-      });
-    }
-  });
-  return [hdr, ...rows];
-}
-
-// ── NEW: Member photo sheet ───────────────────────────────────────────────────
-function buildMemberPhotosSheet(members) {
-  const hdr = [
-    'Member ID','Member Name',
-    'Profile Photo URL','Nominee Photo URL','Drive Folder ID',
-    'Drive Folder Link',
-  ];
-  const rows = members.map(m => [
-    m.idNo||m.id, m.nameEnglish||'—',
-    m.photoURL||'',
-    m.nomineePhotoURL||'',
-    m.memberDriveFolderId||'',
-    m.memberDriveFolderId
-      ? `https://drive.google.com/drive/folders/${m.memberDriveFolderId}`
-      : '',
   ]);
   return [hdr, ...rows];
 }
@@ -231,16 +166,12 @@ function buildEntryFeesSheet(fees, members) {
 
 function buildMemorandaSheet(memos) {
   const hdr = ['Memo No.','Category','Year','Date','Title','Sender','Recipient',
-    'Prepared By','Approved By','Status','Visible to Members','Content','Notes',
-    'Attachment File ID','Attachment URL'];
+    'Prepared By','Approved By','Status','Visible to Members','Content','Notes'];
   const rows = memos.map(m => [
     m.memoNo, m.category, m.year, m.date, m.title,
     m.sender||'', m.recipient||'', m.preparedBy||'', m.approvedBy||'',
     m.status, m.visibleToMembers?'Yes':'No',
-    xl(m.content||''),   // was: m.content||''
-    xl(m.notes||''),     // was: m.notes||''
-    m.fileId||'',
-    m.fileId ? `https://drive.google.com/file/d/${m.fileId}/view` : (m.fileUrl||''),
+    m.content||'', m.notes||'',
   ]);
   return [hdr, ...rows];
 }
@@ -250,6 +181,7 @@ function buildMemberLedgersSheet(payments, dists, loans, members) {
   const rows = [
     ['Member ID','Member Name','Date','Type','Description','Credit (৳)','Debit (৳)','Balance (৳)'],
   ];
+  // Collect all events per member, sort by date, running balance
   const byMember = {};
   payments.filter(p=>p.status==='verified').forEach(p => {
     if (!byMember[p.userId]) byMember[p.userId]=[];
@@ -263,8 +195,9 @@ function buildMemberLedgersSheet(payments, dists, loans, members) {
   });
   loans.filter(l=>l.status==='disbursed'||l.status==='repaid').forEach(l => {
     if (!byMember[l.userId]) byMember[l.userId]=[];
-    byMember[l.userId].push({date:l.createdAt,type:'Loan',desc:'Loan disbursed',credit:0,debit:n(l.amount)});
+    byMember[l.userId].push({date:l.createdAt,type:'Loan',desc:`Loan disbursed`,credit:0,debit:n(l.amount)});
   });
+
   Object.entries(byMember).forEach(([uid,events]) => {
     const m = memberMap[uid]||{};
     events.sort((a,b)=>(a.date?.seconds||0)-(b.date?.seconds||0));
@@ -280,26 +213,9 @@ function buildMemberLedgersSheet(payments, dists, loans, members) {
 // ── XLSX write helper ─────────────────────────────────────────────────────────
 function arrayToSheet(XLSX, data) {
   const ws = XLSX.utils.aoa_to_sheet(data);
-  const cols = data[0]?.map(h=>({wch:Math.max(14,String(h||'').length+2)}));
+  // Style header row (bold via col widths + auto-fit)
+  const cols = data[0]?.map(h=>({wch:Math.max(12,String(h||'').length+2)}));
   if (cols) ws['!cols'] = cols;
-  // Make URLs in columns clickable (best effort — works in newer XLSX versions)
-  if (data.length > 1) {
-    const urlColIdxs = data[0]
-      .map((h,i)=>({h:String(h||''),i}))
-      .filter(({h})=>h.toLowerCase().includes('url')||h.toLowerCase().includes('link')||h.toLowerCase().includes('drive'))
-      .map(({i})=>i);
-    urlColIdxs.forEach(ci => {
-      for (let ri = 1; ri < data.length; ri++) {
-        const val = data[ri][ci];
-        if (val && String(val).startsWith('http')) {
-          const cellRef = XLSX.utils.encode_cell({r:ri, c:ci});
-          if (ws[cellRef]) {
-            ws[cellRef].l = { Target: String(val), Tooltip: String(val) };
-          }
-        }
-      }
-    });
-  }
   return ws;
 }
 
@@ -309,17 +225,15 @@ export default function AdminExport() {
   const orgId   = userData?.activeOrgId;
   const orgName = orgData?.name || 'Organization';
 
-  const [loading,  setLoading]  = useState(false);
-  const [progress, setProgress] = useState('');
-  const [done,     setDone]     = useState(false);
-  const [stats,    setStats]    = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [progress,   setProgress]   = useState('');
+  const [done,       setDone]       = useState(false);
+  const [stats,      setStats]      = useState(null);
 
   if (!isOrgAdmin) return null;
 
   const SHEETS = [
     { key:'members',       label:'Members',          desc:'Full member profiles with all bilingual fields' },
-    { key:'memberFiles',   label:'Member Files',     desc:'All uploaded documents per member with Drive links', badge:'new' },
-    { key:'memberPhotos',  label:'Photos & Folders', desc:'Profile/nominee photos and Drive folder links', badge:'new' },
     { key:'capital',       label:'Capital Payments', desc:'All installment payment records' },
     { key:'ledger',        label:'Member Ledgers',   desc:'Running balance per member' },
     { key:'expenses',      label:'Expenses',         desc:'All expense records' },
@@ -328,14 +242,14 @@ export default function AdminExport() {
     { key:'distributions', label:'Distributions',    desc:'Annual profit distribution records' },
     { key:'shares',        label:'Member Shares',    desc:'Per-member share for each distribution' },
     { key:'entryFees',     label:'Entry Fees',       desc:'One-time entry fee payments' },
-    { key:'memoranda',     label:'Memoranda',        desc:'Notice and memo register with attachment links', badge:'updated' },
+    { key:'memoranda',     label:'Memoranda',        desc:'Notice and memo register' },
   ];
 
   const [selected, setSelected] = useState(new Set(SHEETS.map(s=>s.key)));
   const toggle = key => setSelected(prev => {
-    const s = new Set(prev);
-    s.has(key) ? s.delete(key) : s.add(key);
-    return s;
+    const n = new Set(prev);
+    n.has(key) ? n.delete(key) : n.add(key);
+    return n;
   });
 
   const handleExport = async () => {
@@ -345,6 +259,7 @@ export default function AdminExport() {
       const XLSX = await loadXLSX();
       setProgress('Loading data…');
 
+      // ONE parallel fetch for everything
       const [
         memberSnap, paySnap, expSnap, projSnap,
         loanSnap, distSnap, feeSnap, memoSnap,
@@ -359,6 +274,7 @@ export default function AdminExport() {
         getDocs(query(collection(db,'organizations',orgId,'memoranda'),orderBy('createdAt','desc'))),
       ]);
 
+      // Merge member data with user profiles
       setProgress('Merging member profiles…');
       const memberDocs = memberSnap.docs.map(d=>({id:d.id,...d.data()}));
       const members = await Promise.all(memberDocs.map(async m => {
@@ -376,65 +292,59 @@ export default function AdminExport() {
       const entryFees     = feeSnap.docs.map(d=>({id:d.id,...d.data()}));
       const memoranda     = memoSnap.docs.map(d=>({id:d.id,...d.data()}));
 
-      // Count total member files for stats
-      const totalFiles = members.reduce((s,m)=>s+(m.legalFiles?.length||0),0);
-
       setProgress('Building spreadsheet…');
       const wb = XLSX.utils.book_new();
 
-      // Summary — always first
-      const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
-      const totalCap  = payments.filter(p=>p.status==='verified')
+      // Summary sheet — always included
+      const summaryDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+      const feeInAcct   = !!orgData?.settings?.gatewayFeeInAccounting;
+      const totalCap    = payments.filter(p=>p.status==='verified')
         .reduce((s,p)=>s+n(p.amount)-(feeInAcct?0:n(p.gatewayFee)),0);
 
       XLSX.utils.book_append_sheet(wb, arrayToSheet(XLSX, [
         ['Organization Export Summary'],
         [''],
-        ['Organization',  orgName],
-        ['Export Date',   new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'})],
+        ['Organization', orgName],
+        ['Export Date',  summaryDate],
         [''],
-        ['Data',                   'Count / Value'],
-        ['Total Members',          members.length],
-        ['Active Members',         members.filter(m=>m.approved).length],
-        ['Total Capital (৳)',       totalCap],
-        ['Total Expenses (৳)',      expenses.reduce((s,e)=>s+n(e.amount),0)],
-        ['Active Projects',        projects.filter(p=>p.status==='active').length],
-        ['Active Loans',           loans.filter(l=>l.status==='disbursed').length],
-        ['Distributions',          distributions.filter(d=>d.status==='distributed').length],
-        ['Memoranda',              memoranda.length],
-        ['Member Documents (total)',totalFiles],
+        ['Data', 'Count / Value'],
+        ['Total Members',      members.length],
+        ['Active Members',     members.filter(m=>m.approved).length],
+        ['Total Capital (৳)',  totalCap],
+        ['Total Expenses (৳)', expenses.reduce((s,e)=>s+n(e.amount),0)],
+        ['Active Projects',    projects.filter(p=>p.status==='active').length],
+        ['Active Loans',       loans.filter(l=>l.status==='disbursed').length],
+        ['Distributions',      distributions.filter(d=>d.status==='distributed').length],
+        ['Memoranda',          memoranda.length],
       ]), 'Summary');
 
       const MAP = {
-        members:       () => buildMembersSheet(members),
-        memberFiles:   () => buildMemberFilesSheet(members),
-        memberPhotos:  () => buildMemberPhotosSheet(members),
-        capital:       () => buildCapitalSheet(payments,members),
-        ledger:        () => buildMemberLedgersSheet(payments,distributions,loans,members),
-        expenses:      () => buildExpensesSheet(expenses),
-        projects:      () => buildProjectsSheet(projects),
-        loans:         () => buildLoansSheet(loans,members),
-        distributions: () => buildDistributionsSheet(distributions),
-        shares:        () => buildMemberSharesSheet(distributions,members),
-        entryFees:     () => buildEntryFeesSheet(entryFees,members),
-        memoranda:     () => buildMemorandaSheet(memoranda),
+        members:       ()=>buildMembersSheet(members),
+        capital:       ()=>buildCapitalSheet(payments,members),
+        ledger:        ()=>buildMemberLedgersSheet(payments,distributions,loans,members),
+        expenses:      ()=>buildExpensesSheet(expenses),
+        projects:      ()=>buildProjectsSheet(projects),
+        loans:         ()=>buildLoansSheet(loans,members),
+        distributions: ()=>buildDistributionsSheet(distributions),
+        shares:        ()=>buildMemberSharesSheet(distributions,members),
+        entryFees:     ()=>buildEntryFeesSheet(entryFees,members),
+        memoranda:     ()=>buildMemorandaSheet(memoranda),
       };
 
       SHEETS.filter(s=>selected.has(s.key)).forEach(s => {
         setProgress(`Building ${s.label}…`);
         try {
           XLSX.utils.book_append_sheet(wb, arrayToSheet(XLSX, MAP[s.key]()), s.label);
-        } catch(e) { console.warn('Sheet error:', s.key, e); }
+        } catch(e) { console.warn('Sheet error:',s.key,e); }
       });
 
       const filename = `${orgName.replace(/[^a-z0-9]/gi,'_')}_export_${new Date().toISOString().slice(0,10)}.xlsx`;
       XLSX.writeFile(wb, filename);
 
       setStats({
-        members:members.length, payments:payments.length,
-        expenses:expenses.length, projects:projects.length,
-        loans:loans.length, distributions:distributions.length,
-        memoranda:memoranda.length, totalFiles, sheets:selected.size+1,
+        members:members.length, payments:payments.length, expenses:expenses.length,
+        projects:projects.length, loans:loans.length, distributions:distributions.length,
+        memoranda:memoranda.length, sheets:selected.size+1,
       });
       setDone(true);
       setProgress('');
@@ -443,11 +353,6 @@ export default function AdminExport() {
       console.error(e);
     }
     setLoading(false);
-  };
-
-  const BADGE_CFG = {
-    new:     { bg:'#dcfce7', color:'#15803d', label:'NEW' },
-    updated: { bg:'#eff6ff', color:'#1d4ed8', label:'UPDATED' },
   };
 
   return (
@@ -466,39 +371,27 @@ export default function AdminExport() {
           Select Sheets to Include
         </div>
         <div style={{fontSize:12,color:'#64748b',marginBottom:16}}>
-          A Summary sheet is always included. "Member Files" and "Photos & Folders" sheets
-          include direct Google Drive links — click them in Excel to open each file.
+          A Summary sheet is always included. Choose which data sheets to export.
         </div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:10}}>
-          {SHEETS.map(s => {
-            const badge = s.badge ? BADGE_CFG[s.badge] : null;
-            return (
-              <label key={s.key}
-                style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',
-                  borderRadius:8,border:`1.5px solid ${selected.has(s.key)?'#2563eb':'#e2e8f0'}`,
-                  background:selected.has(s.key)?'#eff6ff':'#fff',cursor:'pointer',
-                  transition:'all 0.15s'}}>
-                <input type="checkbox" checked={selected.has(s.key)}
-                  onChange={()=>toggle(s.key)}
-                  style={{marginTop:2,flexShrink:0,width:15,height:15}}/>
-                <div style={{flex:1}}>
-                  <div style={{display:'flex',alignItems:'center',gap:6}}>
-                    <span style={{fontWeight:600,fontSize:13,
-                      color:selected.has(s.key)?'#1d4ed8':'#0f172a'}}>
-                      {s.label}
-                    </span>
-                    {badge && (
-                      <span style={{fontSize:9,fontWeight:800,padding:'1px 5px',
-                        borderRadius:4,background:badge.bg,color:badge.color}}>
-                        {badge.label}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{fontSize:11,color:'#64748b',marginTop:1}}>{s.desc}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(260px,1fr))',gap:10}}>
+          {SHEETS.map(s=>(
+            <label key={s.key}
+              style={{display:'flex',alignItems:'flex-start',gap:10,padding:'10px 12px',
+                borderRadius:8,border:`1.5px solid ${selected.has(s.key)?'#2563eb':'#e2e8f0'}`,
+                background:selected.has(s.key)?'#eff6ff':'#fff',cursor:'pointer',
+                transition:'all 0.15s'}}>
+              <input type="checkbox" checked={selected.has(s.key)}
+                onChange={()=>toggle(s.key)}
+                style={{marginTop:2,flexShrink:0,width:15,height:15}}/>
+              <div>
+                <div style={{fontWeight:600,fontSize:13,
+                  color:selected.has(s.key)?'#1d4ed8':'#0f172a'}}>
+                  {s.label}
                 </div>
-              </label>
-            );
-          })}
+                <div style={{fontSize:11,color:'#64748b',marginTop:1}}>{s.desc}</div>
+              </div>
+            </label>
+          ))}
         </div>
         <div style={{marginTop:14,display:'flex',gap:10}}>
           <button onClick={()=>setSelected(new Set(SHEETS.map(s=>s.key)))}
@@ -514,7 +407,7 @@ export default function AdminExport() {
         </div>
       </div>
 
-      {/* Export button + status */}
+      {/* Export button */}
       <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',padding:'20px'}}>
         <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
           <button onClick={handleExport}
@@ -537,15 +430,14 @@ export default function AdminExport() {
           <div style={{marginTop:16,display:'grid',
             gridTemplateColumns:'repeat(auto-fill,minmax(130px,1fr))',gap:10}}>
             {[
-              ['Members',        stats.members],
-              ['Payments',       stats.payments],
-              ['Expenses',       stats.expenses],
-              ['Projects',       stats.projects],
-              ['Loans',          stats.loans],
-              ['Distributions',  stats.distributions],
-              ['Memoranda',      stats.memoranda],
-              ['Member Files',   stats.totalFiles],
-              ['Sheets',         stats.sheets],
+              ['Members',   stats.members],
+              ['Payments',  stats.payments],
+              ['Expenses',  stats.expenses],
+              ['Projects',  stats.projects],
+              ['Loans',     stats.loans],
+              ['Distributions',stats.distributions],
+              ['Memoranda', stats.memoranda],
+              ['Sheets',    stats.sheets],
             ].map(([l,v])=>(
               <div key={l} style={{background:'#f8fafc',borderRadius:8,padding:'10px 12px'}}>
                 <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
@@ -559,8 +451,8 @@ export default function AdminExport() {
 
       <div style={{marginTop:14,padding:'10px 14px',borderRadius:8,
         background:'#fffbeb',border:'1px solid #fde68a',fontSize:12,color:'#92400e'}}>
-        ⚠️ Export loads all data in one pass — may take 10–30 seconds on large organizations.
-        Drive links in Excel are clickable — click any URL cell to open the file directly in Google Drive.
+        ⚠️ Export loads all data in one pass — on large organizations this may take 10–30 seconds.
+        The file is generated in your browser and downloaded locally. No data leaves your Firestore.
       </div>
     </div>
   );

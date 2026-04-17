@@ -184,11 +184,8 @@ export default function Installment() {
         payload.isContribution = true;
       } else {
         const subType = selectedSpecial.type || 'general';
-        const subIsContrib = subType === 'general'
-          ? true
-          : subType === 'entry_fee'
-            ? !!selectedSpecial.countAsContribution
-            : false; // reregistration_fee is never a contribution
+        // entry_fee and reregistration_fee always go to Expenses Fund — never capital
+        const subIsContrib = subType === 'general'; // only 'general' subs count as contributions
         payload.specialSubId       = selectedSpecial.id;
         payload.specialSubTitle    = selectedSpecial.title;
         payload.specialSubType     = subType;
@@ -418,10 +415,8 @@ export default function Installment() {
                             {s.type === 'entry_fee' && (
                               <div style={{ marginTop:5, display:'flex', gap:6, flexWrap:'wrap' }}>
                                 <span style={{ fontSize:10, fontWeight:700, padding:'2px 8px', borderRadius:99, background:'#dbeafe', color:'#1d4ed8' }}>Entry Fee</span>
-                                <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99,
-                                  background: s.countAsContribution ? '#dcfce7' : '#fef3c7',
-                                  color:      s.countAsContribution ? '#15803d' : '#92400e' }}>
-                                  {s.countAsContribution ? '↗ Counts as contribution' : '→ Expenses Fund'}
+                                <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99, background:'#fef3c7', color:'#92400e' }}>
+                                  → Expenses Fund
                                 </span>
                               </div>
                             )}

@@ -250,7 +250,7 @@ export default function AdminSettings() {
         active:              true,
         // fee-type metadata
         type:                subForm.type || 'general',
-        countAsContribution: subForm.type === 'entry_fee' ? !!subForm.countAsContribution : false,
+        countAsContribution: false,  // entry_fee and reregistration_fee always go to Expenses Fund
         createdAt:           serverTimestamp(),
         createdBy:           user.uid,
       });
@@ -613,16 +613,18 @@ export default function AdminSettings() {
                 </div>
               </div>
 
-              {/* Entry fee — contribution toggle */}
+              {/* Entry fee — always expenses fund (no toggle) */}
               {subForm.type === 'entry_fee' && (
-                <div style={{ background:'#eff6ff', borderRadius:8, padding:'12px 14px', border:'1px solid #bfdbfe', marginBottom:16 }}>
-                  <div style={{ fontSize:13, fontWeight:600, color:'#1e40af', marginBottom:8 }}>Entry Fee Options</div>
-                  <Toggle
-                    label="Count as Capital Contribution"
-                    sub="ON: added to member's capital balance and distributed per fund structure. OFF: goes directly to Expenses Fund (non-refundable, not in capital)."
-                    value={!!subForm.countAsContribution}
-                    onChange={() => setSubForm(p => ({ ...p, countAsContribution: !p.countAsContribution }))}
-                  />
+                <div style={{ background:'#fffbeb', borderRadius:8, padding:'12px 14px', border:'1px solid #fde68a', marginBottom:16 }}>
+                  <div style={{ fontSize:13, fontWeight:600, color:'#92400e', marginBottom:4 }}>
+                    🎫 Entry Fee — Expenses Fund
+                  </div>
+                  <div style={{ fontSize:12, color:'#78350f', lineHeight:1.5 }}>
+                    Entry fees are <strong>non-refundable</strong> and always directed to the <strong>Expenses Fund</strong>.
+                    They do not count as capital contributions and won't appear in members' capital balances.
+                    Payments made via the installment page will automatically appear in
+                    <a href="/admin/entry-fees" style={{ color:'#2563eb', marginLeft:4 }}>Entry Fees →</a>
+                  </div>
                 </div>
               )}
 
@@ -733,10 +735,8 @@ export default function AdminSettings() {
                               {badge.label}
                             </span>
                             {sub.type === 'entry_fee' && (
-                              <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99,
-                                background: sub.countAsContribution ? '#dcfce7' : '#fef3c7',
-                                color:      sub.countAsContribution ? '#15803d' : '#92400e' }}>
-                                {sub.countAsContribution ? '↗ Contribution' : '→ Expenses Fund'}
+                              <span style={{ fontSize:10, padding:'2px 8px', borderRadius:99, background:'#fef3c7', color:'#92400e' }}>
+                                → Expenses Fund
                               </span>
                             )}
                             {sub.type === 'reregistration_fee' && (
@@ -754,6 +754,14 @@ export default function AdminSettings() {
                           </div>
                         </div>
                         <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                          {(sub.type === 'entry_fee' || sub.type === 'reregistration_fee') && (
+                            <a href="/admin/entry-fees"
+                              style={{ padding:'5px 12px', fontSize:12, fontWeight:600, borderRadius:6, cursor:'pointer',
+                                background:'#eff6ff', color:'#1d4ed8', textDecoration:'none',
+                                border:'none', display:'inline-block' }}>
+                              View Fees →
+                            </a>
+                          )}
                           <button onClick={() => toggleSpecialSub(sub)}
                             style={{ padding:'5px 12px', fontSize:12, fontWeight:600, border:'none', borderRadius:6, cursor:'pointer', background: sub.active ? '#fffbeb' : '#dcfce7', color: sub.active ? '#b45309' : '#15803d' }}>
                             {sub.active ? 'Deactivate' : 'Activate'}
