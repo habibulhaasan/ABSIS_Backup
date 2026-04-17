@@ -61,6 +61,15 @@ export default function VerifyPayments() {
       await updateDoc(doc(db, 'organizations', orgId, 'investments', payment.id), {
         status, verifiedAt: serverTimestamp(), verifiedBy: user.uid,
       });
+      // If this is an entry_fee type payment being verified, mark the member's entryFeePaid flag
+      if (status === 'verified' &&
+          (payment.paymentType === 'entry_fee' || payment.specialSubType === 'entry_fee')) {
+        try {
+          await updateDoc(doc(db, 'organizations', orgId, 'members', payment.userId), {
+            entryFeePaid: true,
+          });
+        } catch (_) { /* non-critical */ }
+      }
       const months = (payment.paidMonths||[]).join(', ') || 'your payment';
       const msg = status === 'verified'
         ? `✅ Your payment for ${months} has been verified. Amount: ৳${payment.amount?.toLocaleString()}`

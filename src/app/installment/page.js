@@ -197,6 +197,14 @@ export default function Installment() {
         payload.countAsContribution = subIsContrib;
       }
       await addDoc(collection(db,'organizations',orgId,'investments'), payload);
+      // If this is an entry fee special sub, also mark the member's entryFeePaid flag
+      // so the entry-fees page shows them as paid
+      if (payMode === 'special' && (selectedSpecial?.type === 'entry_fee' || selectedSpecial?.type === 'reregistration_fee')) {
+        const { doc: d2, updateDoc: ud } = await import('firebase/firestore');
+        try {
+          await ud(d2(db,'organizations',orgId,'members',user.uid), { entryFeePaid: true });
+        } catch (_) { /* non-critical — entry fee page can still read from investments */ }
+      }
       setSuccess(true);
       setSelected([]);
       setSelectedSpecial(null);
@@ -387,14 +395,19 @@ export default function Installment() {
             <div className="card">
               <div style={{ fontWeight:600, fontSize:14, color:'#0f172a', marginBottom:4 }}>Special Subscriptions</div>
               <p style={{ fontSize:12, color:'#94a3b8', marginBottom:14 }}>Select one to pay.</p>
-              {specialSubs.filter(s => !paidSpecial.has(s.id)).length === 0 ? (
+              {specialSubs.filter(s => !paidSpecial.has(s.id) &&
+                // Hide entry_fee / reregistration_fee subs if member already paid via entry-fees page
+                !(membership?.entryFeePaid && (s.type === 'entry_fee' || s.type === 'reregistration_fee'))
+              ).length === 0 ? (
                 <div style={{ textAlign:'center', padding:'24px 0', color:'#94a3b8' }}>
                   <div style={{ fontSize:28, marginBottom:8 }}>✅</div>
                   <div style={{ fontSize:13 }}>No pending special subscriptions.</div>
                 </div>
               ) : (
                 <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                  {specialSubs.filter(s => !paidSpecial.has(s.id)).map(s => {
+                  {specialSubs.filter(s => !paidSpecial.has(s.id) &&
+                    !(membership?.entryFeePaid && (s.type === 'entry_fee' || s.type === 'reregistration_fee'))
+                  ).map(s => {
                     const sel      = selectedSpecial?.id === s.id;
                     const deadline = new Date(s.deadline);
                     const daysLeft = Math.ceil((deadline - new Date()) / (1000*60*60*24));

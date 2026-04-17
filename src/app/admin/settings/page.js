@@ -360,6 +360,7 @@ export default function AdminSettings() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
               {[
                 ['baseAmount','Monthly Amount','number'],
+                ['entryFeeAmount','Default Entry Fee (৳)','number'],
                 ['dueDate','Due Day (of month)','number'],
                 ['penalty','Late Fee Amount','number'],
                 ['startDate','Start Date','date'],
