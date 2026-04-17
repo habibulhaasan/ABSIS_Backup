@@ -11,15 +11,7 @@ function pct(n)   { return `${(Number(n)||0).toFixed(1)}%`; }
 function tsDate(ts) {
   if (!ts) return '—';
   const d = ts?.seconds ? new Date(ts.seconds*1000) : ts instanceof Date ? ts : new Date(ts);
-  if (isNaN(d)) return '—';
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-}
-// Always format any date string or timestamp → "15 Apr 2026"
-function fmtDate(val) {
-  if (!val || val === '—') return '—';
-  // Already formatted like "15 Apr 2026"
-  if (typeof val === 'string' && /^\d{2}\s[A-Z][a-z]{2}\s\d{4}$/.test(val)) return val;
-  return tsDate(val);
 }
 function tsSort(ts) {
   if (!ts) return 0;
@@ -55,16 +47,16 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
       sortKey:tsSort(p.createdAt), date:tsDate(p.createdAt),
       desc:'Capital Installment',
       sub:`${m.nameEnglish||m.name||'Member'} — ${p.method||''}`,
-      debit:0, credit:net, instCredit:net, expCredit:0, count:1,
+      debit:0, credit:net, count:1,
       meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
     });
   });
   expenses.forEach(e => {
     rows.push({
       id:`exp-${e.id}`, type:'expense', ts:e.createdAt,
-      sortKey:tsSort(e.createdAt), date:fmtDate(e.date||tsDate(e.createdAt)),
+      sortKey:tsSort(e.createdAt), date:e.date||tsDate(e.createdAt),
       desc:e.title||e.description||'Expense', sub:e.category||'',
-      debit:e.amount||0, credit:0, instCredit:0, expCredit:0, count:0, meta:e,
+      debit:e.amount||0, credit:0, count:0, meta:e,
     });
   });
   fees.forEach(f => {
@@ -72,13 +64,10 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
     const isContrib = !!f.countAsContribution;
     rows.push({
       id:`fee-${f.id}`, type:'entry_fee', ts:f.createdAt,
-      sortKey:tsSort(f.createdAt), date:fmtDate(f.paidAt||tsDate(f.createdAt)),
+      sortKey:tsSort(f.createdAt), date:f.paidAt||tsDate(f.createdAt),
       desc: isContrib ? 'Entry Fee (Capital)' : 'Entry Fee (Expenses Fund)',
       sub:m.nameEnglish||m.name||'Member',
-      debit:0, credit:f.amount||0,
-      instCredit: isContrib ? (f.amount||0) : 0,
-      expCredit:  isContrib ? 0 : (f.amount||0),
-      count:0,
+      debit:0, credit:f.amount||0, count:0,
       meta:{...f, memberName:m.nameEnglish||m.name||'—'},
     });
   });
@@ -90,7 +79,7 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
         sortKey:tsSort(l.disbursedAt), date:tsDate(l.disbursedAt),
         desc:'Loan Disbursed',
         sub:`${m.nameEnglish||m.name||'Member'} — ${l.purpose||''}`,
-        debit:l.amount, credit:0, instCredit:0, expCredit:0, count:0,
+        debit:l.amount, credit:0, count:0,
         meta:{...l, memberName:m.nameEnglish||m.name||'—'},
       });
     }
@@ -99,23 +88,16 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
       rows.push({
         id:`loanr-${l.id}-${ri}`, type:'loan_repayment',
         ts:{seconds:d2.getTime()/1000}, sortKey:d2.getTime()/1000,
-        date:fmtDate(r.date), desc:'Loan Repayment',
+        date:r.date, desc:'Loan Repayment',
         sub:`${m.nameEnglish||m.name||'Member'} — ${l.purpose||''}`,
-        debit:0, credit:r.amount, instCredit:0, expCredit:0, count:0,
+        debit:0, credit:r.amount, count:0,
         meta:{...l, repayment:r, memberName:m.nameEnglish||m.name||'—'},
       });
     });
   });
   rows.sort((a,b) => a.sortKey - b.sortKey);
-  let bal = 0, instBal = 0, expBal = 0;
-  rows.forEach(r => {
-    bal     += r.credit - r.debit;
-    instBal += r.instCredit - (r.type==='loan_disbursement' ? r.debit : 0);
-    expBal  += r.expCredit  - (r.type==='expense' ? r.debit : 0);
-    r.balance     = bal;
-    r.instBalance = instBal;
-    r.expBalance  = expBal;
-  });
+  let bal = 0;
+  rows.forEach(r => { bal += r.credit - r.debit; r.balance = bal; });
   return rows;
 }
 
@@ -133,8 +115,6 @@ function groupEntries(entries, keyFn, labelFn) {
     ...g,
     openingBalance: i===0 ? 0 : arr[i-1].closingBalance,
     closingBalance: g.entries[g.entries.length-1]?.balance ?? 0,
-    closingInstBalance: g.entries[g.entries.length-1]?.instBalance ?? 0,
-    closingExpBalance:  g.entries[g.entries.length-1]?.expBalance  ?? 0,
   }));
 }
 
@@ -267,11 +247,10 @@ function GroupDrill({entries}) {
 
 function LedgerRow({row, isOpen, onToggle, isGrouped}) {
   const balance = isGrouped ? row.closingBalance : row.balance;
-  const COLS = '0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 0.9fr 0.9fr 1fr 0.4fr';
   return (
     <>
       <div onClick={onToggle}
-        style={{display:'grid',gridTemplateColumns:COLS,
+        style={{display:'grid',gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 1fr 0.4fr',
           padding:'10px 16px',cursor:'pointer',
           background:isOpen?'#eff6ff':'transparent',
           borderBottom:'1px solid #f1f5f9',alignItems:'center',transition:'background 0.1s'}}
@@ -310,17 +289,6 @@ function LedgerRow({row, isOpen, onToggle, isGrouped}) {
         <div style={{textAlign:'right',fontSize:12,color:'#64748b'}}>
           {row.count>0 ? (isGrouped?row.count:1)+' inst.' : '—'}
         </div>
-        {/* Installment Balance */}
-        <div style={{textAlign:'right',fontSize:12,fontWeight:600,
-          color:((isGrouped?row.closingInstBalance:row.instBalance)??0)>=0?'#1d4ed8':'#dc2626'}}>
-          {fmt(isGrouped ? (row.closingInstBalance??0) : (row.instBalance??0))}
-        </div>
-        {/* Expenses Fund Balance */}
-        <div style={{textAlign:'right',fontSize:12,fontWeight:600,
-          color:((isGrouped?row.closingExpBalance:row.expBalance)??0)>=0?'#d97706':'#dc2626'}}>
-          {fmt(isGrouped ? (row.closingExpBalance??0) : (row.expBalance??0))}
-        </div>
-        {/* Net Balance */}
         <div style={{textAlign:'right',fontWeight:700,fontSize:13,
           color:(balance??0)>=0?'#0f172a':'#dc2626'}}>
           {fmt(balance??0)}
@@ -396,116 +364,6 @@ function FundCard({label, icon, alloc, used, color, bg, desc, budgetType, budget
       )}
     </div>
   );
-}
-
-// ── CSV Export ────────────────────────────────────────────────────────────────
-function exportCSV(entries, orgData) {
-  const org = orgData || {};
-  const now  = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-  const raw  = (n) => (Number(n)||0);
-
-  // ── Summary block ──────────────────────────────────────────────────────────
-  const totalCredit   = entries.reduce((s,e)=>s+e.credit, 0);
-  const totalDebit    = entries.reduce((s,e)=>s+e.debit,  0);
-  const totalInst     = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
-  const totalExpFund  = entries.filter(e=>e.type==='entry_fee'&&!e.meta?.countAsContribution).reduce((s,e)=>s+e.credit,0);
-  const totalFeesCap  = entries.filter(e=>e.type==='entry_fee'&&e.meta?.countAsContribution).reduce((s,e)=>s+e.credit,0);
-  const totalExpenses = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
-  const totalLoanOut  = entries.filter(e=>e.type==='loan_disbursement').reduce((s,e)=>s+e.debit,0);
-  const totalLoanIn   = entries.filter(e=>e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
-  const closing       = entries.length>0 ? entries[entries.length-1].balance : 0;
-  const closingInst   = entries.length>0 ? entries[entries.length-1].instBalance : 0;
-  const closingExp    = entries.length>0 ? entries[entries.length-1].expBalance : 0;
-
-  const rows = [];
-
-  // Header info
-  rows.push([`Organization: ${org.name||'—'}`]);
-  rows.push([`Account Book Export — Generated: ${now}`]);
-  rows.push([]);
-
-  // Summary
-  rows.push(['=== FINANCIAL SUMMARY ===']);
-  rows.push(['Metric', 'Amount (BDT)']);
-  rows.push(['Total Income (Credits)', raw(totalCredit)]);
-  rows.push(['  — Capital Installments', raw(totalInst)]);
-  rows.push(['  — Entry Fees (Capital)', raw(totalFeesCap)]);
-  rows.push(['  — Entry Fees (Expenses Fund)', raw(totalExpFund)]);
-  rows.push(['  — Loan Repayments', raw(totalLoanIn)]);
-  rows.push(['Total Outflow (Debits)', raw(totalDebit)]);
-  rows.push(['  — Expenses', raw(totalExpenses)]);
-  rows.push(['  — Loans Disbursed', raw(totalLoanOut)]);
-  rows.push(['Net Balance', raw(closing)]);
-  rows.push(['Installment / Capital Balance', raw(closingInst)]);
-  rows.push(['Expenses Fund Balance', raw(closingExp)]);
-  rows.push(['Total Transactions', entries.length]);
-  rows.push(['Installment Count', entries.filter(e=>e.type==='installment').length]);
-  rows.push([]);
-
-  // Type breakdown
-  rows.push(['=== TRANSACTION TYPE BREAKDOWN ===']);
-  rows.push(['Type', 'Count', 'Total Credit (BDT)', 'Total Debit (BDT)']);
-  const types = ['installment','expense','entry_fee','loan_disbursement','loan_repayment'];
-  types.forEach(t => {
-    const grp = entries.filter(e=>e.type===t);
-    rows.push([
-      TYPE_CFG[t]?.label||t,
-      grp.length,
-      grp.reduce((s,e)=>s+e.credit,0),
-      grp.reduce((s,e)=>s+e.debit,0),
-    ]);
-  });
-  rows.push([]);
-
-  // Full ledger
-  rows.push(['=== FULL TRANSACTION LEDGER ===']);
-  rows.push([
-    'Date','Type','Description','Member / Detail','Payment Method',
-    'Gross Amount','Gateway Fee','Net Credit','Debit',
-    'Installment Count','Installment Balance','Expenses Fund Balance','Net Balance',
-    'Notes / Category',
-  ]);
-
-  entries.forEach(e => {
-    const m = e.meta || {};
-    const method = m.method || m.paymentMethod || '—';
-    const gross  = e.type==='installment' ? raw(m.amount) : raw(e.credit||e.debit);
-    const fee    = raw(m.gatewayFee);
-    const notes  = m.category || m.notes || m.purpose || '';
-    rows.push([
-      e.date,
-      TYPE_CFG[e.type]?.label || e.type,
-      e.desc,
-      e.sub || '—',
-      method,
-      gross,
-      fee > 0 ? fee : '',
-      e.credit > 0 ? raw(e.credit) : '',
-      e.debit  > 0 ? raw(e.debit)  : '',
-      e.count  > 0 ? 1 : '',
-      raw(e.instBalance),
-      raw(e.expBalance),
-      raw(e.balance),
-      notes,
-    ]);
-  });
-
-  // Encode CSV
-  const csv = rows.map(r =>
-    r.map(cell => {
-      const s = String(cell ?? '');
-      return s.includes(',') || s.includes('"') || s.includes('\n')
-        ? `"${s.replace(/"/g,'""')}"` : s;
-    }).join(',')
-  ).join('\r\n');
-
-  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `account-book-${new Date().toISOString().slice(0,10)}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 const PRINT_STYLES = `@media print{body *{visibility:hidden;}#account-book-report,#account-book-report *{visibility:visible;}#account-book-report{position:absolute;top:0;left:0;width:100%;}.no-print{display:none!important;}table{page-break-inside:auto;}tr{page-break-inside:avoid;}}`;
@@ -827,13 +685,8 @@ export default function AdminAccountBook() {
       e.desc.toLowerCase().includes(search.toLowerCase()) ||
       e.sub.toLowerCase().includes(search.toLowerCase())
     );
-    let bal = 0, instBal = 0, expBal = 0;
-    return rows.map(r => {
-      bal     += r.credit - r.debit;
-      instBal += r.instCredit - (r.type==='loan_disbursement' ? r.debit : 0);
-      expBal  += r.expCredit  - (r.type==='expense' ? r.debit : 0);
-      return {...r, balance:bal, instBalance:instBal, expBalance:expBal};
-    });
+    let bal = 0;
+    return rows.map(r => { bal += r.credit-r.debit; return {...r, balance:bal}; });
   }, [allEntries, typeFilter, search]);
 
   const monthly  = useMemo(()=>groupEntries(filteredEntries,ymKey,ymLabel),[filteredEntries]);
@@ -884,8 +737,14 @@ export default function AdminAccountBook() {
       alloc:computeFundAlloc('benevolent',totalCapital,settings), used:usedBenevolent,
       budgetType:fb.benevolent?.type, budgetValue:fb.benevolent?.value},
     {key:'expenses', label:'Expenses Fund', icon:'🧾', color:'#d97706', bg:'#fffbeb',
-      desc:'Operational expenses and running costs',
-      alloc:computeFundAlloc('expenses',totalCapital,settings), used:totalExpenses,
+      desc:'Operational expenses, entry fees and re-registration fees',
+      alloc:computeFundAlloc('expenses',totalCapital,settings),
+      // Expenses fund usage = admin-recorded expenses + entry fees (both collections) + re-reg fees
+      used:totalExpenses + totalFees + payments
+        .filter(p => p.status==='verified'
+          && (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee')
+          && p.isContribution === false)
+        .reduce((s,p)=>s+(p.amount||0),0),
       budgetType:fb.expenses?.type, budgetValue:fb.expenses?.value},
   ];
   const hasBudgets = Object.values(fb).some(f=>f?.value);
@@ -1039,7 +898,7 @@ export default function AdminAccountBook() {
                         <div style={{width:24,height:24,borderRadius:'50%',background:'#dbeafe',
                           display:'flex',alignItems:'center',justifyContent:'center',
                           fontSize:10,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                          {initials(r.nameEnglish||r.name)}
+                          {r.photoURL?<img src={r.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(r.nameEnglish||r.name)}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
@@ -1118,12 +977,6 @@ export default function AdminAccountBook() {
                   placeholder="Search transactions…"
                   style={{flex:1,minWidth:160,padding:'7px 12px',borderRadius:8,
                     border:'1px solid #e2e8f0',fontSize:13}}/>
-                <button onClick={()=>exportCSV(filteredEntries, orgData)}
-                  style={{padding:'7px 14px',borderRadius:8,fontSize:12,cursor:'pointer',
-                    border:'1px solid #16a34a',background:'#f0fdf4',color:'#15803d',fontWeight:700,
-                    display:'flex',alignItems:'center',gap:5,flexShrink:0}}>
-                  ⬇ Export CSV
-                </button>
               </div>
 
               <div style={{display:'flex',gap:5,marginBottom:16,flexWrap:'wrap'}}>
@@ -1153,23 +1006,23 @@ export default function AdminAccountBook() {
               ) : (
                 <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 0.9fr 0.9fr 1fr 0.4fr',
+                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 1fr 0.4fr',
                     padding:'9px 16px',background:'#0f172a'}}>
-                    {['Date','Type','Description','Debit (−)','Credit (+)','Inst.','Inst. Bal.','Exp. Bal.','Net Balance',''].map(h => (
+                    {['Date','Type','Description','Debit (−)','Credit (+)','Inst.','Balance',''].map(h => (
                       <div key={h} style={{fontSize:11,fontWeight:700,color:'#94a3b8',
                         textTransform:'uppercase',letterSpacing:'0.06em',
-                        textAlign:['Debit (−)','Credit (+)','Inst.','Inst. Bal.','Exp. Bal.','Net Balance'].includes(h)?'right':'left'}}>
+                        textAlign:['Debit (−)','Credit (+)','Inst.','Balance'].includes(h)?'right':'left'}}>
                         {h}
                       </div>
                     ))}
                   </div>
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 0.9fr 0.9fr 1fr 0.4fr',
+                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 1fr 0.4fr',
                     padding:'8px 16px',background:'#fafafa',borderBottom:'2px solid #e2e8f0'}}>
                     <div style={{fontSize:12,color:'#94a3b8'}}>—</div>
                     <div/>
                     <div style={{fontSize:12,color:'#64748b',fontStyle:'italic'}}>Opening Balance</div>
-                    <div/><div/><div/><div/><div/>
+                    <div/><div/><div/>
                     <div style={{textAlign:'right',fontWeight:700,color:'#64748b'}}>{fmt(0)}</div>
                     <div/>
                   </div>
@@ -1183,7 +1036,7 @@ export default function AdminAccountBook() {
                     />
                   ))}
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 0.9fr 0.9fr 1fr 0.4fr',
+                    gridTemplateColumns:'0.9fr 0.5fr 2fr 1fr 1fr 0.7fr 1fr 0.4fr',
                     padding:'10px 16px',background:'#0f172a'}}>
                     <div style={{fontSize:12,color:'#94a3b8',fontWeight:600}}>Closing</div>
                     <div/>
@@ -1195,12 +1048,6 @@ export default function AdminAccountBook() {
                       {totalCredit>0?fmt(totalCredit):'—'}
                     </div>
                     <div style={{textAlign:'right',fontWeight:700,color:'#93c5fd'}}>{instCount}</div>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#93c5fd'}}>
-                      {fmt(filteredEntries.length>0?filteredEntries[filteredEntries.length-1].instBalance:0)}
-                    </div>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#fcd34d'}}>
-                      {fmt(filteredEntries.length>0?filteredEntries[filteredEntries.length-1].expBalance:0)}
-                    </div>
                     <div style={{textAlign:'right',fontWeight:800,fontSize:15,color:'#fff'}}>
                       {fmt(ledgerBalance)}
                     </div>
@@ -1260,7 +1107,7 @@ export default function AdminAccountBook() {
                           <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',
                             display:'flex',alignItems:'center',justifyContent:'center',
                             fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                            {initials(r.nameEnglish||r.name)}
+                            {r.photoURL?<img src={r.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(r.nameEnglish||r.name)}
                           </div>
                           <div>
                             <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>
@@ -1363,7 +1210,7 @@ export default function AdminAccountBook() {
                   bg={FUNDS.reduce((s,f)=>s+f.alloc-f.used,0)>=0?'#f0fdf4':'#fef2f2'}/>
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16}}>
-                {FUNDS.map(f => <FundCard key={f.key} {...f}/>)}
+                {FUNDS.map(({key:fKey, ...fProps}) => <FundCard key={fKey} {...fProps}/>)}
               </div>
             </div>
           )}

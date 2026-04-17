@@ -608,7 +608,7 @@ function NewDistributionModal({ onClose, onSave, members, payments, eligibleProj
                             <div style={{width:28,height:28,borderRadius:'50%',background:'#dbeafe',
                               display:'flex',alignItems:'center',justifyContent:'center',
                               fontSize:10,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                              {initials(ms.nameEnglish)}
+                              {ms.photoURL?<img src={ms.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(ms.nameEnglish)}
                             </div>
                             <div>
                               <div style={{fontWeight:600,color:'#0f172a'}}>{ms.nameEnglish||'—'}</div>
@@ -860,7 +860,7 @@ function DistributionDetailModal({ dist, onClose, onApprove, onMarkDistributed, 
                           <div style={{width:28,height:28,borderRadius:'50%',background:'#dbeafe',
                             display:'flex',alignItems:'center',justifyContent:'center',
                             fontSize:10,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                            {initials(ms.nameEnglish||ms.name)}
+                            {ms.photoURL?<img src={ms.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(ms.nameEnglish||ms.name)}
                           </div>
                           <div>
                             <div style={{fontWeight:600,color:'#0f172a'}}>

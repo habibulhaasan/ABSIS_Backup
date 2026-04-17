@@ -61,6 +61,8 @@ const PATHS = {
   accountBook:   'M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15zM8 7h8M8 11h8M8 15h5',
   memo:          'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-4M9 15l3 3 3-3',
   export:        'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
+  payGrid:       'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
+  verify2:       'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
 };
 
 const PUBLIC = ['/', '/login', '/register', '/forgot-password', '/create-org', '/select-org', '/join', '/pending-approval'];
@@ -424,62 +426,60 @@ export default function Sidebar() {
                   <NavItem label="Pay Installment"   path="/installment" icon={PATHS.pay}     pathname={pathname} onClick={closeDrawer} />
                 </NavGroup>
 
-                {/* ── Finance ── */}
-                <NavGroup label="Finance" icon={PATHS.verify} pathname={pathname}
-                  paths={['/admin','/admin/income','/admin/expenses','/admin/penalties','/admin/investments','/cashier/transfer','/admin/entry-fees','/admin/fund-structure','/admin/assets','/admin/loans']}>
-                  {orgF.assetRegistry    && <NavItem label="Asset Registry" path="/admin/assets"         icon={PATHS.asset}     pathname={pathname} onClick={closeDrawer} />}
-                  {orgF.entryFeeTracking && <NavItem label="Entry Fees"      path="/admin/entry-fees"     icon={PATHS.entryFee}  pathname={pathname} onClick={closeDrawer} />}
-                  <NavItem label="Expenses"         path="/admin/expenses"    icon={PATHS.expenses}         pathname={pathname} onClick={closeDrawer} />
-                  {orgF.fundStructure    && <NavItem label="Fund Breakdown"   path="/admin/account-book?tab=funds" icon={PATHS.fund} pathname={pathname} onClick={closeDrawer} />}
-                  {orgF.cashierRole      && <NavItem label="Fund Transfers"   path="/cashier/transfer"     icon={PATHS.transfer}  pathname={pathname} onClick={closeDrawer} />}
-                  <NavItem label="Income"           path="/admin/income"      icon={PATHS.income}           pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Investments"      path="/admin/investments" icon={PATHS.invest}           pathname={pathname} onClick={closeDrawer} />
-                  {orgF.qardHasana       && <NavItem label="Loans"            path="/admin/loans"          icon={PATHS.loan}      pathname={pathname} onClick={closeDrawer} />}
-                  <NavItem label="Penalties"        path="/admin/penalties"   icon={PATHS.penalty}          pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Verify Payments"  path="/admin"             icon={PATHS.verify}           pathname={pathname} onClick={closeDrawer} />
+                {/* ── QUICK ACCESS: flat items, always visible ────── */}
+                <div style={{ display:'flex', flexDirection:'column', gap:1, marginBottom:4 }}>
+                  <NavItem label="Verify Payments"  path="/admin"              icon={PATHS.verify}      pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Account Book"     path="/admin/account-book" icon={PATHS.accountBook} pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Members"          path="/admin/members"      icon={PATHS.members}     pathname={pathname} onClick={closeDrawer} />
+                </div>
+
+                {/* ── OPERATIONS ──────────────────────────────────── */}
+                <NavGroup label="Operations" icon={PATHS.income} pathname={pathname}
+                  paths={['/admin/expenses','/admin/penalties','/admin/entry-fees','/admin/investments']}>
+                  {orgF.entryFeeTracking && <NavItem label="Entry Fees"   path="/admin/entry-fees" icon={PATHS.entryFee} pathname={pathname} onClick={closeDrawer} />}
+                  <NavItem label="Expenses"           path="/admin/expenses"    icon={PATHS.expenses} pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Investments"        path="/admin/investments" icon={PATHS.invest}   pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Penalties"          path="/admin/penalties"   icon={PATHS.penalty}  pathname={pathname} onClick={closeDrawer} />
                 </NavGroup>
 
-                {/* ── Investments (only shown when any feature is unlocked) ── */}
-                {(orgF.investmentPortfolio || orgF.profitDistribution) && (
-                  <NavGroup label="Investments" icon={PATHS.portfolio} pathname={pathname}
-                    paths={['/admin/projects','/admin/distribution']}>
-                    {orgF.profitDistribution  && <NavItem label="Distribution" path="/admin/distribution" icon={PATHS.distribute} pathname={pathname} onClick={closeDrawer} />}
-                    {orgF.investmentPortfolio && <NavItem label="Portfolio"    path="/admin/projects"     icon={PATHS.portfolio}  pathname={pathname} onClick={closeDrawer} />}
+                {/* ── INVESTMENTS ─────────────────────────────────── */}
+                {(orgF.investmentPortfolio || orgF.profitDistribution || orgF.qardHasana || orgF.assetRegistry || orgF.cashierRole) && (
+                  <NavGroup label="Capital" icon={PATHS.portfolio} pathname={pathname}
+                    paths={['/admin/projects','/admin/distribution','/admin/loans','/admin/assets','/cashier/transfer']}>
+                    {orgF.assetRegistry       && <NavItem label="Assets"       path="/admin/assets"       icon={PATHS.asset}     pathname={pathname} onClick={closeDrawer} />}
+                    {orgF.cashierRole         && <NavItem label="Fund Transfers" path="/cashier/transfer"   icon={PATHS.transfer}  pathname={pathname} onClick={closeDrawer} />}
+                    {orgF.qardHasana          && <NavItem label="Loans"         path="/admin/loans"        icon={PATHS.loan}      pathname={pathname} onClick={closeDrawer} />}
+                    {orgF.profitDistribution  && <NavItem label="Distribution"  path="/admin/distribution" icon={PATHS.distribute} pathname={pathname} onClick={closeDrawer} />}
+                    {orgF.investmentPortfolio && <NavItem label="Portfolio"     path="/admin/projects"     icon={PATHS.portfolio} pathname={pathname} onClick={closeDrawer} />}
                   </NavGroup>
                 )}
 
-                {/* ── Reports ── */}
+                {/* ── REPORTS ─────────────────────────────────────── */}
                 <NavGroup label="Reports" icon={PATHS.summary} pathname={pathname}
-                  paths={['/admin/account-book','/admin/monthly-ledger','/admin/ledger','/admin/reports','/admin/memoranda']}>
-                  <NavItem label="Account Book"     path="/admin/account-book"      icon={PATHS.accountBook}   pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Member Ledger"    path="/admin/ledger"            icon={PATHS.ledger}        pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Monthly Ledger"   path="/admin/monthly-ledger"    icon={PATHS.monthlyLedger} pathname={pathname} onClick={closeDrawer} />
-                  {orgF.advancedReports  && <NavItem label="Advanced Reports"  path="/admin/reports"           icon={PATHS.reports}   pathname={pathname} onClick={closeDrawer} />}
-                  {orgF.quarterlyReports && <NavItem label="Quarterly Reports" path="/admin/reports/quarterly" icon={PATHS.quarterly} pathname={pathname} onClick={closeDrawer} />}
-                  <NavItem label="Memoranda"        path="/admin/memoranda"         icon={PATHS.memo}          pathname={pathname} onClick={closeDrawer} />
+                  paths={['/admin/ledger','/admin/monthly-ledger','/admin/subscriptionsgrid','/admin/reports','/admin/memoranda']}>
+                  <NavItem label="Member Ledger"    path="/admin/ledger"             icon={PATHS.ledger}        pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Monthly Ledger"   path="/admin/monthly-ledger"     icon={PATHS.monthlyLedger} pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Payment Grid"     path="/admin/subscriptionsgrid"  icon={PATHS.payGrid}       pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Memoranda"        path="/admin/memoranda"          icon={PATHS.memo}          pathname={pathname} onClick={closeDrawer} />
+                  {orgF.advancedReports  && <NavItem label="Advanced Reports"  path="/admin/reports"            icon={PATHS.reports}   pathname={pathname} onClick={closeDrawer} />}
+                  {orgF.quarterlyReports && <NavItem label="Quarterly Reports" path="/admin/reports/quarterly"  icon={PATHS.quarterly} pathname={pathname} onClick={closeDrawer} />}
                 </NavGroup>
 
-                {/* ── People ── */}
+                {/* ── PEOPLE ──────────────────────────────────────── */}
                 <NavGroup label="People" icon={PATHS.members} pathname={pathname}
-                  paths={['/admin/members','/admin/subscriptions','/admin/notifications']}>
-                  <NavItem label="Member List"   path="/admin/members"       icon={PATHS.members}      pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Notifications" path="/admin/notifications" icon={PATHS.bell}         pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Subscriptions" path="/admin/subscriptions" icon={PATHS.subscription} pathname={pathname} onClick={closeDrawer} />
-                </NavGroup>
-
-                {/* ── Library (only shown when any feature is unlocked) ── */}
-                {(orgF.fileLibrary || orgF.memberDirectory || orgF.charityTracking) && (
-                  <NavGroup label="Library" icon={PATHS.folder} pathname={pathname}
-                    paths={['/admin/files','/admin/charity','/files','/members']}>
+                  paths={['/admin/subscriptions','/admin/notifications']}>
+                  <NavItem label="Notifications"  path="/admin/notifications" icon={PATHS.bell}         pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Subscriptions"  path="/admin/subscriptions" icon={PATHS.subscription} pathname={pathname} onClick={closeDrawer} />
+                  {(orgF.fileLibrary||orgF.memberDirectory||orgF.charityTracking) && <>
                     {orgF.charityTracking  && <NavItem label="Charity"          path="/admin/charity" icon={PATHS.charity}   pathname={pathname} onClick={closeDrawer} />}
                     {orgF.fileLibrary      && <NavItem label="File Library"     path="/admin/files"   icon={PATHS.folder}    pathname={pathname} onClick={closeDrawer} />}
                     {orgF.memberDirectory  && <NavItem label="Member Directory" path="/members"       icon={PATHS.directory} pathname={pathname} onClick={closeDrawer} />}
-                  </NavGroup>
-                )}
+                  </>}
+                </NavGroup>
 
-                {/* ── Settings + Export ── always visible, always last */}
-                <div style={{ marginTop:4, display:'flex', flexDirection:'column', gap:2 }}>
-                  <NavItem label="Export Data" path="/admin/export"  icon={PATHS.export}   pathname={pathname} onClick={closeDrawer} />
+                {/* ── SYSTEM: always last, flat ────────────────────── */}
+                <div style={{ marginTop:4, display:'flex', flexDirection:'column', gap:1 }}>
+                  <NavItem label="Export Data" path="/admin/export"   icon={PATHS.export}   pathname={pathname} onClick={closeDrawer} />
                   <NavItem label="Settings"    path="/admin/settings" icon={PATHS.settings} pathname={pathname} onClick={closeDrawer} />
                 </div>
               </>
