@@ -41,8 +41,7 @@ export default function AdminEntryFees() {
   const [toast,     setToast]     = useState('');
   const [investmentPaidUids, setInvestmentPaidUids] = useState(new Set());
   const [search,    setSearch]    = useState('');
-  const [feeTabState, setFeeTabState] = useState('records');
-  const feeTab = feeTabState;
+  const [feeTab,    setFeeTab]    = useState('records');
 
   // Modal for "Mark as Paid"
   const [markPaidModal, setMarkPaidModal] = useState(null);
@@ -107,9 +106,9 @@ export default function AdminEntryFees() {
         notes:form.notes, recordedBy:user.uid, createdAt:serverTimestamp(),
         paymentType:    'entry_fee',
         isContribution: false,
-        fundDestination: 'expenses_fund',  // NEW
-        isReversed: false,                  // NEW
-        metadata: { version: 2 },           // NEW
+        fundDestination: 'expenses_fund',
+        isReversed: false,
+        metadata: { version: 2 },
       });
       // Mark member as entry fee paid
       batch.update(doc(db,'organizations',orgId,'members',form.userId),{entryFeePaid:true});
@@ -141,7 +140,6 @@ export default function AdminEntryFees() {
     setSaving(false);
   };
 
-  // NEW: Mark unpaid member as paid (admin override)
   const handleMarkPaid = async (memberId, memberName) => {
     setMarkPaidModal({ memberId, memberName });
     setMarkPaidForm({ method: 'Cash', paidAt: new Date().toISOString().split('T')[0], notes: 'Admin marked as paid' });
@@ -152,8 +150,6 @@ export default function AdminEntryFees() {
     setMarkPaidSaving(true);
     try {
       const batch = writeBatch(db);
-
-      // Create entry fee record
       const feeRef = doc(collection(db,'organizations',orgId,'entryFees'));
       batch.set(feeRef,{
         userId: markPaidModal.memberId,
@@ -165,18 +161,14 @@ export default function AdminEntryFees() {
         createdAt: serverTimestamp(),
         paymentType: 'entry_fee',
         isContribution: false,
-        fundDestination: 'expenses_fund',  // NEW
-        isReversed: false,                  // NEW
-        metadata: { version: 2 },           // NEW
+        fundDestination: 'expenses_fund',
+        isReversed: false,
+        metadata: { version: 2 },
       });
-
-      // Update member
       batch.update(doc(db,'organizations',orgId,'members',markPaidModal.memberId),{
         entryFeePaid: true
       });
-
       await batch.commit();
-      
       setMarkPaidModal(null);
       setMarkPaidForm({ method: 'Cash', paidAt: new Date().toISOString().split('T')[0], notes: '' });
       showToast('✅ Member marked as paid!');
@@ -186,7 +178,6 @@ export default function AdminEntryFees() {
     setMarkPaidSaving(false);
   };
 
-  // NEW: Enhanced delete with reverse accounting
   const handleDelete = async (fee) => {
     if (!confirm('Delete this entry fee record? This will create a reversal entry.')) return;
     try {
@@ -265,48 +256,52 @@ export default function AdminEntryFees() {
           fontSize:13,marginBottom:16,boxSizing:'border-box'}}/>
 
       {/* ── PAYMENT RECORDS TAB ── */}
-      {feeTab === 'records' && (loading ? (
-        <div style={{textAlign:'center',padding:'60px 20px',color:'#94a3b8'}}>Loading…</div>
-      ) : filtered.length===0 ? (
-        <div style={{textAlign:'center',padding:'60px 20px'}}>
-          <div style={{fontSize:36,marginBottom:10}}>🧾</div>
-          <div style={{fontWeight:600,color:'#0f172a',marginBottom:4}}>No entry fee records yet</div>
-          <button onClick={()=>setShowAdd(true)} className="btn-primary" style={{padding:'10px 24px',marginTop:8}}>+ Record Payment</button>
-        </div>
-      ) : (
-        <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
-            {['Member','Amount','Method','Source','Date',''].map(h=>(
-              <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.06em'}}>{h}</div>
-            ))}
-          </div>
-          {filtered.map((fee,i) => {
-            const m = memberMap[fee.userId];
-            const viaInstallment = investmentPaidUids.has(fee.userId) && !fee.recordedBy;
-            return (
-              <div key={fee.id} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9',alignItems:'center',opacity:fee.isReversed?0.5:1}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                    {initials(m?.nameEnglish||m?.name)}
-                  </div>
-                  <div>
-                    <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{m?.nameEnglish||m?.name||'Unknown'}</div>
-                    {m?.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
-                  </div>
-                </div>
-                <div style={{fontWeight:700,color:'#15803d'}}>{fmt(fee.amount)}</div>
-                <div style={{fontSize:12,color:'#64748b'}}>{fee.method}</div>
-                <div style={{fontSize:11,color:'#94a3b8'}}>{viaInstallment?'Installment':'Entry Fees'}</div>
-                <div style={{fontSize:12,color:'#64748b'}}>{tsDate(fee.paidAt||fee.createdAt)}</div>
-                <div style={{display:'flex',gap:6}}>
-                  <button onClick={()=>handleDelete(fee)} style={{padding:'4px 8px',fontSize:11,border:'1px solid #fee2e2',background:'#fff5f5',color:'#dc2626',borderRadius:4,cursor:'pointer'}}>
-                    {fee.isReversed ? '↩️ Reversed' : 'Delete'}
-                  </button>
-                </div>
+      {feeTab === 'records' && (
+        <>
+          {loading ? (
+            <div style={{textAlign:'center',padding:'60px 20px',color:'#94a3b8'}}>Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{textAlign:'center',padding:'60px 20px'}}>
+              <div style={{fontSize:36,marginBottom:10}}>🧾</div>
+              <div style={{fontWeight:600,color:'#0f172a',marginBottom:4}}>No entry fee records yet</div>
+              <button onClick={()=>setShowAdd(true)} className="btn-primary" style={{padding:'10px 24px',marginTop:8}}>+ Record Payment</button>
+            </div>
+          ) : (
+            <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
+                {['Member','Amount','Method','Source','Date',''].map(h=>(
+                  <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.06em'}}>{h}</div>
+                ))}
               </div>
-            );
-          })}
-        </div>
+              {filtered.map((fee,i) => {
+                const m = memberMap[fee.userId];
+                const viaInstallment = investmentPaidUids.has(fee.userId) && !fee.recordedBy;
+                return (
+                  <div key={fee.id} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9',alignItems:'center',opacity:fee.isReversed?0.5:1}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
+                        {initials(m?.nameEnglish||m?.name)}
+                      </div>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{m?.nameEnglish||m?.name||'Unknown'}</div>
+                        {m?.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
+                      </div>
+                    </div>
+                    <div style={{fontWeight:700,color:'#15803d'}}>{fmt(fee.amount)}</div>
+                    <div style={{fontSize:12,color:'#64748b'}}>{fee.method}</div>
+                    <div style={{fontSize:11,color:'#94a3b8'}}>{viaInstallment?'Installment':'Entry Fees'}</div>
+                    <div style={{fontSize:12,color:'#64748b'}}>{tsDate(fee.paidAt||fee.createdAt)}</div>
+                    <div style={{display:'flex',gap:6}}>
+                      <button onClick={()=>handleDelete(fee)} style={{padding:'4px 8px',fontSize:11,border:'1px solid #fee2e2',background:'#fff5f5',color:'#dc2626',borderRadius:4,cursor:'pointer'}}>
+                        {fee.isReversed ? '↩️ Reversed' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── PAID MEMBERS TAB ── */}
