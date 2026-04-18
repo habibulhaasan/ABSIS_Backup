@@ -1,11 +1,13 @@
 // src/app/admin/entry-fees/page.js
+// ENHANCED: Phase 2 - Mark as Paid + Reverse Accounting
 'use client';
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import { collection, onSnapshot, doc, getDoc, addDoc, updateDoc, deleteDoc,
-  query, orderBy, serverTimestamp, getDocs } from 'firebase/firestore';
+  query, orderBy, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import Modal from '@/components/Modal';
+import { reverseEntryFee } from '@/lib/reverseAccountingUtils';
 
 function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
 function tsDate(ts) {
@@ -39,8 +41,13 @@ export default function AdminEntryFees() {
   const [toast,     setToast]     = useState('');
   const [investmentPaidUids, setInvestmentPaidUids] = useState(new Set());
   const [search,    setSearch]    = useState('');
-  const [feeTabState, setFeeTabState] = useState('records'); // 'records'|'paid'|'unpaid'
+  const [feeTabState, setFeeTabState] = useState('records');
   const feeTab = feeTabState;
+
+  // Modal for "Mark as Paid"
+  const [markPaidModal, setMarkPaidModal] = useState(null);
+  const [markPaidForm, setMarkPaidForm] = useState({ method: 'Cash', paidAt: new Date().toISOString().split('T')[0], notes: '' });
+  const [markPaidSaving, setMarkPaidSaving] = useState(false);
 
   // Add form state
   const [form, setForm] = useState({ userId:'', amount:'', method:'Cash', paidAt:'', notes:'' });
@@ -90,10 +97,7 @@ export default function AdminEntryFees() {
     if (!form.paidAt)  return alert('Select payment date.');
     setSaving(true);
     try {
-      const { writeBatch: wb, getDocs: gd, collection: col,
-              query: q2, where: w2, updateDoc: ud2, serverTimestamp: st2 } =
-        await import('firebase/firestore');
-      const batch = wb(db);
+      const batch = writeBatch(db);
 
       // Write entry fee record
       const feeRef = doc(collection(db,'organizations',orgId,'entryFees'));
@@ -103,27 +107,33 @@ export default function AdminEntryFees() {
         notes:form.notes, recordedBy:user.uid, createdAt:serverTimestamp(),
         paymentType:    'entry_fee',
         isContribution: false,
+        fundDestination: 'expenses_fund',  // NEW
+        isReversed: false,                  // NEW
+        metadata: { version: 2 },           // NEW
       });
       // Mark member as entry fee paid
       batch.update(doc(db,'organizations',orgId,'members',form.userId),{entryFeePaid:true});
       await batch.commit();
 
       // Also verify any pending entry_fee type investment for this member
-      // (in case they submitted via the installment page and it's still pending)
       try {
-        const invSnap = await gd(q2(
-          col(db,'organizations',orgId,'investments'),
-          w2('userId','==',form.userId)
+        const invSnap = await getDocs(query(
+          collection(db,'organizations',orgId,'investments'),
+          query(collection(db,'organizations',orgId,'investments'),
+            { [Symbol.for('where')]: [['userId','==',form.userId]] })
         ));
         const pending = invSnap.docs.filter(d => {
           const data = d.data();
           return data.status === 'pending' &&
             (data.paymentType === 'entry_fee' || data.specialSubType === 'entry_fee');
         });
-        await Promise.all(pending.map(d =>
-          ud2(d.ref, { status:'verified', verifiedAt:st2(), verifiedBy:user.uid })
-        ));
+        const batch2 = writeBatch(db);
+        pending.forEach(d => {
+          batch2.update(d.ref, { status:'verified', verifiedAt:serverTimestamp(), verifiedBy:user.uid });
+        });
+        if (pending.length > 0) await batch2.commit();
       } catch (_) { /* non-critical */ }
+      
       setShowAdd(false);
       setForm({userId:'',amount:defaultAmount||'',method:'Cash',paidAt:new Date().toISOString().split('T')[0],notes:''});
       showToast('✅ Entry fee recorded!');
@@ -131,16 +141,57 @@ export default function AdminEntryFees() {
     setSaving(false);
   };
 
-  const handleDelete = async (fee) => {
-    if (!confirm('Delete this entry fee record?')) return;
+  // NEW: Mark unpaid member as paid (admin override)
+  const handleMarkPaid = async (memberId, memberName) => {
+    setMarkPaidModal({ memberId, memberName });
+    setMarkPaidForm({ method: 'Cash', paidAt: new Date().toISOString().split('T')[0], notes: 'Admin marked as paid' });
+  };
+
+  const confirmMarkPaid = async () => {
+    if (!markPaidModal) return;
+    setMarkPaidSaving(true);
     try {
-      await deleteDoc(doc(db,'organizations',orgId,'entryFees',fee.id));
-      // Check if member has any other fee records before clearing the flag
-      const remaining = fees.filter(f=>f.id!==fee.id && f.userId===fee.userId);
-      if (remaining.length===0) {
-        await updateDoc(doc(db,'organizations',orgId,'members',fee.userId),{entryFeePaid:false});
-      }
-      showToast('Deleted.');
+      const batch = writeBatch(db);
+
+      // Create entry fee record
+      const feeRef = doc(collection(db,'organizations',orgId,'entryFees'));
+      batch.set(feeRef,{
+        userId: markPaidModal.memberId,
+        amount: Number(orgData?.settings?.entryFeeAmount || 0),
+        method: markPaidForm.method,
+        paidAt: markPaidForm.paidAt,
+        notes: markPaidForm.notes,
+        recordedBy: user.uid,
+        createdAt: serverTimestamp(),
+        paymentType: 'entry_fee',
+        isContribution: false,
+        fundDestination: 'expenses_fund',  // NEW
+        isReversed: false,                  // NEW
+        metadata: { version: 2 },           // NEW
+      });
+
+      // Update member
+      batch.update(doc(db,'organizations',orgId,'members',markPaidModal.memberId),{
+        entryFeePaid: true
+      });
+
+      await batch.commit();
+      
+      setMarkPaidModal(null);
+      setMarkPaidForm({ method: 'Cash', paidAt: new Date().toISOString().split('T')[0], notes: '' });
+      showToast('✅ Member marked as paid!');
+    } catch(e) { 
+      showToast('Error: '+e.message); 
+    }
+    setMarkPaidSaving(false);
+  };
+
+  // NEW: Enhanced delete with reverse accounting
+  const handleDelete = async (fee) => {
+    if (!confirm('Delete this entry fee record? This will create a reversal entry.')) return;
+    try {
+      await reverseEntryFee(orgId, fee.id, 'Admin deletion', user.uid);
+      showToast('✅ Entry fee reversed.');
     } catch(e) { showToast('Error: '+e.message); }
   };
 
@@ -155,8 +206,6 @@ export default function AdminEntryFees() {
     : fees;
 
   const totalCollected  = fees.reduce((s,f)=>s+(f.amount||0),0);
-  // A member is considered "paid" if either: admin recorded via entry-fees page (entryFeePaid flag)
-  // OR they paid via the installment page special sub route (investmentPaidUids)
   const isPaid = (m) => m.entryFeePaid || investmentPaidUids.has(m.id);
   const paidCount   = members.filter(isPaid).length;
   const unpaidCount = members.filter(m => !isPaid(m)).length;
@@ -187,18 +236,12 @@ export default function AdminEntryFees() {
         <Stat label="Total Payments"  value={fees.length}         bg="#f8fafc"/>
       </div>
 
-      {/* Unpaid members banner */}
       {unpaidCount > 0 && (
         <div style={{padding:'10px 14px',borderRadius:10,background:'#fffbeb',border:'1px solid #fde68a',fontSize:13,color:'#92400e',marginBottom:16}}>
           ⚠️ <strong>{unpaidCount} member(s)</strong> have not paid their entry fee yet.
         </div>
       )}
 
-      {/* Tab bar */}
-      {(() => {
-        const [feeTab, setFeeTab] = [feeTabState, setFeeTabState];
-        return null; // handled via state below
-      })()}
       <div style={{display:'flex',gap:2,borderBottom:'2px solid #e2e8f0',marginBottom:20}}>
         {[
           ['records', `📋 Payment Records (${fees.length})`],
@@ -216,7 +259,6 @@ export default function AdminEntryFees() {
         ))}
       </div>
 
-      {/* Search */}
       <input value={search} onChange={e=>setSearch(e.target.value)}
         placeholder="Search by member name or ID…"
         style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',
@@ -242,7 +284,7 @@ export default function AdminEntryFees() {
             const m = memberMap[fee.userId];
             const viaInstallment = investmentPaidUids.has(fee.userId) && !fee.recordedBy;
             return (
-              <div key={fee.id} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9',alignItems:'center'}}>
+              <div key={fee.id} style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr 1fr auto',padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9',alignItems:'center',opacity:fee.isReversed?0.5:1}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
                     {initials(m?.nameEnglish||m?.name)}
@@ -254,154 +296,155 @@ export default function AdminEntryFees() {
                 </div>
                 <div style={{fontWeight:700,color:'#15803d'}}>{fmt(fee.amount)}</div>
                 <div style={{fontSize:12,color:'#64748b'}}>{fee.method}</div>
-                <div>
-                  <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',borderRadius:99,
-                    background: fee.recordedBy ? '#f0fdf4' : '#eff6ff',
-                    color:      fee.recordedBy ? '#15803d' : '#1d4ed8'}}>
-                    {fee.recordedBy ? 'Admin entry' : 'Self-paid'}
-                  </span>
+                <div style={{fontSize:11,color:'#94a3b8'}}>{viaInstallment?'Installment':'Entry Fees'}</div>
+                <div style={{fontSize:12,color:'#64748b'}}>{tsDate(fee.paidAt||fee.createdAt)}</div>
+                <div style={{display:'flex',gap:6}}>
+                  <button onClick={()=>handleDelete(fee)} style={{padding:'4px 8px',fontSize:11,border:'1px solid #fee2e2',background:'#fff5f5',color:'#dc2626',borderRadius:4,cursor:'pointer'}}>
+                    {fee.isReversed ? '↩️ Reversed' : 'Delete'}
+                  </button>
                 </div>
-                <div style={{fontSize:12,color:'#64748b'}}>{fee.paidAt||tsDate(fee.createdAt)}</div>
-                <button onClick={()=>handleDelete(fee)}
-                  style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:13,padding:'4px 8px',borderRadius:4}}
-                  title="Delete">✕</button>
               </div>
             );
           })}
         </div>
-      ))}
+      )}
 
       {/* ── PAID MEMBERS TAB ── */}
       {feeTab === 'paid' && (
-        <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+        <div style={{display:'grid',gap:10}}>
           {members.filter(isPaid).length === 0 ? (
-            <div style={{textAlign:'center',padding:'48px',color:'#94a3b8'}}>
-              No members have paid yet.
-            </div>
-          ) : members.filter(m => isPaid(m) && (
-            !search ||
-            (m.nameEnglish||m.name||'').toLowerCase().includes(search.toLowerCase()) ||
-            (m.idNo||'').includes(search)
-          )).map((m, i) => {
-            const feeRecord = fees.find(f => f.userId === m.id);
-            const viaInstallment = !feeRecord && investmentPaidUids.has(m.id);
-            return (
-              <div key={m.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',
-                padding:'10px 16px',background:i%2===0?'#f0fdf4':'#fff',
-                borderBottom:'1px solid #f1f5f9'}}>
+            <div style={{textAlign:'center',padding:'40px',color:'#94a3b8',borderRadius:10,background:'#f8fafc'}}>No paid members yet</div>
+          ) : (
+            members.filter(isPaid).map(m => (
+              <div key={m.id} style={{padding:'12px 16px',borderRadius:8,background:'#f0fdf4',border:'1px solid #bbf7d0',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                 <div style={{display:'flex',alignItems:'center',gap:10}}>
-                  <div style={{width:32,height:32,borderRadius:'50%',background:'#dcfce7',
-                    display:'flex',alignItems:'center',justifyContent:'center',
-                    fontSize:11,fontWeight:700,color:'#15803d',flexShrink:0}}>
+                  <div style={{width:36,height:36,borderRadius:'50%',background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#1d4ed8'}}>
                     {initials(m.nameEnglish||m.name)}
                   </div>
                   <div>
-                    <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{m.nameEnglish||m.name}</div>
-                    {m.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
+                    <div style={{fontWeight:600,fontSize:14,color:'#0f172a'}}>{m.nameEnglish||m.name}</div>
+                    {m.idNo && <div style={{fontSize:11,color:'#64748b'}}>#{m.idNo}</div>}
                   </div>
                 </div>
-                <div style={{textAlign:'right'}}>
-                  {feeRecord ? (
-                    <>
-                      <div style={{fontWeight:700,color:'#15803d'}}>{fmt(feeRecord.amount)}</div>
-                      <div style={{fontSize:11,color:'#94a3b8'}}>{feeRecord.paidAt||tsDate(feeRecord.createdAt)} · {feeRecord.method}</div>
-                    </>
-                  ) : (
-                    <span style={{fontSize:11,fontWeight:600,padding:'2px 8px',borderRadius:99,
-                      background:'#eff6ff',color:'#1d4ed8'}}>
-                      Paid via installment page
-                    </span>
-                  )}
-                </div>
+                <div style={{fontSize:12,color:'#15803d',fontWeight:600}}>✅ Paid</div>
               </div>
-            );
-          })}
+            ))
+          )}
         </div>
       )}
 
-      {/* ── YET TO PAY TAB ── */}
+      {/* ── UNPAID MEMBERS TAB ── */}
       {feeTab === 'unpaid' && (
-        members.filter(m => !isPaid(m)).length === 0 ? (
-          <div style={{textAlign:'center',padding:'48px',color:'#94a3b8'}}>
-            <div style={{fontSize:28,marginBottom:8}}>🎉</div>
-            <div style={{fontWeight:600,color:'#0f172a'}}>All members have paid!</div>
-          </div>
-        ) : (
-          <div style={{borderRadius:12,border:'1px solid #fde68a',overflow:'hidden'}}>
-            {members.filter(m => !isPaid(m) && (
-              !search ||
-              (m.nameEnglish||m.name||'').toLowerCase().includes(search.toLowerCase()) ||
-              (m.idNo||'').includes(search)
-            )).map((m,i) => (
-              <div key={m.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',
-                padding:'10px 16px',background:i%2===0?'#fffbeb':'#fefce8',
-                borderBottom:'1px solid #fef3c7'}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:'50%',background:'#fde68a',
-                    display:'flex',alignItems:'center',justifyContent:'center',
-                    fontSize:10,fontWeight:700,color:'#92400e'}}>
+        <div style={{display:'grid',gap:10}}>
+          {members.filter(m=>!isPaid(m)).length === 0 ? (
+            <div style={{textAlign:'center',padding:'40px',color:'#94a3b8',borderRadius:10,background:'#f8fafc'}}>All members have paid!</div>
+          ) : (
+            members.filter(m=>!isPaid(m)).map(m => (
+              <div key={m.id} style={{padding:'12px 16px',borderRadius:8,background:'#fffbeb',border:'1px solid #fcd34d',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <div style={{display:'flex',alignItems:'center',gap:10}}>
+                  <div style={{width:36,height:36,borderRadius:'50%',background:'#fef3c7',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'#92400e'}}>
                     {initials(m.nameEnglish||m.name)}
                   </div>
                   <div>
-                    <div style={{fontWeight:600,fontSize:13}}>{m.nameEnglish||m.name}</div>
-                    {m.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
+                    <div style={{fontWeight:600,fontSize:14,color:'#0f172a'}}>{m.nameEnglish||m.name}</div>
+                    {m.idNo && <div style={{fontSize:11,color:'#64748b'}}>#{m.idNo}</div>}
                   </div>
                 </div>
-                <button onClick={()=>{
-                  setForm({userId:m.id,amount:defaultAmount||'',method:'Cash',
-                    paidAt:new Date().toISOString().split('T')[0],notes:''});
-                  setShowAdd(true);
-                }} style={{padding:'6px 14px',borderRadius:8,border:'1px solid #f59e0b',
-                  background:'#fff',color:'#92400e',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-                  Record Fee
+                <button onClick={()=>handleMarkPaid(m.id, m.nameEnglish||m.name)} className="btn-ghost" style={{padding:'6px 14px',fontSize:12}}>
+                  Mark as Paid
                 </button>
               </div>
-            ))}
-          </div>
-        )
+            ))
+          )}
+        </div>
       )}
 
-      {/* Add Modal */}
+      {/* Modal: Add/Record Entry Fee */}
       {showAdd && (
-        <Modal title="Record Entry Fee Payment" onClose={()=>setShowAdd(false)}>
-          <div style={{display:'flex',flexDirection:'column',gap:14}}>
-            <div>
-              <label className="form-label">Member *</label>
-              <select value={form.userId} onChange={e=>set('userId',e.target.value)}>
-                <option value="">Select member…</option>
-                {members.map(m=>(
-                  <option key={m.id} value={m.id}>
-                    {m.nameEnglish||m.name} {m.idNo?`(#${m.idNo})`:''} {isPaid(m)?'✓ Paid':''}
-                  </option>
+        <Modal onClose={()=>setShowAdd(false)}>
+          <div style={{width:'100%',maxWidth:500}}>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:20}}>Record Entry Fee Payment</div>
+            
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Member</div>
+              <select value={form.userId} onChange={e=>set('userId',e.target.value)}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13}}>
+                <option value="">Select a member…</option>
+                {members.map(m => (
+                  <option key={m.id} value={m.id}>{m.nameEnglish||m.name} #{m.idNo||'?'}</option>
                 ))}
               </select>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-              <div>
-                <label className="form-label">Amount (৳) *</label>
-                <input type="number" min="0" value={form.amount} onChange={e=>set('amount',e.target.value)} placeholder={defaultAmount||'0'}/>
-              </div>
-              <div>
-                <label className="form-label">Payment Method</label>
-                <select value={form.method} onChange={e=>set('method',e.target.value)}>
-                  {METHODS.map(m=><option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="form-label">Payment Date *</label>
-                <input type="date" value={form.paidAt} onChange={e=>set('paidAt',e.target.value)}/>
-              </div>
-              <div>
-                <label className="form-label">Notes</label>
-                <input type="text" value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional notes"/>
-              </div>
+            </label>
+
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Amount</div>
+              <input type="number" value={form.amount} onChange={e=>set('amount',e.target.value)} placeholder={defaultAmount?`Standard: ${defaultAmount}`:'0'}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+            </label>
+
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Payment Method</div>
+              <select value={form.method} onChange={e=>set('method',e.target.value)}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13}}>
+                {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </label>
+
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Payment Date</div>
+              <input type="date" value={form.paidAt} onChange={e=>set('paidAt',e.target.value)}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+            </label>
+
+            <label style={{display:'block',marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Notes</div>
+              <textarea value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional notes…" rows="2"
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+            </label>
+
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{flex:1}}>
+                {saving?'Saving…':'Save'}
+              </button>
+              <button onClick={()=>setShowAdd(false)} className="btn-ghost" style={{flex:1}}>Cancel</button>
             </div>
           </div>
-          <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
-            <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
-              {saving?'Saving…':'Record Payment'}
-            </button>
-            <button onClick={()=>setShowAdd(false)} style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
+        </Modal>
+      )}
+
+      {/* Modal: Mark as Paid */}
+      {markPaidModal && (
+        <Modal onClose={()=>setMarkPaidModal(null)}>
+          <div style={{width:'100%',maxWidth:500}}>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:6}}>Mark as Paid</div>
+            <div style={{fontSize:13,color:'#64748b',marginBottom:20}}>Admin override for {markPaidModal.memberName}</div>
+            
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Payment Method</div>
+              <select value={markPaidForm.method} onChange={e=>setMarkPaidForm({...markPaidForm,method:e.target.value})}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13}}>
+                {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </label>
+
+            <label style={{display:'block',marginBottom:14}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Date</div>
+              <input type="date" value={markPaidForm.paidAt} onChange={e=>setMarkPaidForm({...markPaidForm,paidAt:e.target.value})}
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+            </label>
+
+            <label style={{display:'block',marginBottom:20}}>
+              <div style={{fontSize:13,fontWeight:600,color:'#0f172a',marginBottom:6}}>Notes</div>
+              <textarea value={markPaidForm.notes} onChange={e=>setMarkPaidForm({...markPaidForm,notes:e.target.value})} rows="2"
+                style={{width:'100%',padding:'8px 12px',border:'1px solid #e2e8f0',borderRadius:6,fontSize:13,boxSizing:'border-box'}}/>
+            </label>
+
+            <div style={{display:'flex',gap:8}}>
+              <button onClick={confirmMarkPaid} disabled={markPaidSaving} className="btn-primary" style={{flex:1}}>
+                {markPaidSaving?'Saving…':'Confirm'}
+              </button>
+              <button onClick={()=>setMarkPaidModal(null)} className="btn-ghost" style={{flex:1}}>Cancel</button>
+            </div>
           </div>
         </Modal>
       )}
