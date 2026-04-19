@@ -1,9 +1,9 @@
 // src/context/AuthContext.js
 'use client';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from '@/lib/firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { useRouter, usePathname } from 'next/navigation';
 
 const AuthContext = createContext({});
@@ -21,47 +21,96 @@ export const AuthProvider = ({ children }) => {
   const [orgData, setOrgData]         = useState(null);
   const [membership, setMembership]   = useState(null);
   const [loading, setLoading]         = useState(true);
+
+  // ── Access mode ────────────────────────────────────────────────────────────
+  // 'superadmin' → SA platform view
+  // 'org'        → SA acting as org admin (or regular org admin/member)
+  // 'member'     → SA impersonating a specific member
   const [accessMode, setAccessModeState] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('dt_access_mode') || 'superadmin';
     }
     return 'superadmin';
   });
-  // Superadmin impersonation: view the app as a specific member
-  const [impersonateMemberId, setImpersonateMemberId] = useState(null);
+
+  // ── Member impersonation ───────────────────────────────────────────────────
+  // When accessMode === 'member', this holds the uid being impersonated
+  const [impersonateMemberId,   setImpersonateMemberId]   = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('dt_impersonate_uid') || null;
+    return null;
+  });
+  const [impersonateMemberName, setImpersonateMemberName] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('dt_impersonate_name') || null;
+    return null;
+  });
 
   const router   = useRouter();
   const pathname = usePathname();
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
   const setAccessMode = (mode) => {
     setAccessModeState(mode);
     if (typeof window !== 'undefined') localStorage.setItem('dt_access_mode', mode);
   };
 
+  // ── Switch to org-admin mode ───────────────────────────────────────────────
   const switchToOrgMode = async (orgId) => {
     if (orgId && user) {
       await setDoc(doc(db, 'users', user.uid), { activeOrgId: orgId }, { merge: true });
+    }
+    // Clear any member impersonation
+    setImpersonateMemberId(null);
+    setImpersonateMemberName(null);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('dt_impersonate_uid');
+      localStorage.removeItem('dt_impersonate_name');
     }
     setAccessMode('org');
     router.push('/dashboard');
   };
 
+  // ── Switch back to SA platform mode ───────────────────────────────────────
   const switchToSuperAdminMode = () => {
-    setAccessMode('superadmin');
     setImpersonateMemberId(null);
+    setImpersonateMemberName(null);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('dt_impersonate_uid');
+      localStorage.removeItem('dt_impersonate_name');
+    }
+    setAccessMode('superadmin');
     router.push('/superadmin');
   };
 
-  const startImpersonation = (memberId) => {
-    setImpersonateMemberId(memberId);
+  // ── Start impersonating a member ──────────────────────────────────────────
+  // Call with: { uid, name, orgId }
+  // orgId is optional — if SA is already in an org it uses the existing activeOrgId
+  const startViewingAsMember = async ({ uid, name, orgId }) => {
+    if (orgId && user) {
+      await setDoc(doc(db, 'users', user.uid), { activeOrgId: orgId }, { merge: true });
+    }
+    setImpersonateMemberId(uid);
+    setImpersonateMemberName(name || uid);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('dt_impersonate_uid', uid);
+      localStorage.setItem('dt_impersonate_name', name || uid);
+    }
+    setAccessMode('member');
     router.push('/dashboard');
   };
 
-  const stopImpersonation = () => {
+  // ── Stop impersonating — return to org-admin mode ─────────────────────────
+  const stopViewingAsMember = () => {
     setImpersonateMemberId(null);
-    router.push('/admin/members');
+    setImpersonateMemberName(null);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('dt_impersonate_uid');
+      localStorage.removeItem('dt_impersonate_name');
+    }
+    setAccessMode('org');
+    router.push('/dashboard');
   };
 
+  // ── Firebase auth + Firestore listeners ───────────────────────────────────
   useEffect(() => {
     let unsubUser = null;
     let unsubOrg  = null;
@@ -90,6 +139,7 @@ export const AuthProvider = ({ children }) => {
 
         const isSA = uData.role === 'superadmin';
 
+        // SA in pure platform mode — no org data needed
         if (isSA && accessMode === 'superadmin') {
           setOrgData(null);
           setMembership(null);
@@ -111,53 +161,23 @@ export const AuthProvider = ({ children }) => {
             }
           });
 
+          // For member mode: listen to the IMPERSONATED member's doc, not SA's
+          const memberUid = (isSA && accessMode === 'member' && impersonateMemberId)
+            ? impersonateMemberId
+            : firebaseUser.uid;
+
           unsubMem = onSnapshot(
-            doc(db, 'organizations', uData.activeOrgId, 'members', firebaseUser.uid),
+            doc(db, 'organizations', uData.activeOrgId, 'members', memberUid),
             (mSnap) => {
               if (mSnap.exists()) {
                 const mData = { id: mSnap.id, ...mSnap.data() };
                 setMembership(mData);
-
+                // Only redirect real members, not SA impersonating
                 if (!isSA && !mData.approved && !isPublic && pathname !== '/pending-approval') {
                   router.push('/pending-approval');
-                  setLoading(false);
-                  return;
-                }
-
-                // ── Admin-path protection ────────────────────────────────────
-                // /admin/* and /superadmin/* are restricted.
-                // A regular member (not admin, not cashier) hitting /admin/* → /dashboard
-                const isAdminPath        = pathname.startsWith('/admin');
-                const isSuperAdminPath   = pathname.startsWith('/superadmin');
-                const memberIsAdmin      = mData.role === 'admin';
-                const memberIsCashier    = mData.role === 'cashier' && !!mData.approved;
-                const memberIsOfficeSec  = mData.role === 'office_secretary' && !!mData.approved;
-                const memberIsJointSec   = mData.role === 'joint_secretary'  && !!mData.approved;
-
-                // Pages each secretary role may access
-                const OFFICE_SEC_PATHS  = ['/admin/members', '/admin/memoranda'];
-                const JOINT_SEC_PATHS   = ['/admin/memoranda'];
-
-                const secAllowed = (memberIsOfficeSec && OFFICE_SEC_PATHS.some(p => pathname === p || pathname.startsWith(p+'/')))
-                                || (memberIsJointSec  && JOINT_SEC_PATHS.some(p  => pathname === p || pathname.startsWith(p+'/')));
-
-                if (!isSA && isAdminPath && !memberIsAdmin && !memberIsCashier && !secAllowed) {
-                  router.replace('/dashboard');
-                  setLoading(false);
-                  return;
-                }
-                if (!isSA && isSuperAdminPath) {
-                  router.replace('/dashboard');
-                  setLoading(false);
-                  return;
                 }
               } else {
                 setMembership(null);
-                // No membership doc at all → not a member of this org
-                // If they're trying to access /admin, redirect to dashboard
-                if (!isSA && pathname.startsWith('/admin')) {
-                  router.replace('/dashboard');
-                }
               }
               setLoading(false);
             }
@@ -166,7 +186,7 @@ export const AuthProvider = ({ children }) => {
           setOrgData(null);
           setMembership(null);
           if (!isSA && !isPublic) router.push('/select-org');
-          if (isSA && accessMode === 'org') router.push('/select-org');
+          if (isSA && (accessMode === 'org' || accessMode === 'member')) router.push('/select-org');
           setLoading(false);
         }
       }, (err) => {
@@ -181,16 +201,26 @@ export const AuthProvider = ({ children }) => {
       if (unsubOrg)  unsubOrg();
       if (unsubMem)  unsubMem();
     };
-  }, [pathname, accessMode]);
+  }, [pathname, accessMode, impersonateMemberId]);
 
-  const isSuperAdmin      = userData?.role === 'superadmin';
-  const isOrgAdmin        = membership?.role === 'admin' || (isSuperAdmin && accessMode === 'org');
-  const isCashier         = !isOrgAdmin && membership?.role === 'cashier'         && !!membership?.approved;
-  const isOfficeSecretary = !isOrgAdmin && membership?.role === 'office_secretary' && !!membership?.approved;
-  const isJointSecretary  = !isOrgAdmin && membership?.role === 'joint_secretary'  && !!membership?.approved;
-  // Any secretary role
-  const isSecretary       = isOfficeSecretary || isJointSecretary;
+  // ── Derived role flags ─────────────────────────────────────────────────────
+  const isSuperAdmin = userData?.role === 'superadmin';
 
+  // SA in org mode OR real org admin
+  const isOrgAdmin = membership?.role === 'admin' || (isSuperAdmin && accessMode === 'org');
+
+  // SA in member mode — behaves exactly as a member
+  const isViewingAsMember = isSuperAdmin && accessMode === 'member' && !!impersonateMemberId;
+
+  // Cashier: real cashier, not admin, and not SA-in-member-mode
+  const isCashier = !isOrgAdmin && !isViewingAsMember &&
+    membership?.role === 'cashier' && !!membership?.approved;
+
+  // The effective user ID for member-scoped queries
+  // Use this instead of user.uid in all member-facing pages
+  const viewUid = isViewingAsMember ? impersonateMemberId : (user?.uid || null);
+
+  // ── Loading screen ─────────────────────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', background:'#f8fafc' }}>
       <div style={{ width:32, height:32, border:'3px solid #bfdbfe', borderTopColor:'#2563eb', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />
@@ -203,13 +233,15 @@ export const AuthProvider = ({ children }) => {
     <AuthContext.Provider value={{
       user, userData, orgData, membership, loading,
       isSuperAdmin, isOrgAdmin, isCashier,
-      isOfficeSecretary, isJointSecretary, isSecretary,
-      accessMode,
+      isViewingAsMember,
       impersonateMemberId,
-      startImpersonation,
-      stopImpersonation,
+      impersonateMemberName,
+      viewUid,
+      accessMode,
       switchToOrgMode,
       switchToSuperAdminMode,
+      startViewingAsMember,
+      stopViewingAsMember,
     }}>
       {children}
     </AuthContext.Provider>
