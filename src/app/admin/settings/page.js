@@ -360,7 +360,6 @@ export default function AdminSettings() {
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
               {[
                 ['baseAmount','Monthly Amount','number'],
-                ['entryFeeAmount','Default Entry Fee (৳)','number'],
                 ['dueDate','Due Day (of month)','number'],
                 ['penalty','Late Fee Amount','number'],
                 ['startDate','Start Date','date'],
@@ -404,6 +403,61 @@ export default function AdminSettings() {
               onChange={() => set('gatewayFeeInAccounting', !settings.gatewayFeeInAccounting)}
               sub="When ON, gateway fees collected from members are included in total org balance. When OFF, they are excluded."
             />
+
+            {/* ── Late Payer & Re-registration Threshold ── */}
+            <div style={{ borderTop:'1px solid #e2e8f0', paddingTop:18, marginTop:4 }}>
+              <div style={{ fontWeight:700, fontSize:13, color:'#0f172a', marginBottom:4 }}>
+                ⏱ Late Payment Rules
+              </div>
+              <div style={{ fontSize:12, color:'#64748b', marginBottom:14 }}>
+                Define when a member is flagged as a <em>late payer</em> and when they are
+                automatically assigned a re-registration fee.
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 20px' }}>
+                <div className="form-group">
+                  <label className="form-label">
+                    Mark as Late Payer After (months)
+                    <span style={{ fontWeight:400, fontSize:10, color:'#94a3b8', marginLeft:4 }}>
+                      0 = same month overdue
+                    </span>
+                  </label>
+                  <input type="number" min="0" max="24"
+                    value={settings.latePayerAfterMonths ?? ''}
+                    onChange={e => set('latePayerAfterMonths', e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="e.g. 1"
+                  />
+                  <div style={{ fontSize:11, color:'#94a3b8', marginTop:2 }}>
+                    Member is flagged if they miss more than this many consecutive months
+                  </div>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">
+                    Auto-assign Re-registration After (months unpaid)
+                  </label>
+                  <input type="number" min="0" max="36"
+                    value={settings.reregAfterMonths ?? ''}
+                    onChange={e => set('reregAfterMonths', e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="e.g. 3"
+                  />
+                  <div style={{ fontSize:11, color:'#94a3b8', marginTop:2 }}>
+                    Re-registration fee is auto-assigned when unpaid months reach this threshold
+                  </div>
+                </div>
+              </div>
+              <Toggle
+                label="Enable Late Payer Auto-flag"
+                value={!!settings.latePayerEnabled}
+                onChange={() => set('latePayerEnabled', !settings.latePayerEnabled)}
+                sub="Automatically mark members as late payers based on the threshold above"
+              />
+              <Toggle
+                label="Enable Re-registration Auto-assign"
+                value={!!settings.reregAutoAssign}
+                onChange={() => set('reregAutoAssign', !settings.reregAutoAssign)}
+                sub="Automatically assign re-registration fee subscription when unpaid months threshold is reached"
+              />
+            </div>
+
             <button onClick={saveRules} disabled={saving} className="btn-primary" style={{ marginTop:20, padding:'10px 28px' }}>
               {saving ? 'Saving…' : 'Save Settings'}
             </button>
