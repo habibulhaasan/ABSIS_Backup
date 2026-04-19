@@ -5,6 +5,7 @@ import { db } from '@/lib/firebase';
 import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { sortByMemberId } from '@/lib/fundCalculations';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const SHORT   = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -117,6 +118,7 @@ export default function AdminLedger() {
   const [penalties,  setPenalties]  = useState([]);
   const [members,    setMembers]    = useState({}); // uid → profile
   const [selMonth,   setSelMonth]   = useState('');
+  const [memberSort,  setMemberSort]  = useState('idNo');
   const [allMonths,  setAllMonths]  = useState([]);
   const [downloading, setDownloading] = useState(false);
   const printRef = useRef(null);
@@ -190,10 +192,19 @@ export default function AdminLedger() {
     return String(dateStr).startsWith(selMonth);
   };
 
-  const verifiedThisMonth = payments.filter(p =>
-    p.status === 'verified' && p.isContribution !== false
-    && (p.paidMonths||[]).some(m => m === selMonth)
-  );
+  const verifiedThisMonth = payments
+    .filter(p => p.status === 'verified' && p.isContribution !== false
+      && (p.paidMonths||[]).some(m => m === selMonth))
+    .sort((a,b) => {
+      const ma=members[a.userId], mb=members[b.userId];
+      if (memberSort==='name') return (ma?.nameEnglish||'').localeCompare(mb?.nameEnglish||'');
+      if (memberSort==='amount') return (b.amount||0)-(a.amount||0);
+      // default: idNo
+      const na=parseInt((ma?.idNo||'').replace(/\D/g,''),10);
+      const nb=parseInt((mb?.idNo||'').replace(/\D/g,''),10);
+      if (!isNaN(na)&&!isNaN(nb)) return na-nb;
+      return (ma?.nameEnglish||'').localeCompare(mb?.nameEnglish||'');
+    });
   const pendingThisMonth = payments.filter(p =>
     p.status === 'pending' && (p.paidMonths||[]).some(m => m === selMonth)
   );
@@ -352,6 +363,16 @@ export default function AdminLedger() {
             {verifiedThisMonth.length === 0 ? (
               <div style={{ padding:'20px 16px', color:'#94a3b8', fontSize:13, textAlign:'center' }}>No payments verified this month.</div>
             ) : (
+              <>
+                <div style={{ padding:'8px 12px', borderBottom:'1px solid #f1f5f9', display:'flex', gap:8, alignItems:'center' }}>
+                  <select value={memberSort} onChange={e=>setMemberSort(e.target.value)}
+                    style={{ padding:'6px 12px', borderRadius:7, border:'1px solid #e2e8f0', fontSize:12, color:'#475569' }}>
+                    <option value="idNo">Sort: Member ID</option>
+                    <option value="name">Sort: Name A–Z</option>
+                    <option value="amount">Sort: Amount (high–low)</option>
+                  </select>
+                  <span style={{ fontSize:11, color:'#94a3b8' }}>{verifiedThisMonth.length} payments</span>
+                </div>
               <div className="table-scroll">
                 <table>
                   <thead>
@@ -380,6 +401,7 @@ export default function AdminLedger() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </Section>
 
