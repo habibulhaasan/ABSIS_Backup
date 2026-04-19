@@ -1,7 +1,8 @@
 'use client';
 import React, { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, getDocs, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, addDoc, getDocs, onSnapshot, serverTimestamp, query, where, doc, updateDoc } from 'firebase/firestore';
+import { countMissedMonths, calcDaysLate, sortByMemberId } from '@/lib/fundCalculations';
 import { useAuth } from '@/context/AuthContext';
 
 const DEFAULT_METHODS = ['bKash','Nagad','Rocket','Bank Transfer','Cash'];
@@ -25,6 +26,9 @@ export default function Installment() {
   const viewUid = (isSuperAdmin && impersonateMemberId) ? impersonateMemberId : user?.uid;
   const [paidMonths,      setPaidMonths]      = useState(new Set());
   const [paidSpecial,     setPaidSpecial]     = useState(new Set());
+  const [allPayments,     setAllPayments]     = useState([]); // full payment records for late calc
+  const [memberStatus,    setMemberStatus]    = useState(null); // { isLatePayer, missedMonths, reregRequired, reregGranted }
+  const [entryFeePaid,    setEntryFeePaid]    = useState(false);
   const [specialSubs,     setSpecialSubs]     = useState([]);
   const [selected,        setSelected]        = useState([]);
   const [selectedSpecial, setSelectedSpecial] = useState(null);
@@ -68,21 +72,27 @@ export default function Installment() {
     else setSelectedAccount(null);
   }, [method]);
 
-  // Load paid months
+  // Load paid months + entry fee status
   useEffect(() => {
     if (!user || !orgId) return;
     const q = query(collection(db,'organizations',orgId,'investments'), where('userId','==',viewUid));
     getDocs(q).then(snap => {
       const paid  = new Set();
       const pSpec = new Set();
+      const recs  = [];
       snap.docs.forEach(d => {
-        const data = d.data();
+        const data = { id:d.id, ...d.data() };
+        recs.push(data);
         if (data.status !== 'rejected') (data.paidMonths || []).forEach(m => paid.add(m));
         if (data.specialSubId && data.status !== 'rejected') pSpec.add(data.specialSubId);
       });
       setPaidMonths(paid);
       setPaidSpecial(pSpec);
+      setAllPayments(recs);
     });
+    // Also check entryFees collection
+    getDocs(query(collection(db,'organizations',orgId,'entryFees'), where('userId','==',viewUid)))
+      .then(snap => { if (!snap.empty) setEntryFeePaid(true); });
   }, [user, orgId]);
 
   // Load special subs
@@ -130,7 +140,27 @@ export default function Installment() {
   const dueDay       = settings.dueDate || 10;
   const penalty      = settings.lateFeeEnabled ? (settings.penalty || 0) : 0;
   const isLate       = m => { const [y,mo] = m.split('-').map(Number); return new Date() > new Date(y,mo-1,dueDay); };
+
+  // ── Late payer + re-registration status ──────────────────────────────────────
+  const latePayerThreshold = settings.latePayerAfterMonths ?? 1; // months unpaid to flag
+  const reregThreshold     = settings.reregAfterMonths ?? 3;     // months unpaid to auto-assign re-reg
+  const missedCount        = countMissedMonths(allMonths, paidMonths);
+  const isLatePayer        = settings.latePayerEnabled && missedCount > latePayerThreshold;
+  const reregRequired      = settings.reregAutoAssign  && missedCount >= reregThreshold;
+  // Check if re-reg already paid (in specialSubs paid OR granted as rebate)
+  const reregSubPaid       = [...paidSpecial].some(sid => {
+    const s = specialSubs.find(x => x.id === sid);
+    return s?.type === 'reregistration_fee';
+  });
+  const reregGranted       = membership?.reregGranted === true; // admin granted rebate
+  const reregPending       = reregRequired && !reregSubPaid && !reregGranted;
   const toggle       = m => setSelected(p => p.includes(m) ? p.filter(x => x !== m) : [...p,m]);
+  const getDaysLate  = m => {
+    const verifiedPay = allPayments.find(p =>
+      p.status === 'verified' && (p.paidMonths||[]).includes(m));
+    if (!verifiedPay) return 0;
+    return calcDaysLate(m, dueDay, verifiedPay.createdAt);
+  };
 
   const isSpecialMode = payMode === 'special' && selectedSpecial;
   // If special sub allows custom amount, use the user-entered value (fallback to sub's fixed amount)
@@ -197,14 +227,6 @@ export default function Installment() {
         payload.countAsContribution = subIsContrib;
       }
       await addDoc(collection(db,'organizations',orgId,'investments'), payload);
-      // If this is an entry fee special sub, also mark the member's entryFeePaid flag
-      // so the entry-fees page shows them as paid
-      if (payMode === 'special' && (selectedSpecial?.type === 'entry_fee' || selectedSpecial?.type === 'reregistration_fee')) {
-        const { doc: d2, updateDoc: ud } = await import('firebase/firestore');
-        try {
-          await ud(d2(db,'organizations',orgId,'members',user.uid), { entryFeePaid: true });
-        } catch (_) { /* non-critical — entry fee page can still read from investments */ }
-      }
       setSuccess(true);
       setSelected([]);
       setSelectedSpecial(null);
@@ -270,6 +292,53 @@ export default function Installment() {
               border:'1px solid #fde68a', fontSize:12, color:'#92400e' }}>
               👤 <strong>Viewing as member</strong> — You are in superadmin impersonation mode.
               Payment submission is disabled.
+            </div>
+          )}
+
+          {/* Late payer warning */}
+          {isLatePayer && (
+            <div style={{ padding:'12px 14px', borderRadius:8, background:'#fef2f2',
+              border:'1px solid #fca5a5', fontSize:13 }}>
+              <div style={{ fontWeight:700, color:'#b91c1c', marginBottom:4 }}>
+                ⚠️ You are marked as a <strong>Late Payer</strong>
+              </div>
+              <div style={{ color:'#7f1d1d', fontSize:12 }}>
+                You have {missedCount} unpaid month{missedCount !== 1 ? 's' : ''}.
+                Please pay overdue installments to clear this status.
+              </div>
+            </div>
+          )}
+
+          {/* Re-registration required notice */}
+          {reregPending && (
+            <div style={{ padding:'12px 14px', borderRadius:8, background:'#fef3c7',
+              border:'1px solid #fde68a', fontSize:13 }}>
+              <div style={{ fontWeight:700, color:'#92400e', marginBottom:4 }}>
+                🔄 Re-Registration Fee Required
+              </div>
+              <div style={{ color:'#78350f', fontSize:12 }}>
+                Due to {missedCount} unpaid months, a re-registration fee has been assigned to your account.
+                Please pay it along with your overdue installments.
+                Contact admin if you believe this is an error.
+              </div>
+            </div>
+          )}
+
+          {/* Re-reg granted (rebate) */}
+          {reregGranted && reregRequired && (
+            <div style={{ padding:'10px 14px', borderRadius:8, background:'#f0fdf4',
+              border:'1px solid #86efac', fontSize:12, color:'#15803d' }}>
+              ✅ <strong>Re-registration fee waived</strong> — your admin has granted a rebate.
+            </div>
+          )}
+
+          {/* Entry fee status */}
+          {!entryFeePaid && orgData?.settings?.entryFeeAmount > 0 && (
+            <div style={{ padding:'10px 14px', borderRadius:8, background:'#eff6ff',
+              border:'1px solid #bfdbfe', fontSize:12, color:'#1e40af' }}>
+              🎫 <strong>Entry fee not yet paid.</strong>{' '}
+              Amount: ৳{(orgData.settings.entryFeeAmount||0).toLocaleString()}.
+              You can pay it below via a special subscription, or contact your admin.
             </div>
           )}
 
@@ -395,19 +464,14 @@ export default function Installment() {
             <div className="card">
               <div style={{ fontWeight:600, fontSize:14, color:'#0f172a', marginBottom:4 }}>Special Subscriptions</div>
               <p style={{ fontSize:12, color:'#94a3b8', marginBottom:14 }}>Select one to pay.</p>
-              {specialSubs.filter(s => !paidSpecial.has(s.id) &&
-                // Hide entry_fee / reregistration_fee subs if member already paid via entry-fees page
-                !(membership?.entryFeePaid && (s.type === 'entry_fee' || s.type === 'reregistration_fee'))
-              ).length === 0 ? (
+              {specialSubs.filter(s => !paidSpecial.has(s.id)).length === 0 ? (
                 <div style={{ textAlign:'center', padding:'24px 0', color:'#94a3b8' }}>
                   <div style={{ fontSize:28, marginBottom:8 }}>✅</div>
                   <div style={{ fontSize:13 }}>No pending special subscriptions.</div>
                 </div>
               ) : (
                 <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                  {specialSubs.filter(s => !paidSpecial.has(s.id) &&
-                    !(membership?.entryFeePaid && (s.type === 'entry_fee' || s.type === 'reregistration_fee'))
-                  ).map(s => {
+                  {specialSubs.filter(s => !paidSpecial.has(s.id)).map(s => {
                     const sel      = selectedSpecial?.id === s.id;
                     const deadline = new Date(s.deadline);
                     const daysLeft = Math.ceil((deadline - new Date()) / (1000*60*60*24));
