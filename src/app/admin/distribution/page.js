@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { sortByMemberId, isCapitalContribution } from '@/lib/fundCalculations';
 import Modal from '@/components/Modal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -283,7 +284,15 @@ function NewDistributionModal({ onClose, onSave, members, payments, eligibleProj
       capitalContribution: Math.round(capitalMap[m.id]||0),
       shareAmount:         Math.round((capitalMap[m.id]||0)*distributionRate),
     }))
-    .sort((a,b)=>b.capitalContribution-a.capitalContribution);
+    .sort((a,b) => {
+      if (memberSort === 'name')    return (a.nameEnglish||'').localeCompare(b.nameEnglish||'');
+      if (memberSort === 'capital') return (b.capitalContribution||0) - (a.capitalContribution||0);
+      // default: idNo
+      const na=parseInt((a.idNo||'').replace(/\D/g,''),10);
+      const nb=parseInt((b.idNo||'').replace(/\D/g,''),10);
+      if (!isNaN(na)&&!isNaN(nb)) return na-nb;
+      return (a.nameEnglish||'').localeCompare(b.nameEnglish||'');
+    });
 
   const STEPS = [
     {n:1,label:'Select Projects'},
@@ -581,6 +590,15 @@ function NewDistributionModal({ onClose, onSave, members, payments, eligibleProj
             </div>
           ) : (
             <div style={{overflowX:'auto'}}>
+              <div style={{display:'flex',gap:8,marginBottom:10,flexWrap:'wrap'}}>
+                <select value={memberSort} onChange={e=>setMemberSort(e.target.value)}
+                  style={{padding:'7px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:12,color:'#475569'}}>
+                  <option value="idNo">Sort: Member ID</option>
+                  <option value="name">Sort: Name A–Z</option>
+                  <option value="capital">Sort: Capital (high–low)</option>
+                </select>
+                <span style={{fontSize:12,color:'#94a3b8',alignSelf:'center'}}>{memberShares.length} eligible members</span>
+              </div>
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:13}}>
                 <thead>
                   <tr style={{background:'#f8fafc'}}>
