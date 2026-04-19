@@ -310,9 +310,29 @@ function ExpensesTab({ project, orgId, isAdmin, onCacheUpdate }) {
   const handleAdd = async (entry) => {
     setSaving(true);
     try {
-      await addDoc(
+      // Write to project-level subcollection
+      const projExpRef = await addDoc(
         collection(db,'organizations',orgId,'investmentProjects',project.id,'projectExpenses'),
         { ...entry, recordedBy: user.uid, createdAt: serverTimestamp() }
+      );
+      // ALSO write a mirror entry to the org-level expenses collection
+      // so it appears on admin/expenses and is counted in Expenses Fund usage.
+      // sourceType + sourceProjectId allow reverse-linking and cascade delete.
+      await addDoc(
+        collection(db,'organizations',orgId,'expenses'),
+        {
+          ...entry,
+          recordedBy:      user.uid,
+          createdAt:       serverTimestamp(),
+          sourceType:      'investment',          // came from a project
+          sourceProjectId: project.id,
+          sourceProjectTitle: project.title || '',
+          sourceDocId:     projExpRef.id,         // original doc in subcollection
+          fundSource:      'expenses',            // always charged to expenses fund
+          notes: entry.notes
+            ? `[${project.title}] ${entry.notes}`
+            : `Investment project: ${project.title}`,
+        }
       );
       setShowForm(false);
     } catch(e) { alert(e.message); }
@@ -323,7 +343,16 @@ function ExpensesTab({ project, orgId, isAdmin, onCacheUpdate }) {
     if (!confirm('Delete this expense entry?')) return;
     setDeleting(id);
     try {
+      // Delete from project subcollection
       await deleteDoc(doc(db,'organizations',orgId,'investmentProjects',project.id,'projectExpenses',id));
+      // Also delete the mirror entry from org expenses (find by sourceDocId)
+      const expSnap = await getDocs(
+        query(collection(db,'organizations',orgId,'expenses'),
+          where('sourceDocId','==',id))
+      );
+      for (const d of expSnap.docs) {
+        await deleteDoc(d.ref);
+      }
     } catch(e) { alert(e.message); }
     setDeleting('');
   };
