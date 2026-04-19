@@ -624,7 +624,7 @@ export default function AdminAccountBook() {
   const [showReport, setShowReport] = useState(false);
   const [search,     setSearch]     = useState('');
   const [memSearch,  setMemSearch]  = useState('');
-  const [memSort,    setMemSort]    = useState('capital');
+  const [memSort,    setMemSort]    = useState('idNo');
   const [selMember,  setSelMember]  = useState(null);
 
   useEffect(() => {
@@ -673,6 +673,99 @@ export default function AdminAccountBook() {
   }, [orgId, isOrgAdmin]);
 
   if (!isOrgAdmin) { router.replace('/dashboard'); return null; }
+
+  // ── Per-fund ledger builder ──────────────────────────────────────────────────
+  function buildFundLedger(fundKey) {
+    const feeInAcct2 = !!settings.gatewayFeeInAccounting;
+    const fb         = settings.fundBudgets?.[fundKey];
+    const allocPct   = fb?.type === 'pct'
+      ? (Number(fb.value)||0)/100
+      : (fb?.type === 'amount' && totalCapital > 0 ? (Number(fb.value)||0)/totalCapital : 0);
+    const rows = [];
+    let balance = 0;
+
+    const addRow = (r) => { rows.push(r); };
+
+    if (fundKey === 'expenses') {
+      // ── INFLOWS ──
+      // 1. Share of installments per fund structure
+      payments.filter(p=>p.status==='verified'&&p.isContribution!==false).forEach(p=>{
+        const net = (p.amount||0)-(feeInAcct2?0:(p.gatewayFee||0));
+        const portion = Math.round(net * allocPct);
+        if (portion<=0) return;
+        const d = p.createdAt?.seconds?new Date(p.createdAt.seconds*1000).toISOString().slice(0,10):'';
+        balance+=portion;
+        addRow({date:d,desc:'Installment (expenses share)',member:memberMap[p.userId]?.nameEnglish||'—',credit:portion,debit:0,balance,type:'installment'});
+      });
+      // 2. Entry fees (collection)
+      fees.forEach(f=>{
+        const d = f.paidAt||(f.createdAt?.seconds?new Date(f.createdAt.seconds*1000).toISOString().slice(0,10):'');
+        balance+=(f.amount||0);
+        addRow({date:d,desc:'Entry Fee',member:memberMap[f.userId]?.nameEnglish||'—',credit:f.amount||0,debit:0,balance,type:'entry_fee'});
+      });
+      // 3. Entry/re-reg from investments
+      payments.filter(p=>p.status==='verified'&&p.isContribution===false&&
+        (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee')).forEach(p=>{
+        const d = p.createdAt?.seconds?new Date(p.createdAt.seconds*1000).toISOString().slice(0,10):'';
+        balance+=(p.amount||0);
+        addRow({date:d,desc:p.paymentType==='reregistration_fee'?'Re-Reg Fee':'Entry Fee (sub)',
+          member:memberMap[p.userId]?.nameEnglish||'—',credit:p.amount||0,debit:0,balance,type:p.paymentType});
+      });
+      // ── OUTFLOWS ──
+      expenses.forEach(e=>{
+        balance-=(e.amount||0);
+        addRow({date:e.date||'',desc:e.title,
+          member:e.sourceProjectTitle?'Project: '+e.sourceProjectTitle:(e.category||''),
+          credit:0,debit:e.amount||0,balance,type:'expense'});
+      });
+    } else {
+      // ── INFLOWS: installment share ──
+      payments.filter(p=>p.status==='verified'&&p.isContribution!==false).forEach(p=>{
+        const net = (p.amount||0)-(feeInAcct2?0:(p.gatewayFee||0));
+        const portion = Math.round(net * allocPct);
+        if (portion<=0) return;
+        const d = p.createdAt?.seconds?new Date(p.createdAt.seconds*1000).toISOString().slice(0,10):'';
+        balance+=portion;
+        addRow({date:d,desc:'Installment',member:memberMap[p.userId]?.nameEnglish||'—',credit:portion,debit:0,balance,type:'installment'});
+      });
+      // ── OUTFLOWS ──
+      if (fundKey==='investment'||fundKey==='reserve') {
+        projects.forEach(p=>{
+          const amt = p.fundSources
+            ? (fundKey==='investment'?Number(p.fundSources.investment)||0:Number(p.fundSources.reserve)||0)
+            : (fundKey==='investment'&&p.fundSource!=='reserve'?p.investedAmount||0
+               :fundKey==='reserve'&&p.fundSource==='reserve'?p.investedAmount||0:0);
+          if (amt<=0) return;
+          balance-=amt;
+          addRow({date:p.startDate||'',desc:'Investment: '+p.title,member:'—',credit:0,debit:amt,balance,type:'project'});
+        });
+      }
+      if (fundKey==='benevolent') {
+        loans.filter(l=>l.status==='disbursed'||l.status==='repaid').forEach(l=>{
+          balance-=(l.amount||0);
+          const d = l.disbursedAt?.seconds?new Date(l.disbursedAt.seconds*1000).toISOString().slice(0,10):'';
+          addRow({date:d,desc:'Loan: '+(l.purpose||'—'),member:memberMap[l.userId]?.nameEnglish||'—',credit:0,debit:l.amount||0,balance,type:'loan'});
+          (l.repayments||[]).forEach(r=>{
+            balance+=(r.amount||0);
+            addRow({date:r.date||'',desc:'Loan Repayment',member:memberMap[l.userId]?.nameEnglish||'—',credit:r.amount||0,debit:0,balance,type:'repayment'});
+          });
+        });
+      }
+    }
+    return rows.sort((a,b)=>(a.date||'').localeCompare(b.date||''));
+  }
+
+  function downloadFundCSV(fundKey, fundLabel) {
+    const rows = buildFundLedger(fundKey);
+    const hdr  = ['Date','Description','Member / Source','Credit','Debit','Balance'];
+    const lines = [hdr,...rows.map(r=>[r.date,r.desc,r.member,r.credit||'',r.debit||'',r.balance])];
+    const csv  = lines.map(row=>row.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv],{type:'text/csv'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href=url; a.download=`${(orgData?.name||'org').replace(/[^a-z0-9]/gi,'_')}_${fundLabel.replace(/\s+/g,'_')}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
 
   const allEntries = useMemo(() =>
     buildOrgEntries(payments, expenses, fees, loans, memberMap),
@@ -737,11 +830,14 @@ export default function AdminAccountBook() {
       alloc:computeFundAlloc('benevolent',totalCapital,settings), used:usedBenevolent,
       budgetType:fb.benevolent?.type, budgetValue:fb.benevolent?.value},
     {key:'expenses', label:'Expenses Fund', icon:'🧾', color:'#d97706', bg:'#fffbeb',
-      desc:'Operational running costs paid out of the Expenses Fund',
+      desc:'Operational expenses, entry fees and re-registration fees',
       alloc:computeFundAlloc('expenses',totalCapital,settings),
-      // Expenses fund USED = only actual expenditures from the /expenses collection.
-      // Entry fees are INCOME that replenishes this fund — they are not spending.
-      used: totalExpenses,
+      // Expenses fund usage = admin-recorded expenses + entry fees (both collections) + re-reg fees
+      used:totalExpenses + totalFees + payments
+        .filter(p => p.status==='verified'
+          && (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee')
+          && p.isContribution === false)
+        .reduce((s,p)=>s+(p.amount||0),0),
       budgetType:fb.expenses?.type, budgetValue:fb.expenses?.value},
   ];
   const hasBudgets = Object.values(fb).some(f=>f?.value);
@@ -752,17 +848,27 @@ export default function AdminAccountBook() {
       (r.nameEnglish||r.name||'').toLowerCase().includes(memSearch.toLowerCase()) ||
       (r.idNo||'').includes(memSearch)
     )
-    .sort((a,b) =>
-      memSort==='capital'   ? b.capital-a.capital :
-      memSort==='payments'  ? b.verifiedCount-a.verifiedCount :
-      (a.nameEnglish||a.name||'').localeCompare(b.nameEnglish||b.name||'')
-    );
+    .sort((a,b) => {
+      if (memSort==='idNo') {
+        const na=parseInt((a.idNo||'').replace(/\D/g,''),10);
+        const nb=parseInt((b.idNo||'').replace(/\D/g,''),10);
+        if (!isNaN(na)&&!isNaN(nb)) return na-nb;
+        return (a.idNo||'').localeCompare(b.idNo||'');
+      }
+      if (memSort==='capital')  return b.capital-a.capital;
+      if (memSort==='payments') return b.verifiedCount-a.verifiedCount;
+      return (a.nameEnglish||a.name||'').localeCompare(b.nameEnglish||b.name||'');
+    });
 
   const TABS = [
-    {id:'summary', label:'📊 Summary'},
-    {id:'ledger',  label:'📒 Ledger'},
-    {id:'members', label:'💰 Per Member'},
-    {id:'funds',   label:'🏦 Fund Breakdown'},
+    {id:'summary',    label:'📊 Summary'},
+    {id:'ledger',     label:'📒 Ledger'},
+    {id:'members',    label:'💰 Per Member'},
+    {id:'funds',      label:'🏦 Fund Breakdown'},
+    {id:'investment', label:'📈 Investment Fund'},
+    {id:'expenses',   label:'🧾 Expenses Fund'},
+    {id:'reserve',    label:'🛡 Reserve Fund'},
+    {id:'benevolent', label:'🤝 Benevolent Fund'},
   ];
 
   const SB = ({label,value,sub,color='#0f172a',bg='#f8fafc'}) => (
@@ -792,6 +898,14 @@ export default function AdminAccountBook() {
               style={{padding:'10px 18px',borderRadius:8,background:'#0f172a',color:'#fff',
                 border:'none',cursor:'pointer',fontSize:13,fontWeight:700,flexShrink:0}}>
               🖨 Generate Report
+            </button>
+          )}
+          {/* Per-fund ledger tabs */}
+          {['investment','expenses','reserve','benevolent'].includes(tab) && (
+            <button onClick={()=>{const labels={investment:'Investment Fund',expenses:'Expenses Fund',reserve:'Reserve Fund',benevolent:'Benevolent Fund'};downloadFundCSV(tab,labels[tab]);}}
+              style={{padding:'10px 18px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',
+                cursor:'pointer',fontSize:13,fontWeight:600,color:'#475569'}}>
+              ⬇ Export CSV
             </button>
           )}
           {tab==='funds' && (
@@ -1074,6 +1188,7 @@ export default function AdminAccountBook() {
                 <select value={memSort} onChange={e=>setMemSort(e.target.value)}
                   style={{padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',
                     fontSize:13,color:'#475569'}}>
+                  <option value="idNo">Sort: Member ID ↑</option>
                   <option value="capital">Sort: Most Capital</option>
                   <option value="name">Sort: Name A–Z</option>
                   <option value="payments">Sort: Most Payments</option>
