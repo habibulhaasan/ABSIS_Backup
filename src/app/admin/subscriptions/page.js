@@ -46,7 +46,7 @@ export default function AdminSubscriptions() {
       });
       batch.update(doc(db,'organizations',orgId2,'members',member.id), { entryFeePaid: true });
       await batch.commit();
-      showToast(\`✅ Entry fee marked as paid for \${member.nameEnglish||member.id}\`);
+      showToast(`✅ Entry fee marked as paid for ${member.nameEnglish||member.id}`);
     } catch(e) { showToast('Error: '+e.message); }
     setMarking(null);
   };
