@@ -1,302 +1,207 @@
-// src/app/admin/expenses/page.js
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, addDoc, deleteDoc, doc,
-  query, orderBy, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, serverTimestamp, orderBy, query, getDocs } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
-import Modal from '@/components/Modal';
 
-function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
-function tsDate(ts) {
-  if (!ts) return '—';
-  const d = ts.seconds?new Date(ts.seconds*1000):new Date(ts);
-  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-}
+const CATS  = ['Operations','Event','Maintenance','Charity','Salary','Utilities','Other'];
+const EMPTY = { title:'', amount:'', date:'', category:'', notes:'' };
 
-const CATEGORIES = ['Office','Meeting','Travel','Utilities','Maintenance','Marketing','Legal','Other'];
+// Self-contained modal CSS — no globals dependency.
+// Desktop: padding-left:264px shifts the flex centering point into the content
+//          area (past the 240px sidebar), so justify-content:center centres there.
+// Mobile : bottom sheet slides up, clears 56px topbar.
+const CSS = `
+  .m-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.48);
+    z-index: 9000;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-top: 56px;
+  }
+  .m-box {
+    background: #fff;
+    width: 100%;
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+    border-radius: 20px 20px 0 0;
+    -webkit-overflow-scrolling: touch;
+    animation: mUp .26s cubic-bezier(.32,1,.32,1) both;
+  }
+  .m-pill  { width:40px; height:4px; background:#e2e8f0; border-radius:99px; margin:12px auto 0; }
+  .m-inner { padding:16px 20px 44px; }
+  .m-top   { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
+  .m-2col  { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+  @keyframes mUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+  @media (min-width:769px) {
+    .m-overlay { align-items:center; padding:24px 24px 24px 264px; }
+    .m-box     { width:500px; max-height:90vh; border-radius:16px; box-shadow:0 20px 60px rgba(0,0,0,.18); animation:mPop .18s ease both; }
+    .m-pill    { display:none; }
+    .m-inner   { padding:28px 32px 36px; }
+  }
+  @keyframes mPop { from { opacity:0; transform:scale(.95); } to { opacity:1; transform:scale(1); } }
+  @media (max-width:480px) { .m-2col { grid-template-columns:1fr; } }
+`;
 
-function Stat({label,value,sub,color='#0f172a',bg='#f8fafc'}) {
+function Modal({ title, onClose, children }) {
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
   return (
-    <div style={{background:bg,borderRadius:10,padding:'14px 16px'}}>
-      <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:4}}>{label}</div>
-      <div style={{fontSize:20,fontWeight:700,color}}>{value}</div>
-      {sub && <div style={{fontSize:11,color:'#94a3b8',marginTop:3}}>{sub}</div>}
-    </div>
+    <>
+      <style>{CSS}</style>
+      <div className="m-overlay" onClick={onClose}>
+        <div className="m-box" onClick={e => e.stopPropagation()}>
+          <div className="m-pill" />
+          <div className="m-inner">
+            <div className="m-top">
+              <h3 style={{ fontSize:16, fontWeight:700, color:'#0f172a', margin:0 }}>{title}</h3>
+              <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'#94a3b8', fontSize:28, lineHeight:1, padding:'0 0 0 12px' }}>x</button>
+            </div>
+            {children}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
 export default function AdminExpenses() {
-  const { user, userData, orgData, isOrgAdmin } = useAuth();
+  const { userData, orgData } = useAuth();
+  const [items,      setItems]      = useState([]);
+  const [totalFund,  setTotalFund]  = useState(0);
+  const [form,       setForm]       = useState(EMPTY);
+  const [modal,      setModal]      = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error,      setError]      = useState('');
   const orgId = userData?.activeOrgId;
-
-  const [expenses,      setExpenses]      = useState([]);
-  const [totalCapital,  setTotalCapital]  = useState(0);
-  const [loading,       setLoading]       = useState(true);
-  const [showAdd,       setShowAdd]       = useState(false);
-  const [saving,        setSaving]        = useState(false);
-  const [toast,         setToast]         = useState('');
-  const [search,        setSearch]        = useState('');
-  const [catFilter,     setCatFilter]     = useState('all');
-  const [form,          setForm]          = useState({
-    title:'', amount:'', category:'Office', date:new Date().toISOString().split('T')[0], notes:''
-  });
-  const set = (k,v) => setForm(p=>({...p,[k]:v}));
-
-  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3000); };
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
   useEffect(() => {
     if (!orgId) return;
-    // Fetch capital once for fund balance display
+    const q = query(collection(db,'organizations',orgId,'expenses'), orderBy('date','desc'));
+    const unsub = onSnapshot(q, snap => setItems(snap.docs.map(d => ({ id:d.id, ...d.data() }))));
     getDocs(collection(db,'organizations',orgId,'investments')).then(snap => {
-      const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
-      const cap = snap.docs.map(d=>d.data()).filter(p=>p.status==='verified')
-        .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
-      setTotalCapital(cap);
+      setTotalFund(snap.docs.filter(d => d.data().status==='verified').reduce((s,d) => s+(d.data().amount||0), 0));
     });
-
-    return onSnapshot(
-      query(collection(db,'organizations',orgId,'expenses'),orderBy('createdAt','desc')),
-      snap => { setExpenses(snap.docs.map(d=>({id:d.id,...d.data()}))); setLoading(false); }
-    );
+    return unsub;
   }, [orgId]);
 
-  // Fund budget computation
-  const fb = orgData?.settings?.fundBudgets?.expenses;
-  const expenseBudget = fb?.value
-    ? (fb.type==='amount' ? Number(fb.value)||0 : Math.round(totalCapital*(Number(fb.value)||0)/100))
-    : 0;
-  const totalUsed   = expenses.reduce((s,e)=>s+(e.amount||0), 0);
-  const fundBalance = expenseBudget > 0 ? expenseBudget - totalUsed : null;
-  const overBudget  = fundBalance !== null && fundBalance < 0;
-  const newAmount   = Number(form.amount)||0;
-  const afterAdd    = fundBalance !== null ? fundBalance - newAmount : null;
+  const totalSpent = items.reduce((s,i) => s+(i.amount||0), 0);
+  const available  = totalFund - totalSpent;
+  const isEdit     = modal && modal !== 'add';
 
-  const handleAdd = async () => {
-    if (!form.title.trim()) return alert('Title is required.');
-    if (!form.amount || Number(form.amount)<=0) return alert('Enter a valid amount.');
-    if (!form.date) return alert('Date is required.');
-    setSaving(true);
+  const notifyAll = async (msg) => {
+    if (!orgId) return;
     try {
-      await addDoc(collection(db,'organizations',orgId,'expenses'), {
-        title:form.title, amount:Number(form.amount), category:form.category,
-        date:form.date, notes:form.notes,
-        recordedBy:user.uid, createdAt:serverTimestamp(),
-      });
-      setShowAdd(false);
-      setForm({title:'',amount:'',category:'Office',date:new Date().toISOString().split('T')[0],notes:''});
-      showToast('✅ Expense recorded!');
-    } catch(e) { showToast('Error: '+e.message); }
-    setSaving(false);
+      const ms = await getDocs(collection(db,'organizations',orgId,'members'));
+      await Promise.all(ms.docs.filter(d => d.data().approved).map(d =>
+        addDoc(collection(db,'organizations',orgId,'notifications'), { userId:d.id, message:msg, read:false, createdAt:serverTimestamp() })
+      ));
+    } catch(e) { console.error(e); }
   };
 
-  const handleDelete = async (e) => {
-    if (!confirm(`Delete "${e.title}"?`)) return;
-    try { await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id)); showToast('Deleted.'); }
-    catch(err) { showToast('Error: '+err.message); }
+  const openAdd    = () => { setForm({...EMPTY, date:new Date().toISOString().slice(0,10)}); setError(''); setModal('add'); };
+  const openView   = item => { setForm({ title:item.title, amount:item.amount, date:item.date||'', category:item.category||'', notes:item.notes||'' }); setError(''); setModal(item); };
+  const closeModal = useCallback(() => setModal(null), []);
+
+  const handleSave = async e => {
+    e.preventDefault(); setError('');
+    const amt = Number(form.amount);
+    if (!form.title || !amt) { setError('Title and amount are required.'); return; }
+    if (!isEdit && amt > available) { setError(`Exceeds available funds`); return; }
+    setSubmitting(true);
+    try {
+      if (!isEdit) {
+        await addDoc(collection(db,'organizations',orgId,'expenses'), { ...form, amount:amt, createdAt:serverTimestamp() });
+        await notifyAll(`New expense: "${form.title}" ${form.category ? `(${form.category})` : ''}`);
+      } else {
+        await updateDoc(doc(db,'organizations',orgId,'expenses',modal.id), { title:form.title, amount:amt, date:form.date, category:form.category, notes:form.notes });
+      }
+      setModal(null);
+    } catch(err) { setError(err.message); }
+    setSubmitting(false);
   };
 
-  if (!isOrgAdmin) return null;
-
-  const filtered = expenses
-    .filter(e => catFilter==='all' || e.category===catFilter)
-    .filter(e => !search || e.title?.toLowerCase().includes(search.toLowerCase()));
-
-  const usedPct = expenseBudget > 0 ? Math.min(100, (totalUsed/expenseBudget)*100) : 0;
+  const handleDelete = async id => {
+    if (!confirm('Delete this expense?')) return;
+    await deleteDoc(doc(db,'organizations',orgId,'expenses',id));
+    setModal(null);
+  };
 
   return (
     <div className="page-wrap animate-fade">
-      <div className="page-header">
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:12}}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', gap:12, marginBottom:24, flexWrap:'wrap' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          {orgData?.logoURL && <div style={{ width:40, height:40, borderRadius:10, overflow:'hidden', flexShrink:0 }}><img src={orgData.logoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" /></div>}
           <div>
             <div className="page-title">Expenses</div>
-            <div className="page-subtitle">Record and track organization expenses against the Expenses Fund budget.</div>
+            <div className="page-subtitle">Total spent: {totalSpent.toLocaleString()}</div>
           </div>
-          <button onClick={()=>setShowAdd(true)} className="btn-primary" style={{padding:'10px 20px',flexShrink:0}}>
-            + Add Expense
-          </button>
         </div>
+        <button onClick={openAdd} className="btn-primary">+ Add Expense</button>
       </div>
 
-      {toast && <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,
-        background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',
-        color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>}
-
-      {/* Fund balance banner */}
-      {expenseBudget > 0 && (
-        <div style={{padding:'14px 16px',borderRadius:12,marginBottom:20,
-          background:overBudget?'#fef2f2':'#f0fdf4',
-          border:`1.5px solid ${overBudget?'#fca5a5':'#86efac'}`}}>
-          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
-            <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>🧾 Expenses Fund</div>
-            <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
-              <div style={{textAlign:'right'}}>
-                <div style={{fontSize:11,color:'#64748b'}}>Budget</div>
-                <div style={{fontWeight:700,color:'#d97706'}}>{fmt(expenseBudget)}</div>
-              </div>
-              <div style={{textAlign:'right'}}>
-                <div style={{fontSize:11,color:'#64748b'}}>Used</div>
-                <div style={{fontWeight:700,color:'#dc2626'}}>{fmt(totalUsed)}</div>
-              </div>
-              <div style={{textAlign:'right'}}>
-                <div style={{fontSize:11,color:'#64748b'}}>Remaining</div>
-                <div style={{fontWeight:700,fontSize:15,color:overBudget?'#dc2626':'#15803d'}}>
-                  {fmt(fundBalance)}
-                </div>
-              </div>
-            </div>
-          </div>
-          <div style={{height:8,borderRadius:99,background:'#e2e8f0',overflow:'hidden'}}>
-            <div style={{height:'100%',borderRadius:99,
-              background:overBudget?'#dc2626':'#16a34a',
-              width:`${usedPct}%`,transition:'width 0.5s'}}/>
-          </div>
-          {overBudget && (
-            <div style={{marginTop:6,fontSize:12,color:'#b91c1c',fontWeight:600}}>
-              ⚠️ Expenses exceed the budget by {fmt(Math.abs(fundBalance))}. Consider reviewing your Expenses Fund budget in Settings.
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Stats */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:12,marginBottom:24}}>
-        <Stat label="Total Expenses" value={fmt(totalUsed)}    color="#dc2626" bg="#fef2f2"/>
-        <Stat label="This Month"
-          value={fmt(expenses.filter(e=>{
-            const d=e.createdAt?.seconds?new Date(e.createdAt.seconds*1000):new Date();
-            const now=new Date(); return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
-          }).reduce((s,e)=>s+(e.amount||0),0))}
-          bg="#f8fafc"/>
-        <Stat label="Entries" value={expenses.length} bg="#f8fafc"/>
-        {expenseBudget>0 && <Stat label="Fund Remaining"
-          value={fmt(fundBalance)}
-          color={overBudget?'#dc2626':'#15803d'}
-          bg={overBudget?'#fef2f2':'#f0fdf4'}/>}
+      <div className="stats-row">
+        {[['Total Fund', totalFund.toLocaleString(), '#0f172a'], ['Total Spent', totalSpent.toLocaleString(), '#dc2626'], ['Available', available.toLocaleString(), available >= 0 ? '#16a34a' : '#dc2626']].map(([l,v,c]) => (
+          <div key={l} className="stat-card"><div className="stat-label">{l}</div><div className="stat-value" style={{ color:c }}>{v}</div></div>
+        ))}
       </div>
 
-      {/* Filters */}
-      <div style={{display:'flex',gap:10,marginBottom:14,flexWrap:'wrap'}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search expenses…"
-          style={{flex:1,minWidth:180,padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
-        <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
-          style={{padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,color:'#475569'}}>
-          <option value="all">All Categories</option>
-          {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
-        </select>
-      </div>
+      {items.length === 0
+        ? <div className="card" style={{ textAlign:'center', padding:'48px 20px', color:'#94a3b8' }}>No expenses yet. Click "+ Add Expense" to record one.</div>
+        : <div className="table-wrap"><div className="table-scroll">
+            <table>
+              <thead><tr><th>Date</th><th>Title</th><th>Category</th><th>Amount</th></tr></thead>
+              <tbody>{items.map(item => (
+                <tr key={item.id} onClick={() => openView(item)}>
+                  <td style={{ fontSize:12, color:'#64748b', whiteSpace:'nowrap' }}>{item.date||'--'}</td>
+                  <td style={{ fontWeight:500 }}>{item.title}</td>
+                  <td>{item.category ? <span className="badge badge-gray">{item.category}</span> : '--'}</td>
+                  <td style={{ fontWeight:600, color:'#dc2626' }}>{item.amount?.toLocaleString()}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div></div>
+      }
 
-      {/* Table */}
-      {loading ? (
-        <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>
-      ) : filtered.length===0 ? (
-        <div style={{textAlign:'center',padding:'60px'}}>
-          <div style={{fontSize:36,marginBottom:10}}>🧾</div>
-          <div style={{fontWeight:600,color:'#0f172a',marginBottom:4}}>No expenses yet</div>
-          <button onClick={()=>setShowAdd(true)} className="btn-primary" style={{padding:'10px 24px',marginTop:8}}>
-            + Add Expense
-          </button>
-        </div>
-      ) : (
-        <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
-            padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
-            {['Date','Description','Category','Amount',''].map(h=>(
-              <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',
-                textTransform:'uppercase',letterSpacing:'0.06em',
-                textAlign:h==='Amount'?'right':'left'}}>{h}</div>
-            ))}
-          </div>
-          {filtered.map((e,i)=>(
-            <div key={e.id} style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
-              padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',
-              borderBottom:'1px solid #f1f5f9',alignItems:'center'}}>
-              <div style={{fontSize:12,color:'#475569'}}>{e.date||tsDate(e.createdAt)}</div>
-              <div>
-                <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{e.title}</div>
-                {e.notes&&<div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
-              </div>
-              <div><span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
-                color:'#92400e',fontSize:11,fontWeight:600}}>{e.category}</span></div>
-              <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(e.amount)}</div>
-              <button onClick={()=>handleDelete(e)}
-                style={{background:'none',border:'none',cursor:'pointer',
-                  color:'#94a3b8',fontSize:13,padding:'4px 8px'}}>✕</button>
-            </div>
-          ))}
-          {/* Total row */}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
-            padding:'10px 16px',background:'#fef2f2',borderTop:'2px solid #fca5a5'}}>
-            <div style={{fontWeight:700,fontSize:13,gridColumn:'1/4'}}>Total</div>
-            <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>
-              {fmt(filtered.reduce((s,e)=>s+(e.amount||0),0))}
-            </div>
-            <div/>
-          </div>
-        </div>
-      )}
-
-      {/* Add modal */}
-      {showAdd && (
-        <Modal title="Add Expense" onClose={()=>setShowAdd(false)}>
-          {/* Fund balance preview */}
-          {expenseBudget > 0 && (
-            <div style={{padding:'10px 14px',borderRadius:8,marginBottom:16,
-              background:afterAdd!==null&&afterAdd<0?'#fef2f2':'#f0fdf4',
-              border:`1px solid ${afterAdd!==null&&afterAdd<0?'#fca5a5':'#86efac'}`}}>
-              <div style={{display:'flex',justifyContent:'space-between',fontSize:13}}>
-                <span style={{color:'#64748b'}}>Expenses Fund remaining:</span>
-                <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
-                  {fmt(fundBalance)}
-                </span>
-              </div>
-              {newAmount > 0 && (
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginTop:4}}>
-                  <span style={{color:'#64748b'}}>After this expense:</span>
-                  <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
-                    {afterAdd!==null ? fmt(afterAdd) : '—'}
-                    {afterAdd!==null && afterAdd<0 && ' ⚠️ Over budget'}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div style={{display:'flex',flexDirection:'column',gap:14}}>
-            <div>
+      {modal && (
+        <Modal title={!isEdit ? 'Add Expense' : 'Edit Expense'} onClose={closeModal}>
+          {error && <div className="alert alert-error">{error}</div>}
+          <form onSubmit={handleSave}>
+            <div className="form-group">
               <label className="form-label">Title *</label>
-              <input value={form.title} onChange={e=>set('title',e.target.value)} placeholder="e.g. Office supplies"/>
+              <input value={form.title} onChange={e => set('title', e.target.value)} placeholder="What was this expense for?" required />
             </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-              <div>
-                <label className="form-label">Amount (৳) *</label>
-                <input type="number" min="0" value={form.amount}
-                  onChange={e=>set('amount',e.target.value)} placeholder="0"/>
-              </div>
-              <div>
-                <label className="form-label">Date *</label>
-                <input type="date" value={form.date} onChange={e=>set('date',e.target.value)}/>
-              </div>
-              <div>
+            <div className="form-group">
+              <label className="form-label">
+                Amount *
+                {!isEdit && <span style={{ fontWeight:400, textTransform:'none', color:'#94a3b8', fontSize:10, marginLeft:6 }}>Available: {available.toLocaleString()}</span>}
+              </label>
+              <input type="number" min="1" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0" required />
+            </div>
+            <div className="m-2col">
+              <div className="form-group"><label className="form-label">Date</label><input type="date" value={form.date} onChange={e => set('date', e.target.value)} /></div>
+              <div className="form-group">
                 <label className="form-label">Category</label>
-                <select value={form.category} onChange={e=>set('category',e.target.value)}>
-                  {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+                <select value={form.category} onChange={e => set('category', e.target.value)}>
+                  <option value="">Select...</option>
+                  {CATS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-              <div>
-                <label className="form-label">Notes</label>
-                <input value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional"/>
-              </div>
             </div>
-          </div>
-          <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
-            <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
-              {saving?'Saving…':'Record Expense'}
-            </button>
-            <button onClick={()=>setShowAdd(false)}
-              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
-                background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
-          </div>
+            <div className="form-group"><label className="form-label">Notes</label><textarea rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional details" style={{ resize:'vertical' }} /></div>
+            <div style={{ display:'flex', gap:8, marginTop:4 }}>
+              {isEdit && <button type="button" onClick={() => handleDelete(modal.id)} className="btn-danger">Delete</button>}
+              <button type="submit" disabled={submitting} className="btn-primary" style={{ flex:1, justifyContent:'center' }}>
+                {submitting ? 'Saving...' : !isEdit ? 'Add Expense' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
     </div>
