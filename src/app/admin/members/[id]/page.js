@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { db } from '@/lib/firebase';
-import { doc, getDoc, updateDoc, addDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, addDoc, collection, getDocs, query, where, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { countMissedMonths, sortByMemberId } from '@/lib/fundCalculations';
 import { useAuth } from '@/context/AuthContext';
 import { createPortal } from 'react-dom';
 
@@ -1285,6 +1286,32 @@ export default function AdminMemberProfile() {
     setMember(prev => ({ ...prev, ...patch }));
   }, []);
 
+  const grantReregRebate = async () => {
+    if (!orgId || !memberId) return;
+    const newVal = !member.reregGranted;
+    try {
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId), { reregGranted: newVal });
+      setMember(prev => ({ ...prev, reregGranted: newVal }));
+      await addDoc(collection(db,'organizations',orgId,'notifications'), {
+        userId: memberId,
+        message: newVal
+          ? '✅ Your re-registration fee has been waived by the admin as a rebate.'
+          : 'ℹ️ Your re-registration fee rebate has been revoked. Please pay the fee.',
+        read: false, createdAt: serverTimestamp(),
+      });
+      showToast(newVal ? '✅ Rebate granted — member notified.' : '✅ Rebate revoked.');
+    } catch(e) { showToast(e.message, true); }
+  };
+
+  const markLatePayerFlag = async (flag) => {
+    if (!orgId || !memberId) return;
+    try {
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId), { isLatePayer: flag });
+      setMember(prev => ({ ...prev, isLatePayer: flag }));
+      showToast(flag ? '⏱ Marked as late payer.' : '✅ Late payer flag removed.');
+    } catch(e) { showToast(e.message, true); }
+  };
+
   useEffect(() => {
     if (!orgId||!memberId) return;
     (async () => {
@@ -1304,6 +1331,25 @@ export default function AdminMemberProfile() {
       setMember(merged);
       setForm({...merged});
       const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
+      // Compute missed months for late payer status
+      const settings2  = orgData?.settings || {};
+      const startDate2 = settings2.requireBackpayment ? settings2.startDate : (m.joiningDate || settings2.startDate || '');
+      const allMonths2 = [];
+      if (startDate2) {
+        const d0 = new Date(startDate2); d0.setDate(1);
+        const now2 = new Date();
+        while (d0 <= now2) {
+          allMonths2.push(`${d0.getFullYear()}-${String(d0.getMonth()+1).padStart(2,'0')}`);
+          d0.setMonth(d0.getMonth()+1);
+        }
+      }
+      const paidSet2 = new Set(paySnap.docs.flatMap(d => {
+        const pd = d.data();
+        return pd.status !== 'rejected' && pd.isContribution !== false ? (pd.paidMonths||[]) : [];
+      }));
+      const missed2 = countMissedMonths(allMonths2, paidSet2);
+      const lateThresh2 = settings2.latePayerAfterMonths ?? 1;
+      const reregThresh2 = settings2.reregAfterMonths ?? 3;
 
       // Capital: only contribution payments
       const myPay = paySnap.docs.map(d=>d.data());
@@ -1340,6 +1386,10 @@ export default function AdminMemberProfile() {
       const returnable = memberCapital - memberExpenseShare - feesTotal - loanOutstanding + profitTotal;
 
       setCapital({
+        missedMonths:    missed2,
+        isLatePayer:     !!(orgData?.settings?.latePayerEnabled && missed2 > lateThresh2),
+        reregRequired:   !!(orgData?.settings?.reregAutoAssign  && missed2 >= reregThresh2),
+        latePayerEnabled: !!orgData?.settings?.latePayerEnabled,
         total:           memberCapital,
         verifiedCount:   ver.length,
         pendingCount:    myPay.filter(p=>p.status==='pending').length,
@@ -1719,6 +1769,73 @@ export default function AdminMemberProfile() {
         </>
       ) : (
         <>
+          {/* Late Payer + Re-registration Status Card */}
+          {capital && (capital.isLatePayer || capital.reregRequired || capital.missedMonths > 0) && (
+            <div style={{ background:'#fff', borderRadius:12, border:'1px solid #e2e8f0',
+              overflow:'hidden', marginBottom:12 }}>
+              <div style={{ padding:'10px 16px', background:'#f8fafc',
+                borderBottom:'1px solid #e2e8f0', fontWeight:700, fontSize:13, color:'#0f172a' }}>
+                ⏱ Payment Status
+              </div>
+              <div style={{ padding:'14px 16px', display:'flex', flexDirection:'column', gap:12 }}>
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10 }}>
+                  <div style={{ background:'#f8fafc', borderRadius:8, padding:'10px 12px' }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
+                      Missed Months
+                    </div>
+                    <div style={{ fontSize:20, fontWeight:800, color: capital.missedMonths > 0 ? '#dc2626' : '#15803d' }}>
+                      {capital.missedMonths}
+                    </div>
+                  </div>
+                  <div style={{ background: capital.isLatePayer ? '#fef2f2' : '#f0fdf4',
+                    borderRadius:8, padding:'10px 12px', border:`1px solid ${capital.isLatePayer?'#fca5a5':'#86efac'}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
+                      Late Payer
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:800, color: capital.isLatePayer ? '#b91c1c' : '#15803d' }}>
+                      {capital.isLatePayer ? '⏱ Yes' : '✅ No'}
+                    </div>
+                  </div>
+                  <div style={{ background: capital.reregRequired && !member.reregGranted ? '#fef3c7' : '#f0fdf4',
+                    borderRadius:8, padding:'10px 12px',
+                    border:`1px solid ${capital.reregRequired && !member.reregGranted ? '#fde68a' : '#86efac'}` }}>
+                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
+                      Re-Reg Fee
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:800,
+                      color: member.reregGranted ? '#15803d' : capital.reregRequired ? '#92400e' : '#15803d' }}>
+                      {member.reregGranted ? '✅ Waived (rebate)' : capital.reregRequired ? '🔄 Required' : '—'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {capital.isLatePayer ? (
+                    <button onClick={() => markLatePayerFlag(false)}
+                      style={{ padding:'7px 14px', borderRadius:7, border:'1px solid #e2e8f0',
+                        background:'#fff', cursor:'pointer', fontSize:12, fontWeight:600, color:'#475569' }}>
+                      ✅ Clear Late Payer Flag
+                    </button>
+                  ) : (
+                    <button onClick={() => markLatePayerFlag(true)}
+                      style={{ padding:'7px 14px', borderRadius:7, border:'1px solid #fca5a5',
+                        background:'#fef2f2', cursor:'pointer', fontSize:12, fontWeight:600, color:'#b91c1c' }}>
+                      ⏱ Mark as Late Payer
+                    </button>
+                  )}
+                  {capital.reregRequired && (
+                    <button onClick={grantReregRebate}
+                      style={{ padding:'7px 14px', borderRadius:7, border:`1px solid ${member.reregGranted?'#fca5a5':'#86efac'}`,
+                        background: member.reregGranted ? '#fef2f2' : '#f0fdf4',
+                        cursor:'pointer', fontSize:12, fontWeight:600,
+                        color: member.reregGranted ? '#b91c1c' : '#15803d' }}>
+                      {member.reregGranted ? '↩ Revoke Rebate' : '🎁 Grant Rebate (Waive Re-Reg Fee)'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           <ViewSection title="👤 Personal Information" rows={VIEW_PERSONAL}/>
           <ViewSection title="📍 Address Information"  rows={VIEW_ADDR}/>
           <ViewSection title="👨‍👩‍👧 Nominee / Heir"       rows={VIEW_HEIR}/>
