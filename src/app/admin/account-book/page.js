@@ -2,7 +2,7 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, getDocs, query, orderBy, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, query, orderBy, doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
@@ -39,17 +39,35 @@ function computeFundAlloc(key, totalCapital, settings) {
 
 function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
   const rows = [];
-  payments.filter(p=>p.status==='verified').forEach(p => {
-    const net = (p.amount||0) - (p.gatewayFee||0);
+  // Only verified, non-deleted payments (deleted = removed from Firestore entirely)
+  payments.filter(p => p.status === 'verified').forEach(p => {
     const m   = memberMap[p.userId]||{};
-    rows.push({
-      id:`pay-${p.id}`, type:'installment', ts:p.createdAt,
-      sortKey:tsSort(p.createdAt), date:tsDate(p.createdAt),
-      desc:'Capital Installment',
-      sub:`${m.nameEnglish||m.name||'Member'} — ${p.method||''}`,
-      debit:0, credit:net, count:1,
-      meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
-    });
+    const isContrib = p.isContribution !== false;
+    const pType = p.paymentType || 'monthly';
+
+    if (pType === 'entry_fee' || pType === 'reregistration_fee') {
+      // Entry/re-reg fees → show as expenses-fund credits, NOT capital
+      rows.push({
+        id:`pay-${p.id}`, type: pType, ts:p.createdAt,
+        sortKey:tsSort(p.createdAt), date:tsDate(p.createdAt),
+        desc: pType === 'reregistration_fee' ? 'Re-Registration Fee (Expenses Fund)' : 'Entry Fee (Expenses Fund)',
+        sub:`${m.nameEnglish||m.name||'Member'} — ${p.method||''}`,
+        debit:0, credit:p.amount||0, count:0,
+        meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
+      });
+    } else if (isContrib) {
+      // Capital contributions only (monthly + general subs)
+      const net = (p.amount||0) - (p.gatewayFee||0);
+      rows.push({
+        id:`pay-${p.id}`, type:'installment', ts:p.createdAt,
+        sortKey:tsSort(p.createdAt), date:tsDate(p.createdAt),
+        desc: p.specialSubId ? `Special Sub: ${p.specialSubTitle||'—'}` : 'Capital Installment',
+        sub:`${m.nameEnglish||m.name||'Member'} — ${p.method||''}`,
+        debit:0, credit:net, count:1,
+        meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
+      });
+    }
+    // Gateway fees are NOT added to any row — they are a transaction cost shown in drill-down only
   });
   expenses.forEach(e => {
     rows.push({
@@ -629,6 +647,7 @@ export default function AdminAccountBook() {
 
   useEffect(() => {
     if (!orgId || !isOrgAdmin) return;
+    const unsubs = [];
     (async () => {
       const [paySnap,expSnap,feeSnap,loanSnap,projSnap,distSnap,memSnap] = await Promise.all([
         getDocs(query(collection(db,'organizations',orgId,'investments'), orderBy('createdAt','asc'))),
@@ -669,7 +688,22 @@ export default function AdminAccountBook() {
       setMemberMap(mmap);
       setMemberRows(rows);
       setLoading(false);
+
+      // Live listeners — so deletes/edits reflect immediately without page reload
+      unsubs.push(onSnapshot(
+        query(collection(db,'organizations',orgId,'investments'), orderBy('createdAt','asc')),
+        snap => setPayments(snap.docs.map(d=>({id:d.id,...d.data()})))
+      ));
+      unsubs.push(onSnapshot(
+        collection(db,'organizations',orgId,'expenses'),
+        snap => setExpenses(snap.docs.map(d=>({id:d.id,...d.data()})))
+      ));
+      unsubs.push(onSnapshot(
+        collection(db,'organizations',orgId,'entryFees'),
+        snap => setFees(snap.docs.map(d=>({id:d.id,...d.data()})))
+      ));
     })();
+    return () => unsubs.forEach(u => u());
   }, [orgId, isOrgAdmin]);
 
   if (!isOrgAdmin) { router.replace('/dashboard'); return null; }
