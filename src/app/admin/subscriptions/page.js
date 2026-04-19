@@ -26,7 +26,7 @@ export default function AdminSubscriptions() {
 
   // Mark entry fee as paid directly from admin side
   const markEntryFeePaid = async (member) => {
-    if (!confirm(\`Mark entry fee as paid for \${member.nameEnglish||member.id}?\`)) return;
+    if (!confirm(`Mark entry fee as paid for ${member.nameEnglish||member.id}?`)) return;
     setMarking(member.id);
     const orgId2 = userData?.activeOrgId;
     try {
@@ -46,7 +46,7 @@ export default function AdminSubscriptions() {
       });
       batch.update(doc(db,'organizations',orgId2,'members',member.id), { entryFeePaid: true });
       await batch.commit();
-      showToast(\`✅ Entry fee marked as paid for \${member.nameEnglish||member.id}\`);
+      showToast(`✅ Entry fee marked as paid for ${member.nameEnglish||member.id}`);
     } catch(e) { showToast('Error: '+e.message); }
     setMarking(null);
   };
