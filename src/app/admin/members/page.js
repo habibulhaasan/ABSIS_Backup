@@ -424,6 +424,9 @@ export default function AdminMembers() {
   const settings = orgData?.settings || {};
   const features = orgData?.features || {};
   const limits   = orgData?.limits   || {};
+  // Late payer thresholds from settings
+  const latePayerEnabled  = !!settings.latePayerEnabled;
+  const latePayerThreshold = settings.latePayerAfterMonths ?? 1;
 
   useEffect(() => {
     if (!orgId) return;
@@ -731,6 +734,12 @@ export default function AdminMembers() {
                 )}
                 {m.role === 'cashier' && m.cashierAccountIds?.length > 0 && (
                   <span style={{ fontSize: 10, color: '#94a3b8' }}>{m.cashierAccountIds.length} acct{m.cashierAccountIds.length > 1 ? 's' : ''}</span>
+                )}
+                {latePayerEnabled && m.isLatePayer && (
+                  <span className="badge" style={{ fontSize: 9, background: '#fef2f2', color: '#b91c1c' }}>⏱ Late</span>
+                )}
+                {m.reregRequired && !m.reregGranted && (
+                  <span className="badge" style={{ fontSize: 9, background: '#fef3c7', color: '#92400e' }}>🔄 Re-reg</span>
                 )}
               </div>
 
