@@ -2,7 +2,8 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc, getDocs, addDoc, updateDoc, serverTimestamp, writeBatch } from 'firebase/firestore';
+import { sortByMemberId } from '@/lib/fundCalculations';
 import { useAuth } from '@/context/AuthContext';
 
 const fmt = n => `৳${(n||0).toLocaleString(undefined,{maximumFractionDigits:0})}`;
@@ -18,6 +19,37 @@ export default function AdminSubscriptions() {
   const [members,  setMembers]  = useState({}); // uid → profile
   const [loading,  setLoading]  = useState(true);
   const [search,   setSearch]   = useState('');
+  const [toast,    setToast]    = useState('');
+  const [marking,  setMarking]  = useState(null); // uid being marked
+
+  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3500); };
+
+  // Mark entry fee as paid directly from admin side
+  const markEntryFeePaid = async (member) => {
+    if (!confirm(\`Mark entry fee as paid for \${member.nameEnglish||member.id}?\`)) return;
+    setMarking(member.id);
+    const orgId2 = userData?.activeOrgId;
+    try {
+      const amount = orgData?.settings?.entryFeeAmount || activeSub?.amount || 0;
+      const batch  = writeBatch(db);
+      const feeRef = doc(collection(db,'organizations',orgId2,'entryFees'));
+      batch.set(feeRef, {
+        userId:     member.id,
+        amount:     Number(amount),
+        method:     'Admin',
+        paidAt:     new Date().toISOString().split('T')[0],
+        notes:      'Marked as paid by admin',
+        recordedBy: user?.uid,
+        createdAt:  serverTimestamp(),
+        paymentType:    'entry_fee',
+        isContribution: false,
+      });
+      batch.update(doc(db,'organizations',orgId2,'members',member.id), { entryFeePaid: true });
+      await batch.commit();
+      showToast(\`✅ Entry fee marked as paid for \${member.nameEnglish||member.id}\`);
+    } catch(e) { showToast('Error: '+e.message); }
+    setMarking(null);
+  };
 
   // Load special subscriptions
   useEffect(() => {
@@ -61,12 +93,19 @@ export default function AdminSubscriptions() {
   }, [orgId]);
 
   const activeSub   = subs.find(s => s.id === selSub);
-  const visiblePay  = payments.filter(p =>
-    (selSub === 'all' || p.specialSubId === selSub) &&
-    (!search ||
-      (members[p.userId]?.nameEnglish||'').toLowerCase().includes(search.toLowerCase()) ||
-      (members[p.userId]?.idNo||'').toLowerCase().includes(search.toLowerCase()))
-  );
+  const visiblePay  = payments
+    .filter(p =>
+      (selSub === 'all' || p.specialSubId === selSub) &&
+      (!search ||
+        (members[p.userId]?.nameEnglish||'').toLowerCase().includes(search.toLowerCase()) ||
+        (members[p.userId]?.idNo||'').toLowerCase().includes(search.toLowerCase())))
+    .sort((a, b) => {
+      const ma = members[a.userId], mb = members[b.userId];
+      const na = parseInt((ma?.idNo||'').replace(/\D/g,''),10);
+      const nb = parseInt((mb?.idNo||'').replace(/\D/g,''),10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return (ma?.nameEnglish||'').localeCompare(mb?.nameEnglish||'');
+    });
 
   // Stats for selected sub
   const totalCollected = visiblePay.filter(p=>p.status==='verified').reduce((s,p)=>s+(p.amount||0),0);
@@ -80,6 +119,10 @@ export default function AdminSubscriptions() {
 
   return (
     <div className="page-wrap animate-fade">
+      {toast && <div style={{padding:'10px 16px',borderRadius:8,marginBottom:12,fontSize:13,fontWeight:600,
+        background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',
+        color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>}
+
       <div className="page-header" style={{ display:'flex', alignItems:'center', gap:14 }}>
         {orgData?.logoURL && (
           <div style={{ width:44, height:44, borderRadius:10, overflow:'hidden', flexShrink:0, border:'1px solid #e2e8f0' }}>
@@ -228,7 +271,7 @@ export default function AdminSubscriptions() {
           {/* Who hasn't paid yet */}
           {activeSub && (() => {
             const paidUids = new Set(visiblePay.filter(p=>p.status==='verified').map(p=>p.userId));
-            const unpaid = Object.values(members).filter(m => m.approved && !paidUids.has(m.id));
+            const unpaid = sortByMemberId(Object.values(members).filter(m => m.approved && !paidUids.has(m.id)));
             if (unpaid.length === 0) return null;
             return (
               <div className="card" style={{ marginTop:16 }}>
@@ -238,10 +281,22 @@ export default function AdminSubscriptions() {
                 <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
                   {unpaid.map(m => (
                     <div key={m.id} style={{ display:'flex', alignItems:'center', gap:8, padding:'7px 12px', borderRadius:8, background:'#fef2f2', border:'1px solid #fecaca' }}>
-                      <div style={{ width:26, height:26, borderRadius:'50%', background:'#fee2e2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:'#dc2626', flexShrink:0 }}>
-                        {initials(m.nameEnglish)}
+                      <div style={{ width:26, height:26, borderRadius:'50%', background:'#fee2e2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, fontWeight:700, color:'#dc2626', flexShrink:0, overflow:'hidden' }}>
+                        {m.photoURL ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/> : initials(m.nameEnglish)}
                       </div>
-                      <span style={{ fontSize:12, fontWeight:600, color:'#0f172a' }}>{m.nameEnglish||'Unknown'}</span>
+                      <div>
+                        <div style={{ fontSize:12, fontWeight:600, color:'#0f172a' }}>{m.nameEnglish||'Unknown'}</div>
+                        {m.idNo && <div style={{ fontSize:10, color:'#94a3b8' }}>#{m.idNo}</div>}
+                      </div>
+                      {activeSub?.type === 'entry_fee' && (
+                        <button onClick={() => markEntryFeePaid(m)}
+                          disabled={marking === m.id}
+                          style={{ marginLeft:6, padding:'3px 8px', borderRadius:5, border:'1px solid #fca5a5',
+                            background:'#fff', cursor:'pointer', fontSize:10, fontWeight:700, color:'#dc2626',
+                            opacity: marking===m.id ? 0.5 : 1 }}>
+                          {marking===m.id ? '…' : 'Mark Paid'}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
