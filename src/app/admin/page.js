@@ -2,7 +2,8 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, doc, updateDoc, addDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, addDoc, getDoc, serverTimestamp, deleteDoc } from 'firebase/firestore';
+import { isCapitalContribution } from '@/lib/fundCalculations';
 import { useAuth } from '@/context/AuthContext';
 import Modal from '@/components/Modal';
 
@@ -61,15 +62,6 @@ export default function VerifyPayments() {
       await updateDoc(doc(db, 'organizations', orgId, 'investments', payment.id), {
         status, verifiedAt: serverTimestamp(), verifiedBy: user.uid,
       });
-      // If this is an entry_fee type payment being verified, mark the member's entryFeePaid flag
-      if (status === 'verified' &&
-          (payment.paymentType === 'entry_fee' || payment.specialSubType === 'entry_fee')) {
-        try {
-          await updateDoc(doc(db, 'organizations', orgId, 'members', payment.userId), {
-            entryFeePaid: true,
-          });
-        } catch (_) { /* non-critical */ }
-      }
       const months = (payment.paidMonths||[]).join(', ') || 'your payment';
       const msg = status === 'verified'
         ? `✅ Your payment for ${months} has been verified. Amount: ৳${payment.amount?.toLocaleString()}`
@@ -80,6 +72,31 @@ export default function VerifyPayments() {
     } catch (e) { alert(e.message); }
     setSaving(null);
     setDetail(null);
+  };
+
+  const deletePayment = async (payment) => {
+    if (!confirm(
+      `Delete this payment record?\n\n` +
+      `Member: ${members[payment.userId]?.nameEnglish || 'Unknown'}\n` +
+      `Amount: ৳${(payment.amount||0).toLocaleString()}\n` +
+      `Months: ${(payment.paidMonths||[]).join(', ') || '(special)'}\n\n` +
+      `⚠️ This will REVERSE the accounting effect — capital/fund balances will adjust automatically (they are calculated live from raw data).`
+    )) return;
+    setSaving(payment.id);
+    try {
+      await deleteDoc(doc(db, 'organizations', orgId, 'investments', payment.id));
+      // Notify member
+      const wasVerified = payment.status === 'verified';
+      const months = (payment.paidMonths||[]).join(', ') || 'your payment';
+      await addDoc(collection(db, 'organizations', orgId, 'notifications'), {
+        userId:    payment.userId,
+        message:   `ℹ️ A payment record (${months}, ৳${payment.amount?.toLocaleString()}) has been deleted by an admin. Please contact admin if you believe this is an error.`,
+        read:      false,
+        createdAt: serverTimestamp(),
+      });
+      setDetail(null);
+    } catch(e) { alert('Delete failed: ' + e.message); }
+    setSaving(null);
   };
 
   const filtered = payments.filter(p => {
@@ -210,6 +227,10 @@ export default function VerifyPayments() {
                     ['Tx ID',    detail.txId||'—'],
                     ['Amount',   `৳${detail.amount?.toLocaleString()}`],
                     ['Months',   (detail.paidMonths||[]).join(', ')||'—'],
+                    ['Type',     isCapitalContribution(detail) ? '↗ Capital Contribution' : '→ Expenses Fund'],
+                    ...(detail.gatewayFee>0 ? [['Gateway Fee', `৳${detail.gatewayFee?.toLocaleString()}`]] : []),
+                    ...(detail.penaltyPaid>0 ? [['Late Fee', `৳${detail.penaltyPaid?.toLocaleString()}`]] : []),
+                    ['Net to Capital', detail.isContribution!==false ? `৳${((detail.amount||0)-(detail.gatewayFee||0)-(detail.penaltyPaid||0)).toLocaleString()}` : '—'],
                     ['Date',     detail.createdAt?.seconds ? new Date(detail.createdAt.seconds*1000).toLocaleDateString('en-GB') : '—'],
                     ['Status',   detail.status],
                     ...(detail.notes ? [['Notes', detail.notes]] : []),
@@ -220,8 +241,8 @@ export default function VerifyPayments() {
                     </div>
                   ))}
                 </div>
-                {detail.status === 'pending' && (
-                  <div style={{ display:'flex', gap:8, marginTop:20 }}>
+                <div style={{ display:'flex', gap:8, marginTop:20, flexWrap:'wrap' }}>
+                  {detail.status === 'pending' && (<>
                     <button onClick={() => verify(detail,'rejected')} disabled={saving===detail.id}
                       style={{ flex:1, padding:'11px', borderRadius:8, border:'none', cursor:'pointer', fontWeight:600, background:'#fee2e2', color:'#b91c1c' }}>
                       Reject
@@ -230,8 +251,16 @@ export default function VerifyPayments() {
                       className="btn-primary" style={{ flex:2, justifyContent:'center' }}>
                       {saving===detail.id ? 'Saving…' : '✓ Verify Payment'}
                     </button>
-                  </div>
-                )}
+                  </>)}
+                  {isOrgAdmin && (
+                    <button onClick={() => deletePayment(detail)} disabled={saving===detail.id}
+                      style={{ width:'100%', padding:'9px', borderRadius:8, border:'1px solid #fca5a5',
+                        background:'#fff', cursor:'pointer', fontWeight:600, fontSize:12, color:'#b91c1c',
+                        marginTop: detail.status==='pending' ? 4 : 0 }}>
+                      🗑 Delete Record (reverses accounting)
+                    </button>
+                  )}
+                </div>
               </>
             );
           })()}
