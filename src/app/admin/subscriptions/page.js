@@ -26,7 +26,7 @@ export default function AdminSubscriptions() {
 
   // Mark entry fee as paid directly from admin side
   const markEntryFeePaid = async (member) => {
-    if (!confirm(\`Mark entry fee as paid for \${member.nameEnglish||member.id}?\`)) return;
+    if (!confirm(`Mark entry fee as paid for ${member.nameEnglish || member.id}?`)) return;
     setMarking(member.id);
     const orgId2 = userData?.activeOrgId;
     try {
