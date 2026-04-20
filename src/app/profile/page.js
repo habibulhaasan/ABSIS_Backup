@@ -326,7 +326,7 @@ function UploadStatus({ result }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function ProfilePage() {
-  const { user, userData, orgData } = useAuth();
+  const { user, userData, orgData, viewUid, isViewingAsMember } = useAuth();
   const orgId    = userData?.activeOrgId;
   const photoRef   = useRef(null);
   const nomineeRef = useRef(null);
@@ -363,7 +363,7 @@ export default function ProfilePage() {
       );
 
       if (res.folderId) {
-        await updateDoc(doc(db, "users", user.uid), {
+        await updateDoc(doc(db, "users", viewUid), {
           driveFolderId: res.folderId
         });
       }
@@ -388,7 +388,7 @@ export default function ProfilePage() {
       const updatedFiles = [...legalFiles, newFile];
 
       // Persist to Firestore — admin can see it on the member details page
-      await updateDoc(doc(db, 'organizations', orgId, 'members', user.uid), {
+      await updateDoc(doc(db, 'organizations', orgId, 'members', viewUid), {
         legalFiles: updatedFiles,
       });
       setLegalFiles(updatedFiles);
@@ -426,8 +426,8 @@ export default function ProfilePage() {
     if (!user || !orgId) return;
     const load = async () => {
       const [uSnap, mSnap] = await Promise.all([
-        getDoc(doc(db, 'users', user.uid)),
-        getDoc(doc(db, 'organizations', orgId, 'members', user.uid)),
+        getDoc(doc(db, 'users', viewUid)),
+        getDoc(doc(db, 'organizations', orgId, 'members', viewUid)),
       ]);
       const u = uSnap.exists() ? uSnap.data() : {};
       const m = mSnap.exists() ? mSnap.data() : {};
@@ -479,7 +479,7 @@ export default function ProfilePage() {
       setLastUpdated(m.profileUpdatedAt || u.profileUpdatedAt || null);
     };
     load();
-  }, [user?.uid, orgId]);
+  }, [viewUid, orgId]);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -501,11 +501,11 @@ export default function ProfilePage() {
   };
 
   const handleSave = async () => {
-    if (!form || profileLocked) return;
+    if (!form || effectiveLocked) return;
     setSaving(true);
     try {
       const now = serverTimestamp();
-      await updateDoc(doc(db,'users',user.uid), {
+      await updateDoc(doc(db,'users',viewUid), {
         idNo:             form.idNo,
         nameEnglish:      form.nameEnglish,
         nameBengali:       form.nameBengali,
@@ -515,7 +515,7 @@ export default function ProfilePage() {
         occupation:       form.occupation,
         profileUpdatedAt: now,
       });
-      await setDoc(doc(db,'organizations',orgId,'members',user.uid), {
+      await setDoc(doc(db,'organizations',orgId,'members',viewUid), {
         ...form,
         profileUpdatedAt: now,
         profileSubmitted: true,
@@ -531,6 +531,9 @@ export default function ProfilePage() {
   };
 
   if (!form) return <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>;
+
+  // SuperAdmin viewing as member: profile is read-only (SA sees the data, can't accidentally save)
+  const effectiveLocked = profileLocked || isViewingAsMember;
 
   const memberId    = userData?.idNo || '—';
   const joiningDate = (() => {
@@ -552,7 +555,7 @@ export default function ProfilePage() {
                 : 'Fill in all details carefully. You can submit only once.'}
             </div>
           </div>
-          {!profileLocked && (
+          {!effectiveLocked && (
             <button onClick={handleSave} disabled={saving||processing}
               className="btn-primary" style={{padding:'10px 24px',flexShrink:0}}>
               {saving?'Saving…':'Submit Profile'}
@@ -589,7 +592,7 @@ export default function ProfilePage() {
               ? <img src={form.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
               : (form.nameEnglish?.[0]||'?').toUpperCase()}
           </div>
-          {!profileLocked && (
+          {!effectiveLocked && (
             <button onClick={()=>photoRef.current?.click()}
               disabled={processing}
               style={{padding:'5px 12px',borderRadius:7,border:'1px solid #e2e8f0',
@@ -624,19 +627,19 @@ export default function ProfilePage() {
         <BiField labelEn="Mother's Name (English)" labelBn="Mother's Name (বাংলা)"
           keyEn="motherNameEn" keyBn="motherNameBn" form={form} set={set}/>
         <Field label="Date of Birth">
-          <input type="date" value={form.dob} onChange={e=>set('dob',e.target.value)} disabled={profileLocked}/>
+          <input type="date" value={form.dob} onChange={e=>set('dob',e.target.value)} disabled={effectiveLocked}/>
         </Field>
         <Field label="National ID (NID)">
-          <input value={form.nid} onChange={e=>set('nid',e.target.value)} placeholder="NID number" disabled={profileLocked}/>
+          <input value={form.nid} onChange={e=>set('nid',e.target.value)} placeholder="NID number" disabled={effectiveLocked}/>
         </Field>
         <Field label="Blood Group">
-          <select value={form.bloodGroup} onChange={e=>set('bloodGroup',e.target.value)} disabled={profileLocked}>
+          <select value={form.bloodGroup} onChange={e=>set('bloodGroup',e.target.value)} disabled={effectiveLocked}>
             <option value="">Select…</option>
             {BLOOD_GROUPS.map(b=><option key={b} value={b}>{b}</option>)}
           </select>
         </Field>
         <Field label="Marital Status">
-          <select value={form.maritalStatus} onChange={e=>set('maritalStatus',e.target.value)} disabled={profileLocked}>
+          <select value={form.maritalStatus} onChange={e=>set('maritalStatus',e.target.value)} disabled={effectiveLocked}>
             <option value="">Select…</option>
             {MARITAL_STATUS.map(s=><option key={s} value={s}>{s}</option>)}
           </select>
@@ -644,40 +647,40 @@ export default function ProfilePage() {
         <BiField labelEn="Spouse Name (English)" labelBn="Spouse Name (বাংলা)"
           keyEn="spouseNameEn" keyBn="spouseNameBn" form={form} set={set}/>
         <Field label="Education">
-          <select value={form.education} onChange={e=>set('education',e.target.value)} disabled={profileLocked}>
+          <select value={form.education} onChange={e=>set('education',e.target.value)} disabled={effectiveLocked}>
             <option value="">Select…</option>
             {EDUCATION.map(e=><option key={e} value={e}>{e}</option>)}
           </select>
         </Field>
         <Field label="Occupation">
-          <input value={form.occupation} onChange={e=>set('occupation',e.target.value)} placeholder="e.g. Business" disabled={profileLocked}/>
+          <input value={form.occupation} onChange={e=>set('occupation',e.target.value)} placeholder="e.g. Business" disabled={effectiveLocked}/>
         </Field>
         <Field label="Monthly Income (Approximate)">
-          <input value={form.monthlyIncome} onChange={e=>set('monthlyIncome',e.target.value)} placeholder="e.g. 25000" disabled={profileLocked}/>
+          <input value={form.monthlyIncome} onChange={e=>set('monthlyIncome',e.target.value)} placeholder="e.g. 25000" disabled={effectiveLocked}/>
         </Field>
         <Field label="Phone">
-          <input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="+880…" disabled={profileLocked}/>
+          <input value={form.phone} onChange={e=>set('phone',e.target.value)} placeholder="+880…" disabled={effectiveLocked}/>
         </Field>
         <Field label="Alternative Phone">
-          <input value={form.alternativePhone||''} onChange={e=>set('alternativePhone',e.target.value)} placeholder="+880…" disabled={profileLocked}/>
+          <input value={form.alternativePhone||''} onChange={e=>set('alternativePhone',e.target.value)} placeholder="+880…" disabled={effectiveLocked}/>
         </Field>
       </Section>
 
       <Section title="📍 Address Information">
         <Field label="Present Address (English)" full>
-          <textarea value={form.presentAddressEn} rows={2} disabled={profileLocked}
+          <textarea value={form.presentAddressEn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('presentAddressEn',e.target.value)} placeholder="Present address (English)"/>
         </Field>
         <Field label="Present Address (বাংলা)" full>
-          <textarea value={form.presentAddressBn} rows={2} disabled={profileLocked}
+          <textarea value={form.presentAddressBn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('presentAddressBn',e.target.value)} placeholder="বর্তমান ঠিকানা"/>
         </Field>
         <Field label="Permanent Address (English)" full>
-          <textarea value={form.permanentAddressEn} rows={2} disabled={profileLocked}
+          <textarea value={form.permanentAddressEn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('permanentAddressEn',e.target.value)} placeholder="Permanent address (English)"/>
         </Field>
         <Field label="Permanent Address (বাংলা)" full>
-          <textarea value={form.permanentAddressBn} rows={2} disabled={profileLocked}
+          <textarea value={form.permanentAddressBn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('permanentAddressBn',e.target.value)} placeholder="স্থায়ী ঠিকানা"/>
         </Field>
       </Section>
@@ -692,7 +695,7 @@ export default function ProfilePage() {
                 ? <img src={form.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
                 : '👤'}
             </div>
-            {!profileLocked && (
+            {!effectiveLocked && (
               <button onClick={()=>nomineeRef.current?.click()}
                 disabled={processing}
                 style={{padding:'5px 12px',borderRadius:7,border:'1px solid #e2e8f0',
@@ -708,24 +711,24 @@ export default function ProfilePage() {
           keyEn="heirNameEn" keyBn="heirNameBn" form={form} set={set}/>
         <Field label="Relationship">
           <input value={form.heirRelation} onChange={e=>set('heirRelation',e.target.value)}
-            placeholder="e.g. Wife, Son, Father" disabled={profileLocked}/>
+            placeholder="e.g. Wife, Son, Father" disabled={effectiveLocked}/>
         </Field>
         <BiField labelEn="Husband's/Father's Name (En)" labelBn="Husband's/Father's Name (বাংলা)"
           keyEn="heirFatherHusbandEn" keyBn="heirFatherHusbandBn" form={form} set={set}/>
         <Field label="NID / Birth Certificate No.">
           <input value={form.heirNID} onChange={e=>set('heirNID',e.target.value)}
-            placeholder="NID or birth cert number" disabled={profileLocked}/>
+            placeholder="NID or birth cert number" disabled={effectiveLocked}/>
         </Field>
         <Field label="Heir Phone">
           <input value={form.heirPhone} onChange={e=>set('heirPhone',e.target.value)}
-            placeholder="+880…" disabled={profileLocked}/>
+            placeholder="+880…" disabled={effectiveLocked}/>
         </Field>
         <Field label="Heir Address (English)" full>
-          <textarea value={form.heirAddressEn} rows={2} disabled={profileLocked}
+          <textarea value={form.heirAddressEn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('heirAddressEn',e.target.value)} placeholder="Heir's address (English)"/>
         </Field>
         <Field label="Heir Address (বাংলা)" full>
-          <textarea value={form.heirAddressBn} rows={2} disabled={profileLocked}
+          <textarea value={form.heirAddressBn} rows={2} disabled={effectiveLocked}
             onChange={e=>set('heirAddressBn',e.target.value)} placeholder="উত্তরাধিকারীর ঠিকানা"/>
         </Field>
       </Section>
@@ -758,7 +761,7 @@ export default function ProfilePage() {
             onChange={e => handleUserFileUpload(e.target.files?.[0], 'nomineePhoto')}
           />
           <UploadStatus result={uploadResults.nomineePhoto}/>
-          {!profileLocked && (
+          {!effectiveLocked && (
             <span style={{fontSize:12,color:'#fd0909',display:'block',marginTop:4}}>
               If not uploaded in Nominee / Heir section above
             </span>
@@ -800,7 +803,7 @@ export default function ProfilePage() {
       {/* ── Uploaded files viewer ── */}
       <MemberFileViewer legalFiles={legalFiles}/>
 
-      {!profileLocked && (
+      {!effectiveLocked && (
         <div style={{display:'flex',justifyContent:'flex-end',marginTop:8,gap:10}}>
           {processing ? (
             <span style={{fontSize:12,color:'#64748b',alignSelf:'center'}}>
