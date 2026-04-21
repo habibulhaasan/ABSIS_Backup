@@ -120,41 +120,38 @@ export default function AdminEntryFees() {
 
   if (!isOrgAdmin) return null;
 
+  // ── helpers + derived data (must come before filtered) ───────────────────
+  function tsSort(ts) {
+    if (!ts) return 0;
+    return ts?.seconds ? ts.seconds : new Date(ts).getTime() / 1000;
+  }
+
+  // All entry fee records: admin-recorded + verified special-sub payments
+  const allFees = [
+    ...fees,
+    ...subFees.filter(sf => sf.status === 'verified'),
+  ];
+  const totalCollected = allFees.reduce((s, f) => s + (f.amount || 0), 0);
+  const paidCount      = [...new Set(fees.map(f => f.userId))].length;
+  const unpaidCount    = members.filter(m => !m.entryFeePaid).length;
+
   const filtered = (search
     ? allFees.filter(f => {
         const m = memberMap[f.userId];
-        const name = (m?.nameEnglish||m?.name||'').toLowerCase();
-        return name.includes(search.toLowerCase()) || (m?.idNo||'').includes(search);
+        const name = (m?.nameEnglish || m?.name || '').toLowerCase();
+        return name.includes(search.toLowerCase()) || (m?.idNo || '').includes(search);
       })
     : allFees
-  ).sort((a,b) => {
+  ).sort((a, b) => {
     const ma = memberMap[a.userId], mb = memberMap[b.userId];
-    if (sortBy === 'name')  return (ma?.nameEnglish||'').localeCompare(mb?.nameEnglish||'');
-    if (sortBy === 'date')  return (tsSort(b.createdAt)) - (tsSort(a.createdAt));
-    // default: member ID
-    const na = parseInt((ma?.idNo||'').replace(/\D/g,''),10);
-    const nb = parseInt((mb?.idNo||'').replace(/\D/g,''),10);
+    if (sortBy === 'name') return (ma?.nameEnglish || '').localeCompare(mb?.nameEnglish || '');
+    if (sortBy === 'date') return tsSort(b.createdAt) - tsSort(a.createdAt);
+    // default: member ID numeric
+    const na = parseInt((ma?.idNo || '').replace(/\D/g, ''), 10);
+    const nb = parseInt((mb?.idNo || '').replace(/\D/g, ''), 10);
     if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    return (ma?.nameEnglish||'').localeCompare(mb?.nameEnglish||'');
+    return (ma?.nameEnglish || '').localeCompare(mb?.nameEnglish || '');
   });
-
-  function tsSort(ts) {
-    if (!ts) return 0;
-    return ts?.seconds ? ts.seconds : new Date(ts).getTime()/1000;
-  }
-
-  // All entry fee records: admin-recorded + special-sub payments
-  const allFees        = [
-    ...fees,
-    ...subFees.filter(sf =>
-      // Exclude if already recorded in entryFees (avoid double-count: check by userId+amount is imprecise,
-      // so show all sub payments — they're a different source)
-      sf.status === 'verified'
-    ),
-  ];
-  const totalCollected  = allFees.reduce((s,f)=>s+(f.amount||0),0);
-  const paidCount       = [...new Set(fees.map(f=>f.userId))].length;
-  const unpaidCount     = members.filter(m=>!m.entryFeePaid).length;
 
   return (
     <div className="page-wrap animate-fade">
