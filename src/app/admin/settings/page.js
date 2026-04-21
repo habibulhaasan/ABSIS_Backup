@@ -511,21 +511,21 @@ export default function AdminSettings() {
                             {accounts.map(acc => {
                               const isEnabled = acc.enabled !== false;
                               return (
-                                <div key={acc.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:'#fff', border:`1px solid ${isEnabled ? '#e2e8f0' : '#f1f5f9'}`, borderRadius:8, marginBottom:6, opacity: isEnabled ? 1 : 0.6 }}>
+                                <div key={acc.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background:'#fff', border:`1px solid ${isEnabled ? '#e2e8f0' : '#f1f5f9'}`, borderRadius:8, marginBottom:6, opacity: isEnabled ? 1 : 0.55 }}>
                                   <div style={{ flex:1 }}>
                                     <div style={{ fontSize:13, fontWeight:600, color:'#0f172a' }}>{acc.label}</div>
                                     <div style={{ fontSize:12, color:'#475569', fontFamily:'monospace' }}>{acc.number}</div>
                                   </div>
-                                  {/* Enable / Disable button — replaces the eye icon */}
+                                  {/* Inline toggle switch — same style as gateway fee enable */}
                                   <button
+                                    type="button"
                                     onClick={() => toggleAccountEnabled(m, acc.id)}
-                                    style={{
-                                      padding:'4px 12px', borderRadius:6, border:'none', cursor:'pointer',
-                                      fontSize:11, fontWeight:700,
-                                      background: isEnabled ? '#dcfce7' : '#fee2e2',
-                                      color:      isEnabled ? '#15803d' : '#b91c1c',
-                                    }}>
-                                    {isEnabled ? 'Enabled' : 'Disabled'}
+                                    title={isEnabled ? 'Click to disable' : 'Click to enable'}
+                                    style={{ width:40, height:22, borderRadius:99, border:'none', cursor:'pointer', position:'relative', flexShrink:0,
+                                      background: isEnabled ? '#2563eb' : '#e2e8f0', transition:'background 0.2s' }}>
+                                    <span style={{ position:'absolute', top:2, left: isEnabled ? 18 : 2, width:18, height:18,
+                                      borderRadius:'50%', background:'#fff', boxShadow:'0 1px 3px rgba(0,0,0,0.2)',
+                                      transition:'left 0.2s' }} />
                                   </button>
                                   <button onClick={() => removeAccount(m, acc.id)}
                                     style={{ background:'none', border:'none', cursor:'pointer', color:'#94a3b8', fontSize:16, padding:'2px 6px' }}>×</button>
