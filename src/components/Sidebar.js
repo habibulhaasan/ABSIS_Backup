@@ -533,7 +533,7 @@ export default function Sidebar() {
                   <NavItem label="Member List"        path="/admin/members"          icon={PATHS.members}      pathname={pathname} onClick={closeDrawer} />
                   <NavItem label="Notifications"      path="/admin/notifications"    icon={PATHS.bell}         pathname={pathname} onClick={closeDrawer} />
                   <NavItem label="Subscriptions"      path="/admin/subscriptions"    icon={PATHS.subscription} pathname={pathname} onClick={closeDrawer} />
-                  <NavItem label="Installment Tracker" path="/admin/subscriptiongrid" icon={PATHS.grid}        pathname={pathname} onClick={closeDrawer} />
+                  <NavItem label="Installment Tracker" path="/admin/subscriptionsgrid" icon={PATHS.grid}        pathname={pathname} onClick={closeDrawer} />
                 </NavGroup>
 
                 {(orgF.fileLibrary || orgF.memberDirectory || orgF.charityTracking) && (
