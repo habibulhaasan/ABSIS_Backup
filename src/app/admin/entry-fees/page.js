@@ -35,12 +35,15 @@ export default function AdminEntryFees() {
   const [subFees,   setSubFees]   = useState([]); // entry-fee type special sub payments
   const [members,   setMembers]   = useState([]);
   const [loading,   setLoading]   = useState(true);
+  const [activeTab, setActiveTab] = useState('paid');   // 'paid' | 'unpaid'
   const [showAdd,   setShowAdd]   = useState(false);
-  const [detail,    setDetail]    = useState(null); // fee record for detail modal
+  const [detail,    setDetail]    = useState(null);     // fee record for detail modal
+  const [editing,   setEditing]   = useState(null);     // fee being edited
+  const [editForm,  setEditForm]  = useState({});
   const [saving,    setSaving]    = useState(false);
   const [toast,     setToast]     = useState('');
   const [search,    setSearch]    = useState('');
-  const [sortBy,    setSortBy]    = useState('idNo'); // idNo | name | date
+  const [sortBy,    setSortBy]    = useState('idNo');   // idNo | name | date
 
   // Add form state
   const [form, setForm] = useState({ userId:'', amount:'', method:'Cash', paidAt:'', notes:'' });
@@ -118,6 +121,35 @@ export default function AdminEntryFees() {
     } catch(e) { showToast('Error: '+e.message); }
   };
 
+  const openEdit = (fee) => {
+    setEditForm({
+      amount:  String(fee.amount || ''),
+      method:  fee.method  || 'Cash',
+      paidAt:  fee.paidAt  || '',
+      notes:   fee.notes   || '',
+    });
+    setEditing(fee);
+    setDetail(null); // close detail if open
+  };
+
+  const handleEdit = async () => {
+    if (!editForm.amount || Number(editForm.amount) <= 0) return alert('Enter a valid amount.');
+    if (!editForm.paidAt) return alert('Select a date.');
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'organizations', orgId, 'entryFees', editing.id), {
+        amount: Number(editForm.amount),
+        method: editForm.method,
+        paidAt: editForm.paidAt,
+        notes:  editForm.notes,
+        updatedBy: user.uid,
+      });
+      showToast('✅ Updated!');
+      setEditing(null);
+    } catch(e) { showToast('Error: ' + e.message); }
+    setSaving(false);
+  };
+
   if (!isOrgAdmin) return null;
 
   // ── helpers + derived data (must come before filtered) ───────────────────
@@ -132,6 +164,24 @@ export default function AdminEntryFees() {
     ...subFees.filter(sf => sf.status === 'verified'),
   ];
   const totalCollected = allFees.reduce((s, f) => s + (f.amount || 0), 0);
+  // Lookup uid → display name for Recorded By field
+  const uidToName = (uid) => {
+    if (!uid) return '—';
+    const m = memberMap[uid];
+    if (m?.nameEnglish) return m.nameEnglish;
+    if (m?.name)        return m.name;
+    return uid.slice(0, 8) + '…'; // last fallback
+  };
+
+  // Sort unpaid members by member ID
+  const unpaidMembers = members
+    .filter(m => !m.entryFeePaid)
+    .sort((a, b) => {
+      const na = parseInt((a.idNo || '').replace(/\D/g, ''), 10);
+      const nb = parseInt((b.idNo || '').replace(/\D/g, ''), 10);
+      if (!isNaN(na) && !isNaN(nb)) return na - nb;
+      return (a.nameEnglish || '').localeCompare(b.nameEnglish || '');
+    });
   const paidCount      = [...new Set(fees.map(f => f.userId))].length;
   const unpaidCount    = members.filter(m => !m.entryFeePaid).length;
 
@@ -153,6 +203,7 @@ export default function AdminEntryFees() {
     return (ma?.nameEnglish || '').localeCompare(mb?.nameEnglish || '');
   });
 
+
   return (
     <div className="page-wrap animate-fade">
       <div className="page-header">
@@ -164,157 +215,238 @@ export default function AdminEntryFees() {
               {defaultAmount ? ` Standard amount: ${fmt(defaultAmount)}.` : ''}
             </div>
           </div>
-          <button onClick={()=>{setForm({userId:'',amount:defaultAmount||'',method:'Cash',paidAt:new Date().toISOString().split('T')[0],notes:''});setShowAdd(true);}} className="btn-primary" style={{padding:'10px 20px',flexShrink:0}}>
+          <button onClick={()=>{setForm({userId:'',amount:defaultAmount||'',method:'Cash',paidAt:new Date().toISOString().split('T')[0],notes:''});setShowAdd(true);}}
+            className="btn-primary" style={{padding:'10px 20px',flexShrink:0}}>
             + Record Payment
           </button>
         </div>
       </div>
 
-      {toast && <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>}
+      {toast && (
+        <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,
+          background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',
+          color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>
+          {toast}
+        </div>
+      )}
 
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:24}}>
+      {/* Stats */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:12,marginBottom:20}}>
         <Stat label="Total Collected" value={fmt(totalCollected)} color="#15803d" bg="#f0fdf4"/>
         <Stat label="Members Paid"    value={paidCount}           color="#1d4ed8" bg="#eff6ff"/>
         <Stat label="Yet to Pay"      value={unpaidCount}         color="#92400e" bg="#fef3c7"/>
-        <Stat label="Total Payments"  value={allFees.length}      bg="#f8fafc" sub={subFees.filter(s=>s.status==='verified').length>0?`incl. ${subFees.filter(s=>s.status==='verified').length} via sub`:undefined}/>
+        <Stat label="Total Payments"  value={allFees.length}      bg="#f8fafc"
+          sub={subFees.filter(s=>s.status==='verified').length > 0
+            ? `incl. ${subFees.filter(s=>s.status==='verified').length} via sub` : undefined}/>
       </div>
 
-      {/* Unpaid members banner */}
-      {unpaidCount > 0 && (
-        <div style={{padding:'10px 14px',borderRadius:10,background:'#fffbeb',border:'1px solid #fde68a',fontSize:13,color:'#92400e',marginBottom:16}}>
-          ⚠️ <strong>{unpaidCount} member(s)</strong> have not paid their entry fee yet.
-        </div>
-      )}
-
-      {/* Search + Sort */}
-      <div style={{display:'flex',gap:10,marginBottom:16}}>
-        <input value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Search by member name or ID…"
-          style={{flex:1,padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
-        <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
-          style={{padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,color:'#475569'}}>
-          <option value="idNo">Sort: Member ID</option>
-          <option value="name">Sort: Name A–Z</option>
-          <option value="date">Sort: Latest First</option>
-        </select>
+      {/* Tabs */}
+      <div style={{display:'flex',gap:2,borderBottom:'2px solid #e2e8f0',marginBottom:20}}>
+        {[
+          {id:'paid',   label:`✅ Paid (${paidCount})`},
+          {id:'unpaid', label:`⏳ Not Paid Yet (${unpaidCount})`},
+        ].map(t => (
+          <button key={t.id} onClick={()=>{setActiveTab(t.id);setSearch('');}}
+            style={{padding:'10px 20px',background:'none',border:'none',cursor:'pointer',
+              fontSize:13,fontWeight:activeTab===t.id?700:400,
+              color:activeTab===t.id?'#2563eb':'#64748b',
+              borderBottom:activeTab===t.id?'2px solid #2563eb':'2px solid transparent',
+              marginBottom:-2,whiteSpace:'nowrap'}}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <div style={{textAlign:'center',padding:'60px 20px',color:'#94a3b8'}}>Loading…</div>
-      ) : filtered.length===0 ? (
-        <div style={{textAlign:'center',padding:'60px 20px'}}>
-          <div style={{fontSize:36,marginBottom:10}}>🧾</div>
-          <div style={{fontWeight:600,color:'#0f172a',marginBottom:4}}>No entry fee records yet</div>
-          <button onClick={()=>setShowAdd(true)} className="btn-primary" style={{padding:'10px 24px',marginTop:8}}>+ Record Payment</button>
-        </div>
-      ) : (
-        <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr auto',padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
-            {['Member','Amount','Method','Date',''].map(h=>(
-              <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',letterSpacing:'0.06em'}}>{h}</div>
-            ))}
+      {/* ── PAID TAB ── */}
+      {activeTab === 'paid' && (
+        <>
+          {/* Search + Sort — wide search */}
+          <div style={{display:'flex',gap:10,marginBottom:16,alignItems:'center'}}>
+            <input value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="Search by member name or ID…"
+              style={{flex:1,minWidth:0,padding:'9px 14px',borderRadius:8,
+                border:'1px solid #e2e8f0',fontSize:13}}/>
+            <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+              style={{flexShrink:0,padding:'9px 12px',borderRadius:8,
+                border:'1px solid #e2e8f0',fontSize:12,color:'#475569',width:150}}>
+              <option value="idNo">Member ID</option>
+              <option value="name">Name A–Z</option>
+              <option value="date">Latest First</option>
+            </select>
           </div>
-          {filtered.map((fee,i) => {
-            const m = memberMap[fee.userId];
-            return (
-              <div key={fee.id} onClick={()=>setDetail({...fee, _member:m})}
-                style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr auto',padding:'10px 16px',
-                  background:i%2===0?'#fff':'#fafafa',borderBottom:'1px solid #f1f5f9',
-                  alignItems:'center',cursor:'pointer',transition:'background 0.1s'}}
-                onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
-                onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'#fff':'#fafafa'}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
-                    {m?.photoURL
-                      ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
-                      : initials(m?.nameEnglish||m?.name)}
-                  </div>
-                  <div>
-                    <div style={{display:'flex',alignItems:'center',gap:6}}>
-                      <span style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{m?.nameEnglish||m?.name||'Unknown'}</span>
-                      {fee._fromSub && <span style={{fontSize:9,fontWeight:700,padding:'1px 6px',borderRadius:99,background:'#ede9fe',color:'#7c3aed'}}>Via Sub</span>}
-                    </div>
-                    {m?.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
-                  </div>
-                </div>
-                <div>
-                  <div style={{fontWeight:700,color:'#15803d'}}>{fmt(fee.amount)}</div>
-                  {fee._fromSub && fee.status && (
-                    <div style={{fontSize:9,fontWeight:700,marginTop:1,
-                      color:fee.status==='verified'?'#15803d':fee.status==='pending'?'#d97706':'#dc2626'}}>
-                      {fee.status}
-                    </div>
-                  )}
-                </div>
-                <div style={{fontSize:12,color:'#64748b'}}>{fee.method||'—'}</div>
-                <div style={{fontSize:12,color:'#64748b'}}>{fee.paidAt||tsDate(fee.createdAt)}</div>
-                {fee._fromSub
-                  ? <div style={{fontSize:10,color:'#94a3b8',padding:'4px 8px'}}>auto</div>
-                  : <button onClick={e=>{e.stopPropagation();handleDelete(fee);}}
-                      style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:13,padding:'4px 8px',borderRadius:4}}
-                      title="Delete">✕</button>}
+
+          {loading ? (
+            <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{textAlign:'center',padding:'60px'}}>
+              <div style={{fontSize:36,marginBottom:10}}>🧾</div>
+              <div style={{fontWeight:600,color:'#0f172a',marginBottom:4}}>No entry fee records yet</div>
+              <button onClick={()=>setShowAdd(true)} className="btn-primary"
+                style={{padding:'10px 24px',marginTop:8}}>+ Record Payment</button>
+            </div>
+          ) : (
+            <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+              <div style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr auto',
+                padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
+                {['Member','Amount','Method','Date',''].map(h=>(
+                  <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',
+                    textTransform:'uppercase',letterSpacing:'0.06em'}}>{h}</div>
+                ))}
               </div>
-            );
-          })}
-        </div>
+              {filtered.map((fee, i) => {
+                const m = memberMap[fee.userId];
+                return (
+                  <div key={fee.id} onClick={()=>setDetail({...fee, _member:m})}
+                    style={{display:'grid',gridTemplateColumns:'2fr 1fr 1fr 1fr auto',
+                      padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',
+                      borderBottom:'1px solid #f1f5f9',alignItems:'center',
+                      cursor:'pointer',transition:'background 0.1s'}}
+                    onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
+                    onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'#fff':'#fafafa'}>
+                    <div style={{display:'flex',alignItems:'center',gap:8}}>
+                      <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',
+                        display:'flex',alignItems:'center',justifyContent:'center',
+                        fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
+                        {m?.photoURL
+                          ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+                          : initials(m?.nameEnglish||m?.name)}
+                      </div>
+                      <div>
+                        <div style={{display:'flex',alignItems:'center',gap:6}}>
+                          <span style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>
+                            {m?.nameEnglish||m?.name||'Unknown'}
+                          </span>
+                          {fee._fromSub && (
+                            <span style={{fontSize:9,fontWeight:700,padding:'1px 6px',
+                              borderRadius:99,background:'#ede9fe',color:'#7c3aed'}}>Via Sub</span>
+                          )}
+                        </div>
+                        {m?.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{fontWeight:700,color:'#15803d'}}>{fmt(fee.amount)}</div>
+                      {fee._fromSub && fee.status && (
+                        <div style={{fontSize:9,fontWeight:700,marginTop:1,
+                          color:fee.status==='verified'?'#15803d':fee.status==='pending'?'#d97706':'#dc2626'}}>
+                          {fee.status}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{fontSize:12,color:'#64748b'}}>{fee.method||'—'}</div>
+                    <div style={{fontSize:12,color:'#64748b'}}>{fee.paidAt||tsDate(fee.createdAt)}</div>
+                    {fee._fromSub
+                      ? <div style={{fontSize:10,color:'#94a3b8',padding:'4px 8px'}}>auto</div>
+                      : <button onClick={e=>{e.stopPropagation();handleDelete(fee);}}
+                          style={{background:'none',border:'none',cursor:'pointer',
+                            color:'#94a3b8',fontSize:13,padding:'4px 8px',borderRadius:4}}
+                          title="Delete">✕</button>
+                    }
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Unpaid members list */}
-      {members.filter(m=>!m.entryFeePaid).length > 0 && (
-        <div style={{marginTop:24}}>
-          <div style={{fontWeight:700,fontSize:14,color:'#0f172a',marginBottom:10}}>Members Yet to Pay</div>
-          <div style={{borderRadius:12,border:'1px solid #fde68a',overflow:'hidden'}}>
-            {members.filter(m=>!m.entryFeePaid).map((m,i)=>(
-              <div key={m.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 16px',background:i%2===0?'#fffbeb':'#fefce8',borderBottom:'1px solid #fef3c7'}}>
-                <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <div style={{width:28,height:28,borderRadius:'50%',background:'#fde68a',display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:700,color:'#92400e'}}>{initials(m.nameEnglish||m.name)}</div>
-                  <div>
-                    <div style={{fontWeight:600,fontSize:13}}>{m.nameEnglish||m.name}</div>
-                    {m.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
-                  </div>
-                </div>
-                <button onClick={()=>{setForm({userId:m.id,amount:defaultAmount||'',method:'Cash',paidAt:new Date().toISOString().split('T')[0],notes:''});setShowAdd(true);}}
-                  style={{padding:'6px 14px',borderRadius:8,border:'1px solid #f59e0b',background:'#fff',color:'#92400e',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-                  Record Fee
-                </button>
+      {/* ── NOT PAID YET TAB ── */}
+      {activeTab === 'unpaid' && (
+        <>
+          <input value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Search by member name or ID…"
+            style={{width:'100%',padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',
+              fontSize:13,marginBottom:16,boxSizing:'border-box'}}/>
+
+          {unpaidMembers.length === 0 ? (
+            <div style={{textAlign:'center',padding:'60px'}}>
+              <div style={{fontSize:40,marginBottom:10}}>🎉</div>
+              <div style={{fontWeight:700,fontSize:15,color:'#0f172a',marginBottom:4}}>
+                All members have paid!
               </div>
-            ))}
-          </div>
-        </div>
+              <div style={{fontSize:13,color:'#64748b'}}>Everyone has cleared their entry fee.</div>
+            </div>
+          ) : (
+            <div style={{borderRadius:12,border:'1px solid #fde68a',overflow:'hidden'}}>
+              {unpaidMembers
+                .filter(m => !search ||
+                  (m.nameEnglish||m.name||'').toLowerCase().includes(search.toLowerCase()) ||
+                  (m.idNo||'').includes(search))
+                .map((m, i) => (
+                  <div key={m.id} style={{display:'flex',alignItems:'center',gap:12,
+                    padding:'12px 16px',background:i%2===0?'#fffbeb':'#fefce8',
+                    borderBottom:'1px solid #fef3c7'}}>
+                    {/* Photo */}
+                    <div style={{width:36,height:36,borderRadius:'50%',background:'#fde68a',
+                      display:'flex',alignItems:'center',justifyContent:'center',
+                      fontSize:12,fontWeight:700,color:'#92400e',flexShrink:0,overflow:'hidden'}}>
+                      {m.photoURL
+                        ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+                        : initials(m.nameEnglish||m.name)}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
+                        overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {m.nameEnglish||m.name}
+                      </div>
+                      <div style={{fontSize:11,color:'#94a3b8'}}>
+                        {m.idNo ? `#${m.idNo}` : 'No ID'}
+                        {m.phone ? ` · ${m.phone}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      onClick={()=>{
+                        setForm({userId:m.id,amount:defaultAmount||'',method:'Cash',
+                          paidAt:new Date().toISOString().split('T')[0],notes:''});
+                        setShowAdd(true);
+                      }}
+                      style={{padding:'7px 16px',borderRadius:8,border:'1px solid #f59e0b',
+                        background:'#fff',color:'#92400e',fontSize:12,fontWeight:600,
+                        cursor:'pointer',flexShrink:0}}>
+                      Record Fee
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Detail Modal */}
+      {/* ── DETAIL MODAL ── */}
       {detail && (() => {
         const m = detail._member || memberMap[detail.userId];
         return (
           <Modal title="Entry Fee — Payment Detail" onClose={()=>setDetail(null)}>
+            {/* Member header */}
             <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:20,
               padding:'14px 16px',borderRadius:10,background:'#f0fdf4',border:'1px solid #86efac'}}>
-              <div style={{width:52,height:52,borderRadius:'50%',background:'#dbeafe',display:'flex',
-                alignItems:'center',justifyContent:'center',fontSize:18,fontWeight:700,
-                color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
+              <div style={{width:52,height:52,borderRadius:'50%',background:'#dbeafe',
+                display:'flex',alignItems:'center',justifyContent:'center',
+                fontSize:18,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
                 {m?.photoURL
                   ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
                   : initials(m?.nameEnglish||m?.name)}
               </div>
               <div>
-                <div style={{fontWeight:700,fontSize:15,color:'#0f172a'}}>{m?.nameEnglish||m?.name||'Unknown'}</div>
+                <div style={{fontWeight:700,fontSize:15,color:'#0f172a'}}>
+                  {m?.nameEnglish||m?.name||'Unknown'}
+                </div>
                 {m?.idNo && <div style={{fontSize:12,color:'#64748b'}}>Member ID: #{m.idNo}</div>}
                 {m?.phone && <div style={{fontSize:12,color:'#94a3b8'}}>{m.phone}</div>}
               </div>
             </div>
 
+            {/* Details */}
             {[
-              ['Amount',       fmt(detail.amount)],
-              ['Method',       detail.method||'—'],
-              ['Date Paid',    detail.paidAt||tsDate(detail.createdAt)],
-              ['Recorded On',  tsDate(detail.createdAt)],
-              ['Recorded By',  detail.recordedBy ? detail.recordedBy.slice(0,12)+'…' : '—'],
-              ['Source',       detail._fromSub ? '🔗 Via Special Subscription' : '📝 Admin Recorded'],
+              ['Amount',      fmt(detail.amount)],
+              ['Method',      detail.method||'—'],
+              ['Date Paid',   detail.paidAt||tsDate(detail.createdAt)],
+              ['Recorded On', tsDate(detail.createdAt)],
+              ['Recorded By', uidToName(detail.recordedBy)],
+              ['Source',      detail._fromSub ? '🔗 Via Special Subscription' : '📝 Admin Recorded'],
               ...(detail._fromSub ? [['Sub Status', detail.status||'—']] : []),
-              ['Notes',        detail.notes||'—'],
-              ['Type',         '🎫 Entry Fee → Expenses Fund'],
+              ['Notes',       detail.notes||'—'],
+              ['Fund',        '🎫 Entry Fee → Expenses Fund'],
             ].map(([l,v]) => (
               <div key={l} style={{display:'flex',justifyContent:'space-between',gap:12,
                 fontSize:13,padding:'9px 0',borderBottom:'1px solid #f1f5f9'}}>
@@ -323,13 +455,23 @@ export default function AdminEntryFees() {
               </div>
             ))}
 
+            {/* Actions */}
             <div style={{display:'flex',gap:8,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
               {!detail._fromSub && (
-                <button onClick={()=>{handleDelete(detail);setDetail(null);}}
-                  style={{padding:'9px 20px',borderRadius:8,border:'1px solid #fca5a5',
-                    background:'#fff',color:'#b91c1c',cursor:'pointer',fontSize:13,fontWeight:600}}>
-                  🗑 Delete
-                </button>
+                <>
+                  <button onClick={()=>openEdit(detail)}
+                    style={{padding:'9px 20px',borderRadius:8,border:'1px solid #bfdbfe',
+                      background:'#eff6ff',color:'#1d4ed8',cursor:'pointer',
+                      fontSize:13,fontWeight:600}}>
+                    ✏️ Edit
+                  </button>
+                  <button onClick={()=>{handleDelete(detail);setDetail(null);}}
+                    style={{padding:'9px 20px',borderRadius:8,border:'1px solid #fca5a5',
+                      background:'#fff',color:'#b91c1c',cursor:'pointer',
+                      fontSize:13,fontWeight:600}}>
+                    🗑 Delete
+                  </button>
+                </>
               )}
               <button onClick={()=>setDetail(null)}
                 style={{flex:1,padding:'9px 20px',borderRadius:8,border:'1px solid #e2e8f0',
@@ -341,7 +483,72 @@ export default function AdminEntryFees() {
         );
       })()}
 
-      {/* Add Modal */}
+      {/* ── EDIT MODAL ── */}
+      {editing && (
+        <Modal title="Edit Entry Fee Record" onClose={()=>setEditing(null)}>
+          {(() => {
+            const m = memberMap[editing.userId];
+            return (
+              <>
+                <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:18,
+                  padding:'10px 12px',borderRadius:8,background:'#f8fafc',border:'1px solid #e2e8f0'}}>
+                  <div style={{width:32,height:32,borderRadius:'50%',background:'#dbeafe',
+                    display:'flex',alignItems:'center',justifyContent:'center',
+                    fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
+                    {m?.photoURL
+                      ? <img src={m.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+                      : initials(m?.nameEnglish||m?.name)}
+                  </div>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{m?.nameEnglish||m?.name||'Unknown'}</div>
+                    {m?.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{m.idNo}</div>}
+                  </div>
+                </div>
+
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:4}}>
+                  <div>
+                    <label className="form-label">Amount (৳) *</label>
+                    <input type="number" min="0" value={editForm.amount}
+                      onChange={e=>setEditForm(p=>({...p,amount:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label className="form-label">Payment Method</label>
+                    <select value={editForm.method}
+                      onChange={e=>setEditForm(p=>({...p,method:e.target.value}))}>
+                      {METHODS.map(m=><option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="form-label">Date Paid *</label>
+                    <input type="date" value={editForm.paidAt}
+                      onChange={e=>setEditForm(p=>({...p,paidAt:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <label className="form-label">Notes</label>
+                    <input type="text" value={editForm.notes}
+                      onChange={e=>setEditForm(p=>({...p,notes:e.target.value}))}
+                      placeholder="Optional"/>
+                  </div>
+                </div>
+
+                <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
+                  <button onClick={handleEdit} disabled={saving}
+                    className="btn-primary" style={{padding:'10px 24px'}}>
+                    {saving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                  <button onClick={()=>setEditing(null)}
+                    style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                      background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            );
+          })()}
+        </Modal>
+      )}
+
+      {/* ── ADD MODAL ── */}
       {showAdd && (
         <Modal title="Record Entry Fee Payment" onClose={()=>setShowAdd(false)}>
           <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -359,7 +566,8 @@ export default function AdminEntryFees() {
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
               <div>
                 <label className="form-label">Amount (৳) *</label>
-                <input type="number" min="0" value={form.amount} onChange={e=>set('amount',e.target.value)} placeholder={defaultAmount||'0'}/>
+                <input type="number" min="0" value={form.amount}
+                  onChange={e=>set('amount',e.target.value)} placeholder={defaultAmount||'0'}/>
               </div>
               <div>
                 <label className="form-label">Payment Method</label>
@@ -373,15 +581,21 @@ export default function AdminEntryFees() {
               </div>
               <div>
                 <label className="form-label">Notes</label>
-                <input type="text" value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional notes"/>
+                <input type="text" value={form.notes} onChange={e=>set('notes',e.target.value)}
+                  placeholder="Optional notes"/>
               </div>
             </div>
           </div>
           <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
-            <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
-              {saving?'Saving…':'Record Payment'}
+            <button onClick={handleAdd} disabled={saving} className="btn-primary"
+              style={{padding:'10px 24px'}}>
+              {saving ? 'Saving…' : 'Record Payment'}
             </button>
-            <button onClick={()=>setShowAdd(false)} style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
+            <button onClick={()=>setShowAdd(false)}
+              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
+              Cancel
+            </button>
           </div>
         </Modal>
       )}
