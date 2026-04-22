@@ -140,12 +140,14 @@ function buildDateGroups(entries) {
   return Object.values(map).sort((a, b) => a.sortKey - b.sortKey);
 }
 
+// ── TYPE CONFIG ───────────────────────────────────────────────────────────────
 const TYPE_CFG = {
-  installment:      {label:'Installment', short:'In',  bg:'#dbeafe', color:'#1e40af'},
-  expense:          {label:'Expense',     short:'Ex',  bg:'#fee2e2', color:'#dc2626'},
-  entry_fee:        {label:'Entry Fee',   short:'En',  bg:'#dcfce7', color:'#15803d'},
-  loan_disbursement:{label:'Loan Out',    short:'LoO', bg:'#fef3c7', color:'#92400e'},
-  loan_repayment:   {label:'Loan In',     short:'LoI', bg:'#d1fae5', color:'#065f46'},
+  installment:      {label:'Installment',  short:'In',  bg:'#dbeafe', color:'#1e40af'},
+  expense:          {label:'Expense',      short:'Ex',  bg:'#fee2e2', color:'#dc2626'},
+  entry_fee:        {label:'Entry Fee',    short:'En',  bg:'#ccfbf1', color:'#0d9488'},
+  loan_disbursement:{label:'Loan Out',     short:'LoO', bg:'#fef3c7', color:'#92400e'},
+  loan_repayment:   {label:'Loan In',      short:'LoI', bg:'#d1fae5', color:'#065f46'},
+  reregistration_fee:{label:'Re-Reg Fee', short:'RR',  bg:'#ede9fe', color:'#7c3aed'},
 };
 
 function TypeBadge({type}) {
@@ -244,88 +246,90 @@ function EntryDetailPanel({ entry }) {
 }
 
 // ── DateGroupRow ──────────────────────────────────────────────────────────────
-function DateGroupRow({ dateLabel, entries }) {
+// Columns: Date/Type | Capital(+) | Expenses(−) | Fees(+) | Balance
+function DateGroupRow({ dateLabel, entries, isMobile }) {
   const [open, setOpen] = useState(false);
   const [openEntry, setOpenEntry] = useState(null);
 
-  // Sum ALL credits and ALL debits so every type (including loan disbursements) is reflected
-  const totalCredit = entries.filter(e => e.credit > 0).reduce((s, e) => s + e.credit, 0);
-  const totalDebit  = entries.filter(e => e.debit  > 0).reduce((s, e) => s + e.debit,  0);
-  const closingBal  = entries[entries.length - 1]?.balance ?? 0;
-  const typeSet     = [...new Set(entries.map(e => e.type))];
+  const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+  const totalExpenses = entries.filter(e=>e.debit>0).reduce((s,e)=>s+e.debit,0);
+  const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
+  const closingBal    = entries[entries.length - 1]?.balance ?? 0;
+  const typeSet       = [...new Set(entries.map(e => e.type))];
 
   return (
     <div style={{borderBottom:'1px solid #f1f5f9'}}>
-      {/* Summary row */}
+      {/* Summary row — 5-col grid */}
       <div
         onClick={()=>setOpen(o=>!o)}
         style={{
           display:'grid',
-          gridTemplateColumns:'1fr auto auto',
+          gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
           padding:'8px 10px',
           background: open ? '#f0f9ff' : '#fff',
           cursor:'pointer',
           userSelect:'none',
           alignItems:'center',
-          gap:8,
+          gap:'4px 8px',
           transition:'background 0.1s',
         }}
         onMouseEnter={e=>{ if(!open) e.currentTarget.style.background='#f8fafc'; }}
         onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
       >
-        {/* Left: date + type tags + count */}
+        {/* Col 1: date + type tags (hide type tags on mobile when collapsed) */}
         <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
           <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
           <span style={{fontSize:11,color:'#475569',fontWeight:600,flexShrink:0}}>{dateLabel}</span>
-          {typeSet.map(t=><TypeTag key={t} type={t}/>)}
-          {entries.length>1 && <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>}
+          {/* On mobile, only show type tags when expanded; always show on desktop */}
+          {(!isMobile || open) && typeSet.map(t=><TypeTag key={t} type={t}/>)}
+          {entries.length>1 && !isMobile && (
+            <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>
+          )}
         </div>
-        {/* Middle: net amounts — show credit and/or debit */}
-        <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0,
-          color: totalDebit > 0 && totalCredit === 0 ? '#dc2626' : '#15803d'}}>
-          {totalCredit > 0 && totalDebit > 0
-            ? <span>
-                <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
-                {' '}
-                <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
-              </span>
-            : totalCredit > 0
-              ? `+${fmt(totalCredit)}`
-              : totalDebit > 0
-                ? `−${fmt(totalDebit)}`
-                : '—'}
+        {/* Col 2: Capital */}
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#1e40af':'#cbd5e1'}}>
+          {totalCapital>0 ? `+${fmt(totalCapital)}` : '—'}
         </div>
-        {/* Right: running balance */}
-        <div style={{textAlign:'right',fontSize:12,fontWeight:800,flexShrink:0,minWidth:64,
+        {/* Col 3: Expenses */}
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
+          {totalExpenses>0 ? `−${fmt(totalExpenses)}` : '—'}
+        </div>
+        {/* Col 4: Fees */}
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalFees>0?'#0d9488':'#cbd5e1'}}>
+          {totalFees>0 ? `+${fmt(totalFees)}` : '—'}
+        </div>
+        {/* Col 5: Balance */}
+        <div style={{textAlign:'right',fontSize:12,fontWeight:800,flexShrink:0,
           color:closingBal>=0?'#0f172a':'#dc2626'}}>
           {fmt(closingBal)}
         </div>
       </div>
 
-      {/* Expanded entry rows */}
+      {/* Expanded entry rows — same 5-col grid */}
       {open && entries.map((e,ei)=>{
         const isOpen = openEntry === e.id;
-        const amount = e.credit>0 ? `+${fmt(e.credit)}` : e.debit>0 ? `−${fmt(e.debit)}` : '—';
-        const amtColor = e.debit>0 ? '#dc2626' : '#15803d';
+        const cap  = e.type==='installment' ? e.credit : 0;
+        const exp  = e.debit > 0 ? e.debit : 0;
+        const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
         return (
           <div key={e.id}>
             <div
               onClick={()=>setOpenEntry(isOpen ? null : e.id)}
               style={{
                 display:'grid',
-                gridTemplateColumns:'1fr auto auto',
+                gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
                 padding:'7px 10px 7px 20px',
                 borderTop:'1px solid #f1f5f9',
                 background: isOpen ? '#e0f2fe' : ei%2===0?'#fafeff':'#f0f9ff',
                 alignItems:'center',
-                gap:8,
+                gap:'4px 8px',
                 cursor:'pointer',
                 userSelect:'none',
               }}
               onMouseEnter={e2=>{ if(!isOpen) e2.currentTarget.style.background='#e0f2fe'; }}
               onMouseLeave={e2=>{ e2.currentTarget.style.background=isOpen?'#e0f2fe':ei%2===0?'#fafeff':'#f0f9ff'; }}
             >
-              {/* Left: tag + member name */}
+              {/* Col 1: tag + name — always show type tag inside expanded row */}
               <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,overflow:'hidden'}}>
                 <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{isOpen?'▾':'▸'}</span>
                 <TypeTag type={e.type}/>
@@ -336,13 +340,23 @@ function DateGroupRow({ dateLabel, entries }) {
                     : e.sub||''}
                 </span>
               </div>
-              {/* Amount */}
+              {/* Col 2: Capital */}
               <div style={{textAlign:'right',fontSize:11,fontWeight:600,
-                color:amtColor,flexShrink:0}}>
-                {amount}
+                color:cap>0?'#1e40af':'#cbd5e1'}}>
+                {cap>0?`+${fmt(cap)}`:'—'}
               </div>
-              {/* Balance */}
-              <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0,minWidth:64,
+              {/* Col 3: Expenses */}
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,
+                color:exp>0?'#dc2626':'#cbd5e1'}}>
+                {exp>0?`−${fmt(exp)}`:'—'}
+              </div>
+              {/* Col 4: Fees */}
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,
+                color:fee>0?'#0d9488':'#cbd5e1'}}>
+                {fee>0?`+${fmt(fee)}`:'—'}
+              </div>
+              {/* Col 5: Balance */}
+              <div style={{textAlign:'right',fontSize:11,fontWeight:700,
                 color:e.balance>=0?'#0f172a':'#dc2626'}}>
                 {fmt(e.balance)}
               </div>
@@ -356,11 +370,12 @@ function DateGroupRow({ dateLabel, entries }) {
 }
 
 // ── LedgerRow: grouped (monthly/yearly) view ──────────────────────────────────
-function LedgerRow({ row, isGrouped }) {
+function LedgerRow({ row, isGrouped, isMobile }) {
   const [open, setOpen] = useState(false);
   if (isGrouped) {
-    const totalCredit = row.entries.filter(e => e.credit > 0).reduce((s, e) => s + e.credit, 0);
-    const totalDebit  = row.entries.filter(e => e.debit  > 0).reduce((s, e) => s + e.debit,  0);
+    const totalCapital  = row.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+    const totalExpenses = row.entries.filter(e=>e.debit>0).reduce((s,e)=>s+e.debit,0);
+    const totalFees     = row.entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
     const byDate = {};
     row.entries.forEach(e=>{
       if(!byDate[e.date]) byDate[e.date]=[];
@@ -373,38 +388,41 @@ function LedgerRow({ row, isGrouped }) {
           onClick={()=>setOpen(o=>!o)}
           style={{
             display:'grid',
-            gridTemplateColumns:'1fr auto auto',
+            // On mobile, label gets more space; entries count hidden
+            gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
             padding:'8px 10px',
             background:'#f8fafc',
             cursor:'pointer',
             userSelect:'none',
             alignItems:'center',
-            gap:8,
+            gap:'4px 8px',
           }}
         >
-          <div style={{fontSize:12,fontWeight:700,color:'#0f172a',display:'flex',alignItems:'center',gap:5}}>
-            <span style={{color:'#94a3b8'}}>{open?'▾':'▸'}</span> {row.label}
-            <span style={{fontSize:11,color:'#94a3b8',fontWeight:400}}>{row.entries.length} entries</span>
+          <div style={{fontSize:12,fontWeight:700,color:'#0f172a',display:'flex',alignItems:'center',gap:5,minWidth:0}}>
+            <span style={{color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
+            {/* Label takes full available width; entries count hidden on mobile to prevent cutoff */}
+            <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{row.label}</span>
+            {!isMobile && (
+              <span style={{fontSize:11,color:'#94a3b8',fontWeight:400,flexShrink:0}}>
+                {row.entries.length} entries
+              </span>
+            )}
           </div>
-          <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0}}>
-            {totalCredit > 0 && totalDebit > 0
-              ? <span>
-                  <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
-                  {' '}
-                  <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
-                </span>
-              : totalCredit > 0
-                ? <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
-                : totalDebit > 0
-                  ? <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
-                  : <span style={{color:'#cbd5e1'}}>—</span>}
+          <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#1e40af':'#cbd5e1'}}>
+            {totalCapital>0?`+${fmt(totalCapital)}`:'—'}
           </div>
-          <div style={{textAlign:'right',fontSize:13,fontWeight:800,color:'#1d4ed8',flexShrink:0,minWidth:64}}>
+          <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
+            {totalExpenses>0?`−${fmt(totalExpenses)}`:'—'}
+          </div>
+          <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalFees>0?'#0d9488':'#cbd5e1'}}>
+            {totalFees>0?`+${fmt(totalFees)}`:'—'}
+          </div>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:800,color:'#1d4ed8',flexShrink:0}}>
             {fmt(row.closingBalance)}
           </div>
         </div>
         {open && dateGroups.map(([date, grpEntries])=>(
-          <DateGroupRow key={date} dateLabel={date} entries={grpEntries}/>
+          <DateGroupRow key={date} dateLabel={date} entries={grpEntries} isMobile={isMobile}/>
         ))}
       </div>
     );
@@ -645,7 +663,7 @@ function ReportModal({ entries, orgData, onClose }) {
             {[
               ['Total Capital',  fmt(totalCapital),  '#15803d'],
               ['Total Expenses', fmt(totalExpenses),  '#dc2626'],
-              ['Total Fees',     fmt(totalFees),      '#d97706'],
+              ['Total Fees',     fmt(totalFees),      '#0d9488'],
               ['Net Balance',    fmt(finalBalance),   finalBalance>=0?'#1d4ed8':'#dc2626'],
             ].map(([label,value,color])=>(
               <div key={label}>
@@ -683,13 +701,13 @@ function ReportModal({ entries, orgData, onClose }) {
                       <td style={{padding:'6px 10px',color:'#64748b',fontStyle:'italic',fontSize:10}}>
                         {g.entries.length} transaction{g.entries.length!==1?'s':''}
                       </td>
-                      <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:gCap>0?'#15803d':'#94a3b8'}}>
+                      <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:gCap>0?'#1e40af':'#94a3b8'}}>
                         {gCap>0?`+${fmt(gCap)}`:'—'}
                       </td>
                       <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:gExp>0?'#dc2626':'#94a3b8'}}>
                         {gExp>0?`−${fmt(gExp)}`:'—'}
                       </td>
-                      <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:gFee>0?'#d97706':'#94a3b8'}}>
+                      <td style={{padding:'6px 10px',textAlign:'right',fontWeight:700,color:gFee>0?'#0d9488':'#94a3b8'}}>
                         {gFee>0?`+${fmt(gFee)}`:'—'}
                       </td>
                       <td style={{padding:'6px 10px',textAlign:'right',fontWeight:800,color:gBal>=0?'#0f172a':'#dc2626'}}>
@@ -710,13 +728,13 @@ function ReportModal({ entries, orgData, onClose }) {
                               <span style={{color:'#334155'}}>{name}</span>
                             </span>
                           </td>
-                          <td style={{padding:'5px 10px',textAlign:'right',color:cap>0?'#15803d':'#cbd5e1',fontWeight:600}}>
+                          <td style={{padding:'5px 10px',textAlign:'right',color:cap>0?'#1e40af':'#cbd5e1',fontWeight:600}}>
                             {cap>0?`+${fmt(cap)}`:'—'}
                           </td>
                           <td style={{padding:'5px 10px',textAlign:'right',color:exp>0?'#dc2626':'#cbd5e1',fontWeight:600}}>
                             {exp>0?`−${fmt(exp)}`:'—'}
                           </td>
-                          <td style={{padding:'5px 10px',textAlign:'right',color:fee>0?'#d97706':'#cbd5e1',fontWeight:600}}>
+                          <td style={{padding:'5px 10px',textAlign:'right',color:fee>0?'#0d9488':'#cbd5e1',fontWeight:600}}>
                             {fee>0?`+${fmt(fee)}`:'—'}
                           </td>
                           <td style={{padding:'5px 10px',textAlign:'right',fontWeight:700,
@@ -733,13 +751,13 @@ function ReportModal({ entries, orgData, onClose }) {
                 <td colSpan={2} style={{padding:'8px 10px',color:'#e2e8f0',fontWeight:700,fontSize:11}}>
                   CLOSING TOTALS
                 </td>
-                <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#86efac'}}>
+                <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#93c5fd'}}>
                   {totalCapital>0?`+${fmt(totalCapital)}`:'—'}
                 </td>
                 <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#fca5a5'}}>
                   {totalExpenses>0?`−${fmt(totalExpenses)}`:'—'}
                 </td>
-                <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#fde68a'}}>
+                <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#5eead4'}}>
                   {totalFees>0?`+${fmt(totalFees)}`:'—'}
                 </td>
                 <td style={{padding:'8px 10px',textAlign:'right',fontWeight:800,fontSize:13,color:'#fff'}}>
@@ -780,6 +798,163 @@ function ReportModal({ entries, orgData, onClose }) {
   );
 }
 
+// ── MemberPaymentHistory — unified table ──────────────────────────────────────
+// Combines installment payments + entry fees + re-reg fees into one table.
+// Fee rows are clearly labelled and NOT counted in the capital net total.
+function MemberPaymentHistory({ member }) {
+  const r = member;
+
+  // Build unified rows
+  const allRows = [];
+
+  // Installment payments (capital contributions)
+  (r.payments || [])
+    .filter(p => !p.paymentType || p.paymentType === 'monthly')
+    .forEach(p => {
+      const net = (p.amount || 0) - (p.gatewayFee || 0);
+      allRows.push({
+        _sortKey: tsSort(p.createdAt),
+        date: tsDate(p.createdAt),
+        type: 'installment',
+        label: '',
+        amount: p.amount || 0,
+        gatewayFee: p.gatewayFee || 0,
+        net,
+        isCapital: true,
+        method: p.method || '—',
+        status: p.status,
+      });
+    });
+
+  // Entry fees from entryFees collection
+  (r.entryFees || []).forEach(f => {
+    allRows.push({
+      _sortKey: tsSort(f.paidAt || f.createdAt),
+      date: f.paidAt ? normDate(f.paidAt) : normDate(f.createdAt),
+      type: 'entry_fee',
+      label: '',
+      amount: f.amount || 0,
+      gatewayFee: 0,
+      net: f.amount || 0,
+      isCapital: false,
+      method: f.method || '—',
+      status: 'verified',
+    });
+  });
+
+  // Fee payments from investments/payments collection (entry_fee / reregistration_fee)
+  (r.feePays || [])
+    .filter(p => p.status !== 'rejected')
+    .forEach(p => {
+      const net = (p.amount || 0) - (p.gatewayFee || 0);
+      allRows.push({
+        _sortKey: tsSort(p.createdAt),
+        date: normDate(p.createdAt),
+        type: p.paymentType || 'entry_fee',
+        label: p.paymentType === 'reregistration_fee' ? 'Re-Registration Fee' : 'Entry Fee',
+        amount: p.amount || 0,
+        gatewayFee: p.gatewayFee || 0,
+        net,
+        isCapital: false,
+        method: p.method || '—',
+        status: p.status,
+      });
+    });
+
+  allRows.sort((a, b) => b._sortKey - a._sortKey);
+
+  if (allRows.length === 0) {
+    return <div style={{fontSize:12,color:'#94a3b8',padding:'8px 0'}}>No payment history.</div>;
+  }
+
+  const statusColor = s => s==='verified'?'#15803d':s==='pending'?'#92400e':'#dc2626';
+  const statusBg    = s => s==='verified'?'#dcfce7':s==='pending'?'#fef3c7':'#fee2e2';
+
+  return (
+    <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+      <table style={{width:'100%',minWidth:460,borderCollapse:'collapse',fontSize:12}}>
+        <thead>
+          <tr style={{background:'#dbeafe'}}>
+            {['Date','Type','Amount','Fee','Net','Method','Status'].map(h => (
+              <th key={h} style={{
+                padding:'6px 10px',
+                textAlign:['Amount','Fee','Net'].includes(h)?'right':'left',
+                fontWeight:700, color:'#1e40af', whiteSpace:'nowrap',
+              }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {allRows.map((row, i) => (
+            <tr key={i} style={{background:i%2===0?'#fff':'#f0f9ff', borderTop:'1px solid #e2e8f0'}}>
+              <td style={{padding:'6px 10px',color:'#64748b',whiteSpace:'nowrap'}}>{row.date}</td>
+              <td style={{padding:'6px 10px'}}>
+                <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+                  <TypeTag type={row.type}/>
+                  <span style={{color:'#334155',fontSize:11}}>{row.label}</span>
+                  {!row.isCapital && (
+                    <span style={{fontSize:9,color:'#94a3b8',fontStyle:'italic'}}></span>
+                  )}
+                </span>
+              </td>
+              <td style={{padding:'6px 10px',textAlign:'right'}}>{fmt(row.amount)}</td>
+              <td style={{padding:'6px 10px',textAlign:'right',color:row.gatewayFee>0?'#dc2626':'#94a3b8'}}>
+                {row.gatewayFee>0?`−${fmt(row.gatewayFee)}`:'—'}
+              </td>
+              <td style={{
+                padding:'6px 10px',textAlign:'right',fontWeight:700,
+                color:row.isCapital?'#15803d':'#0d9488',
+              }}>
+                {fmt(row.net)}
+                {!row.isCapital && (
+                  <span style={{
+                    display:'block',fontSize:9,fontWeight:400,
+                    color:'#94a3b8',fontStyle:'italic',
+                  }}>not capital</span>
+                )}
+              </td>
+              <td style={{padding:'6px 10px',color:'#64748b'}}>{row.method}</td>
+              <td style={{padding:'6px 10px'}}>
+                <span style={{
+                  fontSize:11,fontWeight:700,
+                  color:statusColor(row.status),
+                  background:statusBg(row.status),
+                  padding:'2px 8px',borderRadius:99,
+                }}>
+                  {row.status}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        {/* Footer: show capital net vs fee income separately */}
+        <tfoot>
+          <tr style={{background:'#f1f5f9',borderTop:'2px solid #e2e8f0'}}>
+            <td colSpan={4} style={{padding:'7px 10px',fontWeight:700,color:'#0f172a',fontSize:12}}>
+              Capital Net (verified)
+            </td>
+            <td style={{padding:'7px 10px',textAlign:'right',fontWeight:800,color:'#15803d',fontSize:13}}>
+              {fmt(allRows.filter(x=>x.isCapital&&x.status==='verified').reduce((s,x)=>s+x.net,0))}
+            </td>
+            <td colSpan={2}/>
+          </tr>
+          {allRows.some(x=>!x.isCapital) && (
+            <tr style={{background:'#f0fdfa',borderTop:'1px solid #e2e8f0'}}>
+              <td colSpan={4} style={{padding:'7px 10px',fontWeight:700,color:'#0d9488',fontSize:12}}>
+                Fee Income (not capital)
+              </td>
+              <td style={{padding:'7px 10px',textAlign:'right',fontWeight:800,color:'#0d9488',fontSize:13}}>
+                {fmt(allRows.filter(x=>!x.isCapital).reduce((s,x)=>s+x.net,0))}
+              </td>
+              <td colSpan={2}/>
+            </tr>
+          )}
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function AdminAccountBook() {
   const { userData, orgData, isOrgAdmin } = useAuth();
@@ -804,6 +979,14 @@ export default function AdminAccountBook() {
   const [memSearch,  setMemSearch]  = useState('');
   const [memSort,    setMemSort]    = useState('idNo');
   const [selMember,  setSelMember]  = useState(null);
+  // Detect mobile via window width — SSR-safe
+  const [isMobile,   setIsMobile]   = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   useEffect(() => {
     if (!orgId || !isOrgAdmin) return;
@@ -968,6 +1151,47 @@ export default function AdminAccountBook() {
     </div>
   );
 
+  // ── Shared ledger-style mini transaction list (used in Summary tab) ──────────
+  const RecentTransactionsList = ({ entries }) => (
+    <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+      <div style={{padding:'12px 16px',borderBottom:'1px solid #e2e8f0',
+        display:'flex',justifyContent:'space-between',alignItems:'center',
+        background:'#fff'}}>
+        <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>Recent Transactions</div>
+        <button onClick={()=>setTab('ledger')}
+          style={{fontSize:12,color:'#2563eb',background:'none',border:'none',
+            cursor:'pointer',fontWeight:600}}>Full ledger →</button>
+      </div>
+
+      <LedgerLegend/>
+
+      {/* Column header — mirrors ledger tab */}
+      <div style={{
+        display:'grid',
+        gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+        padding:'7px 10px',background:'#0f172a',gap:'4px 8px',
+      }}>
+        {['Date / Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map((h,hi)=>(
+          <div key={h} style={{fontSize:10,fontWeight:700,color:'#94a3b8',
+            textTransform:'uppercase',letterSpacing:'0.05em',
+            textAlign:hi===0?'left':'right'}}>
+            {h}
+          </div>
+        ))}
+      </div>
+
+      {/* Date-grouped rows using the same DateGroupRow component */}
+      {buildDateGroups([...entries].reverse().slice(0, 20)).map(grp => (
+        <DateGroupRow
+          key={grp.dateLabel}
+          dateLabel={grp.dateLabel}
+          entries={grp.entries}
+          isMobile={isMobile}
+        />
+      ))}
+    </div>
+  );
+
   return (
     <div className="page-wrap animate-fade">
       {showReport && (
@@ -1024,7 +1248,7 @@ export default function AdminAccountBook() {
                   sub={`${memberRows.filter(r=>r.capital>0).length} members`}/>
                 <SB label="Pending Capital" value={fmt(totalPending)}  color="#92400e" bg="#fef3c7"/>
                 <SB label="Total Expenses"  value={fmt(totalExpenses)} color="#dc2626" bg="#fef2f2"/>
-                <SB label="Entry Fees"      value={fmt(totalFees)}     color="#0369a1" bg="#e0f2fe"/>
+                <SB label="Entry Fees"      value={fmt(totalFees)}     color="#0d9488" bg="#f0fdfa"/>
                 <SB label="Active Projects" value={activeProjects}     color="#1d4ed8" bg="#eff6ff"
                   sub={`${fmt(totalInvested)} invested`}/>
                 <SB label="Active Loans"    value={activeLoans}        color="#7c3aed" bg="#faf5ff"
@@ -1132,46 +1356,9 @@ export default function AdminAccountBook() {
                 </div>
               )}
 
-              {/* ── Recent Transactions ── */}
-              {allEntries.length>0 && (
-                <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-                  <div style={{padding:'12px 16px',borderBottom:'1px solid #e2e8f0',
-                    display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                    <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>Recent Transactions</div>
-                    <button onClick={()=>setTab('ledger')}
-                      style={{fontSize:12,color:'#2563eb',background:'none',border:'none',
-                        cursor:'pointer',fontWeight:600}}>Full ledger →</button>
-                  </div>
-                  {[...allEntries].reverse().slice(0,8).map((e,i) => (
-                    <div key={e.id} style={{
-                      padding:'10px 16px',borderBottom:'1px solid #f1f5f9',
-                      background:i%2===0?'#fff':'#fafafa',
-                    }}>
-                      {/* Row 1: tag + member name + amount */}
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:3}}>
-                        <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flexShrink:1}}>
-                          <TypeTag type={e.type}/>
-                          <span style={{fontSize:12,fontWeight:600,color:'#0f172a',
-                            overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                            {e.meta?.memberName || e.sub || '—'}
-                          </span>
-                        </div>
-                        <div style={{flexShrink:0,fontWeight:800,fontSize:14,
-                          color:e.debit>0?'#dc2626':'#15803d'}}>
-                          {e.debit>0 ? `−${fmt(e.debit)}` : `+${fmt(e.credit)}`}
-                        </div>
-                      </div>
-                      {/* Row 2: date + running balance */}
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:10}}>
-                        <span style={{fontSize:11,color:'#94a3b8'}}>{e.date}</span>
-                        <span style={{fontSize:11,fontWeight:600,color:'#64748b',
-                          background:'#f1f5f9',padding:'1px 7px',borderRadius:99,whiteSpace:'nowrap'}}>
-                          Bal: {fmt(e.balance)}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {/* ── Recent Transactions — ledger-style (replaces old grid layout) ── */}
+              {allEntries.length > 0 && (
+                <RecentTransactionsList entries={allEntries}/>
               )}
             </div>
           )}
@@ -1236,53 +1423,62 @@ export default function AdminAccountBook() {
                 <div>
                   <LedgerLegend/>
                   <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-                    {/* Header */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
-                      padding:'7px 10px',background:'#0f172a',gap:8}}>
-                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-                        textTransform:'uppercase',letterSpacing:'0.05em'}}>
-                        Date / Type
-                      </div>
-                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-                        textTransform:'uppercase',letterSpacing:'0.05em',textAlign:'right'}}>
-                        Amount
-                      </div>
-                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-                        textTransform:'uppercase',letterSpacing:'0.05em',textAlign:'right',minWidth:64}}>
-                        Balance
-                      </div>
+                    {/* Header — 5 cols */}
+                    <div style={{
+                      display:'grid',
+                      gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+                      padding:'7px 10px',background:'#0f172a',gap:'4px 8px',
+                    }}>
+                      {['Date / Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map((h,hi)=>(
+                        <div key={h} style={{fontSize:10,fontWeight:700,color:'#94a3b8',
+                          textTransform:'uppercase',letterSpacing:'0.05em',
+                          textAlign:hi===0?'left':'right'}}>
+                          {h}
+                        </div>
+                      ))}
                     </div>
                     {/* Opening balance row */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
-                      padding:'6px 10px',background:'#fafafa',borderBottom:'2px solid #e2e8f0',gap:8}}>
+                    <div style={{
+                      display:'grid',
+                      gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+                      padding:'6px 10px',background:'#fafafa',borderBottom:'2px solid #e2e8f0',gap:'4px 8px',
+                    }}>
                       <div style={{fontSize:11,color:'#64748b',fontStyle:'italic'}}>Opening Balance</div>
-                      <div/>
-                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#64748b',minWidth:64}}>{fmt(0)}</div>
+                      <div/><div/><div/>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#64748b'}}>{fmt(0)}</div>
                     </div>
                     {/* Body */}
                     {isGrouped
                       ? displayRows.map(row => (
-                          <LedgerRow key={row.key} row={row} isGrouped={true}/>
+                          <LedgerRow key={row.key} row={row} isGrouped={true} isMobile={isMobile}/>
                         ))
                       : dateGroups.map(grp => (
-                          <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries}/>
+                          <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries} isMobile={isMobile}/>
                         ))
                     }
                     {/* Closing row */}
-                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
-                      padding:'8px 10px',background:'#0f172a',gap:8}}>
+                    <div style={{
+                      display:'grid',
+                      gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+                      padding:'8px 10px',background:'#0f172a',gap:'4px 8px',
+                    }}>
                       <div style={{fontSize:11,color:'#e2e8f0',fontWeight:700}}>Closing Balance</div>
-                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#86efac'}}>
-                        {(() => {
-                          const cr = filteredEntries.reduce((s,e)=>s+e.credit,0);
-                          const db = filteredEntries.reduce((s,e)=>s+e.debit, 0);
-                          const parts = [];
-                          if (cr > 0) parts.push(`+${fmt(cr)}`);
-                          if (db > 0) parts.push(`−${fmt(db)}`);
-                          return parts.join('  ') || '—';
-                        })()}
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#93c5fd'}}>
+                        {filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0) > 0
+                          ? `+${fmt(filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0))}`
+                          : '—'}
                       </div>
-                      <div style={{textAlign:'right',fontWeight:800,fontSize:13,color:'#fff',minWidth:64}}>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#fca5a5'}}>
+                        {filteredEntries.reduce((s,e)=>s+e.debit,0) > 0
+                          ? `−${fmt(filteredEntries.reduce((s,e)=>s+e.debit,0))}`
+                          : '—'}
+                      </div>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#5eead4'}}>
+                        {filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0) > 0
+                          ? `+${fmt(filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0))}`
+                          : '—'}
+                      </div>
+                      <div style={{textAlign:'right',fontWeight:800,fontSize:13,color:'#fff'}}>
                         {fmt(ledgerBalance)}
                       </div>
                     </div>
@@ -1367,124 +1563,11 @@ export default function AdminAccountBook() {
                         </div>
                       </div>
                       {sel && (
-                        <div style={{padding:'0 16px 12px',background:'#f0f9ff'}}>
-                          <div style={{fontSize:12,fontWeight:700,color:'#1e40af',
-                            marginBottom:8,paddingTop:8}}>Payment History</div>
-                          {r.payments.length===0 ? (
-                            <div style={{fontSize:12,color:'#94a3b8'}}>No installment payments.</div>
-                          ) : (
-                            <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                              <table style={{width:'100%',minWidth:380,borderCollapse:'collapse',fontSize:12}}>
-                                <thead>
-                                  <tr style={{background:'#dbeafe'}}>
-                                    {['Date','Amount','Fee','Net','Status'].map(h => (
-                                      <th key={h} style={{padding:'6px 10px',
-                                        textAlign:h==='Date'||h==='Status'?'left':'right',
-                                        fontWeight:700,color:'#1e40af'}}>{h}</th>
-                                    ))}
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {r.payments
-                                    .filter(p => !p.paymentType || p.paymentType==='monthly')
-                                    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
-                                    .map((p,pi) => {
-                                      const net = (p.amount||0) - (p.gatewayFee||0);
-                                      const sc  = p.status==='verified'?'#15803d':p.status==='pending'?'#92400e':'#dc2626';
-                                      return (
-                                        <tr key={p.id} style={{background:pi%2===0?'#fff':'#f0f9ff'}}>
-                                          <td style={{padding:'6px 10px'}}>{tsDate(p.createdAt)}</td>
-                                          <td style={{padding:'6px 10px',textAlign:'right'}}>{fmt(p.amount)}</td>
-                                          <td style={{padding:'6px 10px',textAlign:'right',color:'#dc2626'}}>
-                                            {p.gatewayFee>0?`-${fmt(p.gatewayFee)}`:'—'}
-                                          </td>
-                                          <td style={{padding:'6px 10px',textAlign:'right',
-                                            fontWeight:600,color:'#15803d'}}>{fmt(net)}</td>
-                                          <td style={{padding:'6px 10px'}}>
-                                            <span style={{fontSize:11,fontWeight:700,color:sc,
-                                              background:p.status==='verified'?'#dcfce7':p.status==='pending'?'#fef3c7':'#fee2e2',
-                                              padding:'2px 8px',borderRadius:99}}>
-                                              {p.status}
-                                            </span>
-                                          </td>
-                                        </tr>
-                                      );
-                                    })
-                                  }
-                                </tbody>
-                              </table>
-                            </div>
-                          )}
-                          {/* Entry fees & Re-reg fees */}
-                          {(() => {
-                            const allFeeRows = [
-                              ...(r.entryFees||[]).map(f=>({
-                                date: f.paidAt?normDate(f.paidAt):normDate(f.createdAt),
-                                amount: f.amount||0,
-                                type: 'entry_fee',
-                                method: f.method||'—',
-                                label: 'Entry Fee',
-                              })),
-                              ...(r.feePays||[])
-                                .filter(p=>p.status!=='rejected')
-                                .map(p=>({
-                                  date: normDate(p.createdAt),
-                                  amount: (p.amount||0)-(p.gatewayFee||0),
-                                  type: p.paymentType||'entry_fee',
-                                  method: p.method||'—',
-                                  label: p.paymentType==='reregistration_fee'?'Re-Registration Fee':'Entry Fee',
-                                  status: p.status,
-                                })),
-                            ];
-                            if (allFeeRows.length===0) return null;
-                            return (
-                              <div style={{marginTop:10}}>
-                                <div style={{fontSize:11,fontWeight:700,color:'#d97706',
-                                  marginBottom:5,display:'flex',alignItems:'center',gap:5}}>
-                                  🧾 Entry / Registration Fees
-                                  <span style={{fontWeight:400,color:'#94a3b8',fontSize:10}}>
-                                    (not counted as capital contribution)
-                                  </span>
-                                </div>
-                                <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                                  <table style={{width:'100%',minWidth:320,borderCollapse:'collapse',fontSize:12}}>
-                                    <thead>
-                                      <tr style={{background:'#fef3c7'}}>
-                                        {['Date','Type','Amount','Method'].map(h=>(
-                                          <th key={h} style={{padding:'5px 10px',
-                                            textAlign:h==='Amount'?'right':'left',
-                                            fontWeight:700,color:'#92400e'}}>{h}</th>
-                                        ))}
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {allFeeRows.map((f,fi)=>(
-                                        <tr key={fi} style={{background:fi%2===0?'#fffbeb':'#fff'}}>
-                                          <td style={{padding:'5px 10px',color:'#64748b'}}>{f.date}</td>
-                                          <td style={{padding:'5px 10px'}}>
-                                            <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',
-                                              borderRadius:99,
-                                              background:f.type==='reregistration_fee'?'#ede9fe':'#fef3c7',
-                                              color:f.type==='reregistration_fee'?'#7c3aed':'#92400e'}}>
-                                              {f.label}
-                                            </span>
-                                            {f.status && f.status!=='verified' && (
-                                              <span style={{fontSize:10,marginLeft:4,color:'#94a3b8'}}>
-                                                ({f.status})
-                                              </span>
-                                            )}
-                                          </td>
-                                          <td style={{padding:'5px 10px',textAlign:'right',
-                                            fontWeight:600,color:'#d97706'}}>{fmt(f.amount)}</td>
-                                          <td style={{padding:'5px 10px',color:'#64748b'}}>{f.method}</td>
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            );
-                          })()}
+                        <div style={{padding:'12px 16px',background:'#f0f9ff'}}>
+                          <div style={{fontSize:12,fontWeight:700,color:'#1e40af',marginBottom:10}}>
+                            Payment History
+                          </div>
+                          <MemberPaymentHistory member={r}/>
                         </div>
                       )}
                     </div>
