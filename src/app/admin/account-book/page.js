@@ -37,11 +37,8 @@ function computeFundAlloc(key, totalCapital, settings) {
   return Math.min(p, mx);
 }
 
-
-// Normalise any date value → "18 Apr 2026" display string, so all entries share the same format
 function normDate(val) {
   if (!val) return '—';
-  // ISO date-only string like "2024-04-18" — parse without TZ shift
   if (typeof val === 'string') {
     const iso = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
     if (iso) {
@@ -132,7 +129,6 @@ function groupEntries(entries, keyFn, labelFn) {
   }));
 }
 
-// Groups flat daily entries by date string → [{dateLabel, entries}]
 function buildDateGroups(entries) {
   const map = {};
   entries.forEach(e => {
@@ -145,11 +141,11 @@ function buildDateGroups(entries) {
 }
 
 const TYPE_CFG = {
-  installment:      {label:'Installment', bg:'#dbeafe', color:'#15803d'},
-  expense:          {label:'Expense',     bg:'#fef2f2', color:'#dc2626'},
-  entry_fee:        {label:'Entry Fee',   bg:'#f0fdf4', color:'#d97706'},
-  loan_disbursement:{label:'Loan Out',    bg:'#fef3c7', color:'#92400e'},
-  loan_repayment:   {label:'Loan In',     bg:'#f0fdf4', color:'#15803d'},
+  installment:      {label:'Installment', short:'In',  bg:'#dbeafe', color:'#1e40af'},
+  expense:          {label:'Expense',     short:'Ex',  bg:'#fee2e2', color:'#dc2626'},
+  entry_fee:        {label:'Entry Fee',   short:'En',  bg:'#dcfce7', color:'#15803d'},
+  loan_disbursement:{label:'Loan Out',    short:'LoO', bg:'#fef3c7', color:'#92400e'},
+  loan_repayment:   {label:'Loan In',     short:'LoI', bg:'#d1fae5', color:'#065f46'},
 };
 
 function TypeBadge({type}) {
@@ -162,27 +158,40 @@ function TypeBadge({type}) {
   );
 }
 
-function TypeDot({type}) {
-  const c = TYPE_CFG[type] || {label:type, color:'#475569'};
+function TypeTag({type}) {
+  const c = TYPE_CFG[type] || {short:type.slice(0,3), label:type, bg:'#f1f5f9', color:'#475569'};
   return (
     <span title={c.label} style={{
-      display:'inline-block',width:8,height:8,borderRadius:'50%',
-      background:c.color,flexShrink:0,
-    }}/>
+      display:'inline-block',
+      padding:'1px 5px',
+      borderRadius:4,
+      fontSize:9,
+      fontWeight:800,
+      letterSpacing:'0.03em',
+      background:c.bg,
+      color:c.color,
+      whiteSpace:'nowrap',
+      flexShrink:0,
+      lineHeight:'16px',
+    }}>
+      {c.short}
+    </span>
   );
 }
 
 function LedgerLegend() {
   return (
-    <div style={{display:'flex',flexWrap:'wrap',gap:'6px 16px',
-      padding:'8px 12px',background:'#f8fafc',borderRadius:8,
-      border:'1px solid #e2e8f0',marginBottom:10,alignItems:'center'}}>
+    <div style={{display:'flex',flexWrap:'wrap',gap:'5px 12px',
+      padding:'7px 10px',background:'#f8fafc',borderRadius:8,
+      border:'1px solid #e2e8f0',marginBottom:8,alignItems:'center'}}>
       <span style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',
-        letterSpacing:'0.05em',marginRight:4}}>Legend:</span>
+        letterSpacing:'0.05em',flexShrink:0}}>Key:</span>
       {Object.entries(TYPE_CFG).map(([key,cfg])=>(
-        <span key={key} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#475569'}}>
-          <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',
-            background:cfg.color,flexShrink:0}}/>
+        <span key={key} style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:11,color:'#475569'}}>
+          <span style={{display:'inline-block',padding:'1px 5px',borderRadius:4,
+            fontSize:9,fontWeight:800,background:cfg.bg,color:cfg.color,lineHeight:'16px'}}>
+            {cfg.short}
+          </span>
           {cfg.label}
         </span>
       ))}
@@ -190,24 +199,20 @@ function LedgerLegend() {
   );
 }
 
-
-// ── EntryDetailPanel: shows transaction details in a dropdown panel ──
 function EntryDetailPanel({ entry }) {
-  const cfg = TYPE_CFG[entry.type] || { label: entry.type, color: '#475569', bg: '#f1f5f9' };
   const m = entry.meta || {};
   const fields = [];
 
-  if (m.memberName)    fields.push(['Member',      m.memberName + (m.memberIdNo ? ` #${m.memberIdNo}` : '')]);
-  if (entry.desc)      fields.push(['Description', entry.desc]);
+  if (m.memberName)    fields.push(['Member',       m.memberName + (m.memberIdNo ? ` #${m.memberIdNo}` : '')]);
+  if (entry.desc)      fields.push(['Description',  entry.desc]);
   if (entry.sub && entry.sub !== m.memberName) fields.push(['Details', entry.sub]);
-  if (entry.credit>0)  fields.push(['Credit',      fmt(entry.credit)]);
+  if (entry.credit>0)  fields.push(['Credit',       fmt(entry.credit)]);
   if (entry.debit>0)   fields.push(['Debit',        fmt(entry.debit)]);
-  if (m.gatewayFee>0)  fields.push(['Gateway Fee', `−${fmt(m.gatewayFee)}`]);
-  if (m.method)        fields.push(['Method',      m.method]);
-  if (m.status)        fields.push(['Status',      m.status]);
-  if (m.purpose)       fields.push(['Purpose',     m.purpose]);
-  if (m.category)      fields.push(['Category',    m.category]);
-  // loan repayment sub-detail
+  if (m.gatewayFee>0)  fields.push(['Gateway Fee',  `−${fmt(m.gatewayFee)}`]);
+  if (m.method)        fields.push(['Method',       m.method]);
+  if (m.status)        fields.push(['Status',       m.status]);
+  if (m.purpose)       fields.push(['Purpose',      m.purpose]);
+  if (m.category)      fields.push(['Category',     m.category]);
   if (m.repayment) {
     if (m.repayment.principal) fields.push(['Principal', fmt(m.repayment.principal)]);
     if (m.repayment.interest)  fields.push(['Interest',  fmt(m.repayment.interest)]);
@@ -216,23 +221,21 @@ function EntryDetailPanel({ entry }) {
 
   return (
     <div style={{
-      padding:'10px 16px 10px 28px',
+      padding:'10px 12px 10px 16px',
       background:'#f0f9ff',
-      borderTop:'1px solid #e0f2fe',
-      borderBottom:'1px solid #e0f2fe',
+      borderTop:'1px solid #bae6fd',
+      borderBottom:'1px solid #bae6fd',
     }}>
-      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
-        <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',
-          background:cfg.color,flexShrink:0}}/>
-        <span style={{fontSize:11,fontWeight:700,color:cfg.color}}>{cfg.label}</span>
-        <span style={{fontSize:10,color:'#94a3b8',marginLeft:4}}>{entry.date}</span>
+      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:7}}>
+        <TypeTag type={entry.type}/>
+        <span style={{fontSize:10,color:'#94a3b8'}}>{entry.date}</span>
       </div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',
-        gap:'4px 20px'}}>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',
+        gap:'3px 16px'}}>
         {fields.map(([k,v])=>(
-          <div key={k} style={{display:'flex',gap:5,fontSize:11,alignItems:'baseline'}}>
-            <span style={{color:'#94a3b8',flexShrink:0,minWidth:80}}>{k}:</span>
-            <span style={{color:'#0f172a',fontWeight:600}}>{v}</span>
+          <div key={k} style={{display:'flex',gap:4,fontSize:11,alignItems:'baseline',minWidth:0}}>
+            <span style={{color:'#94a3b8',flexShrink:0,fontSize:10}}>{k}:</span>
+            <span style={{color:'#0f172a',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v}</span>
           </div>
         ))}
       </div>
@@ -240,99 +243,106 @@ function EntryDetailPanel({ entry }) {
   );
 }
 
-// ── DateGroupRow: groups all transactions of the same date into one collapsible row ──
+// ── DateGroupRow ──────────────────────────────────────────────────────────────
 function DateGroupRow({ dateLabel, entries }) {
   const [open, setOpen] = useState(false);
-  const [openEntry, setOpenEntry] = useState(null); // id of expanded entry
-  const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
-  const totalExpenses = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
-  const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
-  const closingBal    = entries[entries.length-1]?.balance ?? 0;
-  const typeSet       = [...new Set(entries.map(e=>e.type))];
+  const [openEntry, setOpenEntry] = useState(null);
+
+  // Sum ALL credits and ALL debits so every type (including loan disbursements) is reflected
+  const totalCredit = entries.filter(e => e.credit > 0).reduce((s, e) => s + e.credit, 0);
+  const totalDebit  = entries.filter(e => e.debit  > 0).reduce((s, e) => s + e.debit,  0);
+  const closingBal  = entries[entries.length - 1]?.balance ?? 0;
+  const typeSet     = [...new Set(entries.map(e => e.type))];
 
   return (
     <div style={{borderBottom:'1px solid #f1f5f9'}}>
-      {/* Summary row — click to expand */}
+      {/* Summary row */}
       <div
         onClick={()=>setOpen(o=>!o)}
         style={{
           display:'grid',
-          gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-          padding:'7px 12px',
+          gridTemplateColumns:'1fr auto auto',
+          padding:'8px 10px',
           background: open ? '#f0f9ff' : '#fff',
           cursor:'pointer',
           userSelect:'none',
           alignItems:'center',
+          gap:8,
           transition:'background 0.1s',
         }}
         onMouseEnter={e=>{ if(!open) e.currentTarget.style.background='#f8fafc'; }}
         onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
       >
-        <div style={{fontSize:11,color:'#475569',fontWeight:600,whiteSpace:'nowrap'}}>{dateLabel}</div>
-        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'nowrap',overflow:'hidden'}}>
-          <span style={{fontSize:11,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
-          {typeSet.map(t=><TypeDot key={t} type={t}/>)}
+        {/* Left: date + type tags + count */}
+        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
+          <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
+          <span style={{fontSize:11,color:'#475569',fontWeight:600,flexShrink:0}}>{dateLabel}</span>
+          {typeSet.map(t=><TypeTag key={t} type={t}/>)}
           {entries.length>1 && <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>}
         </div>
-        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#15803d':'#cbd5e1'}}>
-          {totalCapital>0 ? `+${fmt(totalCapital)}` : '—'}
+        {/* Middle: net amounts — show credit and/or debit */}
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0,
+          color: totalDebit > 0 && totalCredit === 0 ? '#dc2626' : '#15803d'}}>
+          {totalCredit > 0 && totalDebit > 0
+            ? <span>
+                <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
+                {' '}
+                <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
+              </span>
+            : totalCredit > 0
+              ? `+${fmt(totalCredit)}`
+              : totalDebit > 0
+                ? `−${fmt(totalDebit)}`
+                : '—'}
         </div>
-        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
-          {totalExpenses>0 ? `−${fmt(totalExpenses)}` : '—'}
-        </div>
-        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalFees>0?'#d97706':'#cbd5e1'}}>
-          {totalFees>0 ? `+${fmt(totalFees)}` : '—'}
-        </div>
-        <div style={{textAlign:'right',fontSize:12,fontWeight:800,
+        {/* Right: running balance */}
+        <div style={{textAlign:'right',fontSize:12,fontWeight:800,flexShrink:0,minWidth:64,
           color:closingBal>=0?'#0f172a':'#dc2626'}}>
           {fmt(closingBal)}
         </div>
       </div>
 
-      {/* Expanded detail rows */}
+      {/* Expanded entry rows */}
       {open && entries.map((e,ei)=>{
-        const cap  = e.type==='installment' ? e.credit : 0;
-        const exp  = e.type==='expense'     ? e.debit  : 0;
-        const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
         const isOpen = openEntry === e.id;
+        const amount = e.credit>0 ? `+${fmt(e.credit)}` : e.debit>0 ? `−${fmt(e.debit)}` : '—';
+        const amtColor = e.debit>0 ? '#dc2626' : '#15803d';
         return (
           <div key={e.id}>
             <div
               onClick={()=>setOpenEntry(isOpen ? null : e.id)}
               style={{
                 display:'grid',
-                gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-                padding:'6px 12px 6px 24px',
+                gridTemplateColumns:'1fr auto auto',
+                padding:'7px 10px 7px 20px',
                 borderTop:'1px solid #f1f5f9',
                 background: isOpen ? '#e0f2fe' : ei%2===0?'#fafeff':'#f0f9ff',
                 alignItems:'center',
+                gap:8,
                 cursor:'pointer',
                 userSelect:'none',
               }}
               onMouseEnter={e2=>{ if(!isOpen) e2.currentTarget.style.background='#e0f2fe'; }}
               onMouseLeave={e2=>{ e2.currentTarget.style.background=isOpen?'#e0f2fe':ei%2===0?'#fafeff':'#f0f9ff'; }}
             >
-              <div style={{fontSize:10,color:'#94a3b8'}}>{e.date}</div>
-              <div style={{display:'flex',alignItems:'center',gap:5,overflow:'hidden'}}>
+              {/* Left: tag + member name */}
+              <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,overflow:'hidden'}}>
                 <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{isOpen?'▾':'▸'}</span>
-                <TypeDot type={e.type}/>
-                <span style={{fontSize:10,color:'#64748b',overflow:'hidden',
-                  textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
+                <TypeTag type={e.type}/>
+                <span style={{fontSize:11,color:'#475569',overflow:'hidden',
+                  textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                   {e.meta?.memberName
                     ? `${e.meta.memberName}${e.meta.memberIdNo?` #${e.meta.memberIdNo}`:''}`
                     : e.sub||''}
                 </span>
               </div>
-              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:cap>0?'#15803d':'#cbd5e1'}}>
-                {cap>0?`+${fmt(cap)}`:'—'}
+              {/* Amount */}
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,
+                color:amtColor,flexShrink:0}}>
+                {amount}
               </div>
-              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:exp>0?'#dc2626':'#cbd5e1'}}>
-                {exp>0?`−${fmt(exp)}`:'—'}
-              </div>
-              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:fee>0?'#d97706':'#cbd5e1'}}>
-                {fee>0?`+${fmt(fee)}`:'—'}
-              </div>
-              <div style={{textAlign:'right',fontSize:11,fontWeight:700,
+              {/* Balance */}
+              <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0,minWidth:64,
                 color:e.balance>=0?'#0f172a':'#dc2626'}}>
                 {fmt(e.balance)}
               </div>
@@ -345,14 +355,12 @@ function DateGroupRow({ dateLabel, entries }) {
   );
 }
 
-// ── LedgerRow: grouped (monthly/yearly) view ──
-function LedgerRow({ row, isGrouped, allFlatEntries }) {
+// ── LedgerRow: grouped (monthly/yearly) view ──────────────────────────────────
+function LedgerRow({ row, isGrouped }) {
   const [open, setOpen] = useState(false);
   if (isGrouped) {
-    const totalCap  = row.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
-    const totalExp  = row.entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
-    const totalFee  = row.entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
-    // Group sub-entries by date
+    const totalCredit = row.entries.filter(e => e.credit > 0).reduce((s, e) => s + e.credit, 0);
+    const totalDebit  = row.entries.filter(e => e.debit  > 0).reduce((s, e) => s + e.debit,  0);
     const byDate = {};
     row.entries.forEach(e=>{
       if(!byDate[e.date]) byDate[e.date]=[];
@@ -365,26 +373,33 @@ function LedgerRow({ row, isGrouped, allFlatEntries }) {
           onClick={()=>setOpen(o=>!o)}
           style={{
             display:'grid',
-            gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-            padding:'7px 12px',
+            gridTemplateColumns:'1fr auto auto',
+            padding:'8px 10px',
             background:'#f8fafc',
             cursor:'pointer',
             userSelect:'none',
             alignItems:'center',
+            gap:8,
           }}
         >
-          <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{open?'▾':'▸'} {row.label}</div>
-          <div style={{fontSize:12,color:'#64748b',fontStyle:'italic'}}>{row.entries.length} entries</div>
-          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalCap>0?'#15803d':'#cbd5e1'}}>
-            {totalCap>0?`+${fmt(totalCap)}`:'—'}
+          <div style={{fontSize:12,fontWeight:700,color:'#0f172a',display:'flex',alignItems:'center',gap:5}}>
+            <span style={{color:'#94a3b8'}}>{open?'▾':'▸'}</span> {row.label}
+            <span style={{fontSize:11,color:'#94a3b8',fontWeight:400}}>{row.entries.length} entries</span>
           </div>
-          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalExp>0?'#dc2626':'#cbd5e1'}}>
-            {totalExp>0?`−${fmt(totalExp)}`:'—'}
+          <div style={{textAlign:'right',fontSize:11,fontWeight:700,flexShrink:0}}>
+            {totalCredit > 0 && totalDebit > 0
+              ? <span>
+                  <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
+                  {' '}
+                  <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
+                </span>
+              : totalCredit > 0
+                ? <span style={{color:'#15803d'}}>+{fmt(totalCredit)}</span>
+                : totalDebit > 0
+                  ? <span style={{color:'#dc2626'}}>−{fmt(totalDebit)}</span>
+                  : <span style={{color:'#cbd5e1'}}>—</span>}
           </div>
-          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalFee>0?'#d97706':'#cbd5e1'}}>
-            {totalFee>0?`+${fmt(totalFee)}`:'—'}
-          </div>
-          <div style={{textAlign:'right',fontSize:13,fontWeight:800,color:'#1d4ed8'}}>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:800,color:'#1d4ed8',flexShrink:0,minWidth:64}}>
             {fmt(row.closingBalance)}
           </div>
         </div>
@@ -394,10 +409,10 @@ function LedgerRow({ row, isGrouped, allFlatEntries }) {
       </div>
     );
   }
-  return null; // daily mode uses DateGroupRow directly — see buildDateGroups below
+  return null;
 }
 
-// ── FundCard: renders one fund allocation card in the Fund Breakdown tab ──
+// ── FundCard ──────────────────────────────────────────────────────────────────
 function FundCard({ label, icon, color, bg, desc, alloc, used, budgetType, budgetValue, allocBreakdown }) {
   const remaining = alloc - used;
   const pctUsed   = alloc > 0 ? Math.min(100, (used / alloc) * 100) : 0;
@@ -476,7 +491,7 @@ function FundCard({ label, icon, color, bg, desc, alloc, used, budgetType, budge
   );
 }
 
-// ── Helpers for report ──
+// ── Report helpers ─────────────────────────────────────────────────────────────
 function buildReportDateGroups(entries) {
   const map = {};
   entries.forEach(e => {
@@ -499,7 +514,7 @@ function downloadCSV(entries, orgData) {
   ];
   groups.forEach(g => {
     const cap = g.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
-    const exp = g.entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
+    const exp = g.entries.filter(e=>e.debit>0).reduce((s,e)=>s+e.debit,0);
     const fee = g.entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
     const bal = g.entries[g.entries.length-1]?.balance ?? 0;
     const types = [...new Set(g.entries.map(e=>e.type))].join('+');
@@ -509,7 +524,7 @@ function downloadCSV(entries, orgData) {
       const name = e.meta?.memberName || e.sub || '';
       rows.push(['', `  ${e.type}`, name,
         e.type==='installment'&&e.credit>0?e.credit:'',
-        e.type==='expense'&&e.debit>0?e.debit:'',
+        e.debit>0?e.debit:'',
         (e.type==='entry_fee'||e.type==='loan_repayment')&&e.credit>0?e.credit:'',
         e.balance]);
     });
@@ -528,16 +543,16 @@ function downloadCSV(entries, orgData) {
   a.click(); URL.revokeObjectURL(url);
 }
 
-// ── ReportModal: grouped-by-date, with letterhead, CSV download, print-to-PDF ──
+// ── ReportModal ───────────────────────────────────────────────────────────────
 function ReportModal({ entries, orgData, onClose }) {
   const org = orgData || {};
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const totalCapital = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+  const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
   const totalExpenses = entries.reduce((s,e)=>s+e.debit,0);
-  const totalFees = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
-  const finalBalance = entries.length>0?entries[entries.length-1].balance:0;
-  const genDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
-  const dateGroups = buildReportDateGroups(entries);
+  const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
+  const finalBalance  = entries.length>0?entries[entries.length-1].balance:0;
+  const genDate       = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+  const dateGroups    = buildReportDateGroups(entries);
 
   return (
     <div style={{
@@ -549,15 +564,13 @@ function ReportModal({ entries, orgData, onClose }) {
         background:'#fff',borderRadius:14,width:'100%',maxWidth:900,
         boxShadow:'0 8px 40px rgba(0,0,0,0.22)',overflow:'hidden',
       }}>
-
-        {/* ── Modal toolbar (screen only) ── */}
+        {/* Modal toolbar */}
         <div className="no-print" style={{
           display:'flex',justifyContent:'space-between',alignItems:'center',
           padding:'14px 20px',background:'#0f172a',flexWrap:'wrap',gap:8,
         }}>
           <div style={{color:'#fff',fontWeight:700,fontSize:14}}>📒 Ledger Report</div>
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
-            {/* Breakdown toggle */}
             <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',
               color:'#e2e8f0',fontSize:12,userSelect:'none'}}>
               <div
@@ -593,19 +606,15 @@ function ReportModal({ entries, orgData, onClose }) {
           </div>
         </div>
 
-        {/* ── Printable content ── */}
-        <div style={{padding:'28px 32px'}}>
-
+        {/* Printable content */}
+        <div id="ledger-print-root" style={{padding:'28px 32px'}}>
           {/* Letterhead */}
           <div style={{borderBottom:'2.5px solid #000',paddingBottom:14,marginBottom:18,
             display:'flex',alignItems:'flex-start',gap:16}}>
             {org.logoURL && (
-              <img
-                src={org.logoURL}
-                alt="Logo"
+              <img src={org.logoURL} alt="Logo"
                 style={{width:75,height:75,objectFit:'contain',
-                  mixBlendMode:'multiply',filter:'contrast(1.1)'}}
-              />
+                  mixBlendMode:'multiply',filter:'contrast(1.1)'}}/>
             )}
             <div style={{flex:1}}>
               <div style={{fontSize:20,fontWeight:900,color:'#000',
@@ -625,7 +634,6 @@ function ReportModal({ entries, orgData, onClose }) {
                 {org.website && <span>🌐 {org.website}</span>}
               </div>
             </div>
-            {/* Generation date — top-right */}
             <div style={{textAlign:'right',fontSize:11,color:'#64748b',whiteSpace:'nowrap'}}>
               <div style={{fontWeight:600,color:'#0f172a'}}>Account Book</div>
               <div>Generated: {genDate}</div>
@@ -647,7 +655,7 @@ function ReportModal({ entries, orgData, onClose }) {
             ))}
           </div>
 
-          {/* Ledger table grouped by date */}
+          {/* Ledger table */}
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
             <thead>
               <tr style={{background:'#0f172a'}}>
@@ -663,12 +671,11 @@ function ReportModal({ entries, orgData, onClose }) {
             <tbody>
               {dateGroups.map((g, gi) => {
                 const gCap = g.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
-                const gExp = g.entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
+                const gExp = g.entries.filter(e=>e.debit>0).reduce((s,e)=>s+e.debit,0);
                 const gFee = g.entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
                 const gBal = g.entries[g.entries.length-1]?.balance ?? 0;
                 return (
                   <>
-                    {/* Date summary row */}
                     <tr key={`g-${gi}`} style={{background:'#f1f5f9',borderTop:'2px solid #e2e8f0'}}>
                       <td style={{padding:'6px 10px',fontWeight:700,color:'#0f172a',whiteSpace:'nowrap'}}>
                         {g.date}
@@ -689,10 +696,9 @@ function ReportModal({ entries, orgData, onClose }) {
                         {fmt(gBal)}
                       </td>
                     </tr>
-                    {/* Individual entries — only shown when breakdown is enabled */}
                     {showBreakdown && g.entries.map((e, ei) => {
                       const cap = e.type==='installment'?e.credit:0;
-                      const exp = e.type==='expense'?e.debit:0;
+                      const exp = e.debit>0?e.debit:0;
                       const fee = (e.type==='entry_fee'||e.type==='loan_repayment')?e.credit:0;
                       const name = e.meta?.memberName || e.sub || '';
                       return (
@@ -700,7 +706,7 @@ function ReportModal({ entries, orgData, onClose }) {
                           <td style={{padding:'5px 10px 5px 18px',color:'#94a3b8',whiteSpace:'nowrap'}}>{e.date}</td>
                           <td style={{padding:'5px 10px 5px 18px'}}>
                             <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
-                              <TypeDot type={e.type}/>
+                              <TypeTag type={e.type}/>
                               <span style={{color:'#334155'}}>{name}</span>
                             </span>
                           </td>
@@ -723,7 +729,6 @@ function ReportModal({ entries, orgData, onClose }) {
                   </>
                 );
               })}
-              {/* Totals footer */}
               <tr style={{background:'#0f172a',borderTop:'2px solid #334155'}}>
                 <td colSpan={2} style={{padding:'8px 10px',color:'#e2e8f0',fontWeight:700,fontSize:11}}>
                   CLOSING TOTALS
@@ -744,34 +749,29 @@ function ReportModal({ entries, orgData, onClose }) {
             </tbody>
           </table>
 
-          {/* Print footer */}
-          <div className="no-print" style={{display:'none'}}/>
-          <div style={{marginTop:24,fontSize:10,color:'#94a3b8',textAlign:'center',borderTop:'1px solid #e2e8f0',paddingTop:12}}>
+          <div style={{marginTop:24,fontSize:10,color:'#94a3b8',textAlign:'center',
+            borderTop:'1px solid #e2e8f0',paddingTop:12}}>
             This report was generated on {genDate} · {org.name_en||org.name||''}
           </div>
         </div>
       </div>
 
-      {/* Print styles injected inline */}
       <style>{`
         @media print {
-          body > *:not(#__next) { display: none !important; }
-          .no-print { display: none !important; }
-          @page {
-            margin: 18mm 14mm;
-            @bottom-right {
-              content: "Page " counter(page) " of " counter(pages);
-              font-size: 9pt;
-              color: #64748b;
-            }
-            @bottom-left {
-              content: "${org.name_en || org.name || ''}";
-              font-size: 9pt;
-              color: #64748b;
-            }
+          body * { visibility: hidden !important; }
+          #ledger-print-root,
+          #ledger-print-root * { visibility: visible !important; }
+          #ledger-print-root {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            padding: 14mm 14mm 20mm 14mm !important;
+            box-sizing: border-box !important;
           }
-          table { page-break-inside: auto; }
-          tr { page-break-inside: avoid; page-break-after: auto; }
+          @page { size: A4 portrait; margin: 0; }
+          table { page-break-inside: auto; width: 100%; }
+          tr    { page-break-inside: avoid; page-break-after: auto; }
           thead { display: table-header-group; }
           tfoot { display: table-footer-group; }
         }
@@ -780,6 +780,7 @@ function ReportModal({ entries, orgData, onClose }) {
   );
 }
 
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function AdminAccountBook() {
   const { userData, orgData, isOrgAdmin } = useAuth();
   const router   = useRouter();
@@ -831,12 +832,9 @@ export default function AdminAccountBook() {
       const rows = enriched.map(m => {
         const myPay    = rawPay.filter(p=>p.userId===m.id);
         const verified = myPay.filter(p=>p.status==='verified');
-        // Gateway fee always excluded from capital
         const capital  = verified.reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0), 0);
         const pending  = myPay.filter(p=>p.status==='pending').reduce((s,p)=>s+(p.amount||0), 0);
-        // Entry fees for this member (from entryFees collection)
         const myEntryFees = rawFees.filter(f=>f.userId===m.id);
-        // Also pick up entry_fee / reregistration_fee type payments from investments collection
         const myFeePays   = myPay.filter(p=>p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee');
         return {...m, capital, pending, verifiedCount:verified.length,
           paymentCount:myPay.length, payments:myPay,
@@ -890,16 +888,14 @@ export default function AdminAccountBook() {
   const activeProjects = projects.filter(p=>p.status==='active').length;
   const totalInvested  = projects.reduce((s,p)=>s+(p.investedAmount||0),0);
   const distCount      = dists.filter(d=>d.status==='distributed').length;
-  const totalFees      = fees.reduce((s,f)=>s+(f.amount||0),0); // admin-recorded entry fees
-  // Entry/re-reg fees paid via installment page (special sub route)
-  const totalEntryFeeInv    = payments
-    .filter(p=>p.status==='verified' && (p.paymentType==='entry_fee') && p.isContribution===false)
+  const totalFees      = fees.reduce((s,f)=>s+(f.amount||0),0);
+  const totalEntryFeeInv = payments
+    .filter(p=>p.status==='verified' && p.paymentType==='entry_fee' && p.isContribution===false)
     .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
-  const totalReregFeeInv    = payments
+  const totalReregFeeInv = payments
     .filter(p=>p.status==='verified' && p.paymentType==='reregistration_fee')
     .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
-  // Total fee income that funds the Expenses Fund
-  const totalFeeIncome      = totalFees + totalEntryFeeInv + totalReregFeeInv;
+  const totalFeeIncome   = totalFees + totalEntryFeeInv + totalReregFeeInv;
 
   const fb = settings.fundBudgets || {};
   let investInv = 0, investRes = 0;
@@ -931,12 +927,8 @@ export default function AdminAccountBook() {
       budgetType:fb.benevolent?.type, budgetValue:fb.benevolent?.value},
     {key:'expenses', label:'Expenses Fund', icon:'🧾', color:'#d97706', bg:'#fffbeb',
       desc:'Operational running costs (entry fees fund this, but are not spending from it)',
-      // Alloc = % of capital budget + all fee income collected (entry fees + re-reg fees)
-      // The fee income directly replenishes the expenses fund on top of the % allocation
       alloc: computeFundAlloc('expenses',totalCapital,settings) + totalFeeIncome,
-      // used = only actual expenditures from the /expenses collection
       used: totalExpenses,
-      // breakdown for display
       allocBreakdown: {
         fromCapital: computeFundAlloc('expenses',totalCapital,settings),
         fromFees:    totalFeeIncome,
@@ -1140,6 +1132,7 @@ export default function AdminAccountBook() {
                 </div>
               )}
 
+              {/* ── Recent Transactions ── */}
               {allEntries.length>0 && (
                 <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
                   <div style={{padding:'12px 16px',borderBottom:'1px solid #e2e8f0',
@@ -1151,14 +1144,14 @@ export default function AdminAccountBook() {
                   </div>
                   {[...allEntries].reverse().slice(0,8).map((e,i) => (
                     <div key={e.id} style={{
-                      padding:'11px 16px',borderBottom:'1px solid #f1f5f9',
+                      padding:'10px 16px',borderBottom:'1px solid #f1f5f9',
                       background:i%2===0?'#fff':'#fafafa',
                     }}>
-                      {/* Row 1: badge + member name + amount */}
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:4}}>
+                      {/* Row 1: tag + member name + amount */}
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:3}}>
                         <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flexShrink:1}}>
-                          <TypeBadge type={e.type}/>
-                          <span style={{fontSize:13,fontWeight:600,color:'#0f172a',
+                          <TypeTag type={e.type}/>
+                          <span style={{fontSize:12,fontWeight:600,color:'#0f172a',
                             overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                             {e.meta?.memberName || e.sub || '—'}
                           </span>
@@ -1200,7 +1193,7 @@ export default function AdminAccountBook() {
               <div style={{display:'flex',gap:10,marginBottom:12,flexWrap:'wrap',alignItems:'center'}}>
                 <div style={{display:'flex',gap:4}}>
                   {[['daily','Day by Day'],['monthly','Monthly'],['yearly','Yearly']].map(([k,l]) => (
-                    <button key={k} onClick={()=>{setViewMode(k);}}
+                    <button key={k} onClick={()=>setViewMode(k)}
                       style={{padding:'7px 14px',borderRadius:8,fontSize:12,cursor:'pointer',
                         border:'none',fontWeight:viewMode===k?700:400,
                         background:viewMode===k?'#0f172a':'#f1f5f9',
@@ -1219,7 +1212,7 @@ export default function AdminAccountBook() {
                 {[['all','All'],['installment','Installments'],['expense','Expenses'],
                   ['entry_fee','Entry Fees'],['loan_disbursement','Loans Out'],
                   ['loan_repayment','Loan Repayments']].map(([key,label]) => (
-                  <button key={key} onClick={()=>{setTypeFilter(key);}}
+                  <button key={key} onClick={()=>setTypeFilter(key)}
                     style={{padding:'5px 12px',borderRadius:99,fontSize:12,cursor:'pointer',
                       border:'none',fontWeight:typeFilter===key?700:400,
                       background:typeFilter===key?'#0f172a':'#f1f5f9',
@@ -1240,59 +1233,60 @@ export default function AdminAccountBook() {
                   <div style={{fontWeight:600,color:'#0f172a'}}>No transactions found</div>
                 </div>
               ) : (
-                <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                <LedgerLegend/>
-                <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',minWidth:520}}>
-                  {/* Header */}
-                  <div style={{display:'grid',
-                    gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-                    padding:'7px 12px',background:'#0f172a'}}>
-                    {['Date','Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map(h => (
-                      <div key={h} style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-                        textTransform:'uppercase',letterSpacing:'0.05em',
-                        textAlign:['Capital (+)','Expenses (−)','Fees (+)','Balance'].includes(h)?'right':'left'}}>
-                        {h}
+                <div>
+                  <LedgerLegend/>
+                  <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                    {/* Header */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
+                      padding:'7px 10px',background:'#0f172a',gap:8}}>
+                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
+                        textTransform:'uppercase',letterSpacing:'0.05em'}}>
+                        Date / Type
                       </div>
-                    ))}
+                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
+                        textTransform:'uppercase',letterSpacing:'0.05em',textAlign:'right'}}>
+                        Amount
+                      </div>
+                      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',
+                        textTransform:'uppercase',letterSpacing:'0.05em',textAlign:'right',minWidth:64}}>
+                        Balance
+                      </div>
+                    </div>
+                    {/* Opening balance row */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
+                      padding:'6px 10px',background:'#fafafa',borderBottom:'2px solid #e2e8f0',gap:8}}>
+                      <div style={{fontSize:11,color:'#64748b',fontStyle:'italic'}}>Opening Balance</div>
+                      <div/>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#64748b',minWidth:64}}>{fmt(0)}</div>
+                    </div>
+                    {/* Body */}
+                    {isGrouped
+                      ? displayRows.map(row => (
+                          <LedgerRow key={row.key} row={row} isGrouped={true}/>
+                        ))
+                      : dateGroups.map(grp => (
+                          <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries}/>
+                        ))
+                    }
+                    {/* Closing row */}
+                    <div style={{display:'grid',gridTemplateColumns:'1fr auto auto',
+                      padding:'8px 10px',background:'#0f172a',gap:8}}>
+                      <div style={{fontSize:11,color:'#e2e8f0',fontWeight:700}}>Closing Balance</div>
+                      <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#86efac'}}>
+                        {(() => {
+                          const cr = filteredEntries.reduce((s,e)=>s+e.credit,0);
+                          const db = filteredEntries.reduce((s,e)=>s+e.debit, 0);
+                          const parts = [];
+                          if (cr > 0) parts.push(`+${fmt(cr)}`);
+                          if (db > 0) parts.push(`−${fmt(db)}`);
+                          return parts.join('  ') || '—';
+                        })()}
+                      </div>
+                      <div style={{textAlign:'right',fontWeight:800,fontSize:13,color:'#fff',minWidth:64}}>
+                        {fmt(ledgerBalance)}
+                      </div>
+                    </div>
                   </div>
-                  {/* Opening balance row */}
-                  <div style={{display:'grid',
-                    gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-                    padding:'6px 12px',background:'#fafafa',borderBottom:'2px solid #e2e8f0'}}>
-                    <div style={{fontSize:11,color:'#94a3b8'}}>—</div>
-                    <div style={{fontSize:11,color:'#64748b',fontStyle:'italic'}}>Opening Balance</div>
-                    <div/><div/><div/>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#64748b'}}>{fmt(0)}</div>
-                  </div>
-                  {/* Body — daily uses date-grouped rows; monthly/yearly use LedgerRow */}
-                  {isGrouped
-                    ? displayRows.map(row => (
-                        <LedgerRow key={row.key} row={row} isGrouped={true}/>
-                      ))
-                    : dateGroups.map(grp => (
-                        <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries}/>
-                      ))
-                  }
-                  {/* Closing / totals row */}
-                  <div style={{display:'grid',
-                    gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-                    padding:'8px 12px',background:'#0f172a'}}>
-                    <div style={{fontSize:11,color:'#94a3b8',fontWeight:600}}>Totals</div>
-                    <div style={{fontSize:11,color:'#e2e8f0',fontWeight:700}}>Closing Balance</div>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#86efac'}}>
-                      {(() => { const t=filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0); return t>0?`+${fmt(t)}`:'—'; })()}
-                    </div>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#fca5a5'}}>
-                      {totalDebit>0?`−${fmt(totalDebit)}`:'—'}
-                    </div>
-                    <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#fde68a'}}>
-                      {(() => { const t=filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0); return t>0?`+${fmt(t)}`:'—'; })()}
-                    </div>
-                    <div style={{textAlign:'right',fontWeight:800,fontSize:13,color:'#fff'}}>
-                      {fmt(ledgerBalance)}
-                    </div>
-                  </div>
-                </div>
                 </div>
               )}
             </div>
@@ -1380,48 +1374,48 @@ export default function AdminAccountBook() {
                             <div style={{fontSize:12,color:'#94a3b8'}}>No installment payments.</div>
                           ) : (
                             <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                            <table style={{width:'100%',minWidth:380,borderCollapse:'collapse',fontSize:12}}>
-                              <thead>
-                                <tr style={{background:'#dbeafe'}}>
-                                  {['Date','Amount','Fee','Net','Status'].map(h => (
-                                    <th key={h} style={{padding:'6px 10px',
-                                      textAlign:h==='Date'||h==='Status'?'left':'right',
-                                      fontWeight:700,color:'#1e40af'}}>{h}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {r.payments
-                                  .filter(p => !p.paymentType || p.paymentType==='monthly')
-                                  .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
-                                  .map((p,pi) => {
-                                    const net = (p.amount||0) - (p.gatewayFee||0);
-                                    const sc  = p.status==='verified'?'#15803d':p.status==='pending'?'#92400e':'#dc2626';
-                                    return (
-                                      <tr key={p.id} style={{background:pi%2===0?'#fff':'#f0f9ff'}}>
-                                        <td style={{padding:'6px 10px'}}>{tsDate(p.createdAt)}</td>
-                                        <td style={{padding:'6px 10px',textAlign:'right'}}>{fmt(p.amount)}</td>
-                                        <td style={{padding:'6px 10px',textAlign:'right',color:'#dc2626'}}>
-                                          {p.gatewayFee>0?`-${fmt(p.gatewayFee)}`:'—'}
-                                        </td>
-                                        <td style={{padding:'6px 10px',textAlign:'right',
-                                          fontWeight:600,color:'#15803d'}}>{fmt(net)}</td>
-                                        <td style={{padding:'6px 10px'}}>
-                                          <span style={{fontSize:11,fontWeight:700,color:sc,
-                                            background:p.status==='verified'?'#dcfce7':p.status==='pending'?'#fef3c7':'#fee2e2',
-                                            padding:'2px 8px',borderRadius:99}}>
-                                            {p.status}
-                                          </span>
-                                        </td>
-                                      </tr>
-                                    );
-                                  })
-                                }
-                              </tbody>
-                            </table>
+                              <table style={{width:'100%',minWidth:380,borderCollapse:'collapse',fontSize:12}}>
+                                <thead>
+                                  <tr style={{background:'#dbeafe'}}>
+                                    {['Date','Amount','Fee','Net','Status'].map(h => (
+                                      <th key={h} style={{padding:'6px 10px',
+                                        textAlign:h==='Date'||h==='Status'?'left':'right',
+                                        fontWeight:700,color:'#1e40af'}}>{h}</th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {r.payments
+                                    .filter(p => !p.paymentType || p.paymentType==='monthly')
+                                    .sort((a,b)=>(b.createdAt?.seconds||0)-(a.createdAt?.seconds||0))
+                                    .map((p,pi) => {
+                                      const net = (p.amount||0) - (p.gatewayFee||0);
+                                      const sc  = p.status==='verified'?'#15803d':p.status==='pending'?'#92400e':'#dc2626';
+                                      return (
+                                        <tr key={p.id} style={{background:pi%2===0?'#fff':'#f0f9ff'}}>
+                                          <td style={{padding:'6px 10px'}}>{tsDate(p.createdAt)}</td>
+                                          <td style={{padding:'6px 10px',textAlign:'right'}}>{fmt(p.amount)}</td>
+                                          <td style={{padding:'6px 10px',textAlign:'right',color:'#dc2626'}}>
+                                            {p.gatewayFee>0?`-${fmt(p.gatewayFee)}`:'—'}
+                                          </td>
+                                          <td style={{padding:'6px 10px',textAlign:'right',
+                                            fontWeight:600,color:'#15803d'}}>{fmt(net)}</td>
+                                          <td style={{padding:'6px 10px'}}>
+                                            <span style={{fontSize:11,fontWeight:700,color:sc,
+                                              background:p.status==='verified'?'#dcfce7':p.status==='pending'?'#fef3c7':'#fee2e2',
+                                              padding:'2px 8px',borderRadius:99}}>
+                                              {p.status}
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })
+                                  }
+                                </tbody>
+                              </table>
                             </div>
                           )}
-                          {/* ── Entry fees & Re-reg fees (not capital contributions) ── */}
+                          {/* Entry fees & Re-reg fees */}
                           {(() => {
                             const allFeeRows = [
                               ...(r.entryFees||[]).map(f=>({
@@ -1453,40 +1447,40 @@ export default function AdminAccountBook() {
                                   </span>
                                 </div>
                                 <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-                                <table style={{width:'100%',minWidth:320,borderCollapse:'collapse',fontSize:12}}>
-                                  <thead>
-                                    <tr style={{background:'#fef3c7'}}>
-                                      {['Date','Type','Amount','Method'].map(h=>(
-                                        <th key={h} style={{padding:'5px 10px',
-                                          textAlign:h==='Amount'?'right':'left',
-                                          fontWeight:700,color:'#92400e'}}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {allFeeRows.map((f,fi)=>(
-                                      <tr key={fi} style={{background:fi%2===0?'#fffbeb':'#fff'}}>
-                                        <td style={{padding:'5px 10px',color:'#64748b'}}>{f.date}</td>
-                                        <td style={{padding:'5px 10px'}}>
-                                          <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',
-                                            borderRadius:99,
-                                            background:f.type==='reregistration_fee'?'#ede9fe':'#fef3c7',
-                                            color:f.type==='reregistration_fee'?'#7c3aed':'#92400e'}}>
-                                            {f.label}
-                                          </span>
-                                          {f.status && f.status!=='verified' && (
-                                            <span style={{fontSize:10,marginLeft:4,color:'#94a3b8'}}>
-                                              ({f.status})
-                                            </span>
-                                          )}
-                                        </td>
-                                        <td style={{padding:'5px 10px',textAlign:'right',
-                                          fontWeight:600,color:'#d97706'}}>{fmt(f.amount)}</td>
-                                        <td style={{padding:'5px 10px',color:'#64748b'}}>{f.method}</td>
+                                  <table style={{width:'100%',minWidth:320,borderCollapse:'collapse',fontSize:12}}>
+                                    <thead>
+                                      <tr style={{background:'#fef3c7'}}>
+                                        {['Date','Type','Amount','Method'].map(h=>(
+                                          <th key={h} style={{padding:'5px 10px',
+                                            textAlign:h==='Amount'?'right':'left',
+                                            fontWeight:700,color:'#92400e'}}>{h}</th>
+                                        ))}
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                    </thead>
+                                    <tbody>
+                                      {allFeeRows.map((f,fi)=>(
+                                        <tr key={fi} style={{background:fi%2===0?'#fffbeb':'#fff'}}>
+                                          <td style={{padding:'5px 10px',color:'#64748b'}}>{f.date}</td>
+                                          <td style={{padding:'5px 10px'}}>
+                                            <span style={{fontSize:10,fontWeight:700,padding:'2px 7px',
+                                              borderRadius:99,
+                                              background:f.type==='reregistration_fee'?'#ede9fe':'#fef3c7',
+                                              color:f.type==='reregistration_fee'?'#7c3aed':'#92400e'}}>
+                                              {f.label}
+                                            </span>
+                                            {f.status && f.status!=='verified' && (
+                                              <span style={{fontSize:10,marginLeft:4,color:'#94a3b8'}}>
+                                                ({f.status})
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td style={{padding:'5px 10px',textAlign:'right',
+                                            fontWeight:600,color:'#d97706'}}>{fmt(f.amount)}</td>
+                                          <td style={{padding:'5px 10px',color:'#64748b'}}>{f.method}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
                                 </div>
                               </div>
                             );
