@@ -118,6 +118,18 @@ function groupEntries(entries, keyFn, labelFn) {
   }));
 }
 
+// Groups flat daily entries by date string → [{dateLabel, entries}]
+function buildDateGroups(entries) {
+  const map = {};
+  entries.forEach(e => {
+    const key = e.date || '—';
+    if (!map[key]) map[key] = { dateLabel: key, entries: [], sortKey: e.sortKey };
+    map[key].entries.push(e);
+    if (e.sortKey < map[key].sortKey) map[key].sortKey = e.sortKey;
+  });
+  return Object.values(map).sort((a, b) => a.sortKey - b.sortKey);
+}
+
 const TYPE_CFG = {
   installment:      {label:'Installment', bg:'#dbeafe', color:'#1e40af'},
   expense:          {label:'Expense',     bg:'#fef2f2', color:'#dc2626'},
@@ -137,110 +149,162 @@ function TypeBadge({type}) {
 }
 
 
-// ── LedgerRow: renders one daily entry or a grouped monthly/yearly summary ──
-function LedgerRow({ row, isGrouped }) {
+// ── DateGroupRow: groups all transactions of the same date into one collapsible row ──
+function DateGroupRow({ dateLabel, entries }) {
   const [open, setOpen] = useState(false);
-  if (isGrouped) {
-    return (
-      <div>
-        <div
-          onClick={() => setOpen(o => !o)}
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
-            padding: '9px 16px',
-            background: '#f8fafc',
-            borderBottom: '1px solid #e2e8f0',
-            cursor: 'pointer',
-            userSelect: 'none',
-          }}
-        >
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>{open ? '▾' : '▸'} {row.label}</div>
-          <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
-            {row.entries.length} transactions
-          </div>
-          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#dc2626' }}>
-            {row.debit > 0 ? fmt(row.debit) : '—'}
-          </div>
-          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#15803d' }}>
-            {row.credit > 0 ? fmt(row.credit) : '—'}
-          </div>
-          <div />
-          <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
-            {row.count > 0 ? row.count : '—'}
-          </div>
-          <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: '#1d4ed8' }}>
-            {fmt(row.closingBalance)}
-          </div>
+  const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+  const totalExpenses = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
+  const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
+  const closingBal    = entries[entries.length-1]?.balance ?? 0;
+  const typeSet       = [...new Set(entries.map(e=>e.type))];
+
+  return (
+    <div style={{borderBottom:'1px solid #f1f5f9'}}>
+      {/* Summary row — click to expand */}
+      <div
+        onClick={()=>setOpen(o=>!o)}
+        style={{
+          display:'grid',
+          gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
+          padding:'9px 16px',
+          background: open ? '#f0f9ff' : '#fff',
+          cursor:'pointer',
+          userSelect:'none',
+          alignItems:'center',
+          transition:'background 0.1s',
+        }}
+        onMouseEnter={e=>{ if(!open) e.currentTarget.style.background='#f8fafc'; }}
+        onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
+      >
+        {/* Date */}
+        <div style={{fontSize:12,color:'#475569',fontWeight:600}}>{dateLabel}</div>
+        {/* Type badges (all unique types for this date) */}
+        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap'}}>
+          <span style={{fontSize:12,color:'#94a3b8',marginRight:2}}>{open?'▾':'▸'}</span>
+          {typeSet.map(t=><TypeBadge key={t} type={t}/>)}
+          {entries.length>1 && (
+            <span style={{fontSize:10,color:'#94a3b8',marginLeft:2}}>×{entries.length}</span>
+          )}
         </div>
-        {open && row.entries.map((e, ei) => (
+        {/* Capital */}
+        <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalCapital>0?'#15803d':'#cbd5e1'}}>
+          {totalCapital>0 ? `+${fmt(totalCapital)}` : '—'}
+        </div>
+        {/* Expenses */}
+        <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
+          {totalExpenses>0 ? `−${fmt(totalExpenses)}` : '—'}
+        </div>
+        {/* Fees */}
+        <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalFees>0?'#d97706':'#cbd5e1'}}>
+          {totalFees>0 ? `+${fmt(totalFees)}` : '—'}
+        </div>
+        {/* Balance */}
+        <div style={{textAlign:'right',fontSize:13,fontWeight:800,
+          color:closingBal>=0?'#0f172a':'#dc2626'}}>
+          {fmt(closingBal)}
+        </div>
+      </div>
+
+      {/* Expanded detail rows */}
+      {open && entries.map((e,ei)=>{
+        const cap  = e.type==='installment' ? e.credit : 0;
+        const exp  = e.type==='expense'     ? e.debit  : 0;
+        const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
+        return (
           <div key={e.id} style={{
-            display: 'grid',
-            gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
-            padding: '7px 16px 7px 28px',
-            borderBottom: '1px solid #f1f5f9',
-            background: ei % 2 === 0 ? '#fff' : '#fafafa',
+            display:'grid',
+            gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
+            padding:'7px 16px 7px 32px',
+            borderTop:'1px solid #f1f5f9',
+            background:ei%2===0?'#fafeff':'#f0f9ff',
+            alignItems:'center',
           }}>
-            <div style={{ fontSize: 12, color: '#94a3b8' }}>{e.date}</div>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 500, color: '#0f172a' }}>{e.desc}</div>
-              <div style={{ fontSize: 11, color: '#94a3b8' }}>{e.sub}</div>
+            <div style={{fontSize:11,color:'#94a3b8'}}>{e.date}</div>
+            <div style={{display:'flex',alignItems:'center',gap:6}}>
+              <TypeBadge type={e.type}/>
+              {e.meta?.memberName && (
+                <span style={{fontSize:11,color:'#64748b',overflow:'hidden',
+                  textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {e.meta.memberName}{e.meta.memberIdNo?` #${e.meta.memberIdNo}`:''}
+                </span>
+              )}
+              {!e.meta?.memberName && e.sub && (
+                <span style={{fontSize:11,color:'#64748b',overflow:'hidden',
+                  textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {e.sub}
+                </span>
+              )}
             </div>
-            <div style={{ textAlign: 'right', fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
-              {e.debit > 0 ? fmt(e.debit) : '—'}
+            <div style={{textAlign:'right',fontSize:12,fontWeight:600,color:cap>0?'#15803d':'#cbd5e1'}}>
+              {cap>0?`+${fmt(cap)}`:'—'}
             </div>
-            <div style={{ textAlign: 'right', fontSize: 12, color: '#15803d', fontWeight: 600 }}>
-              {e.type === 'installment' && e.credit > 0 ? fmt(e.credit) : '—'}
+            <div style={{textAlign:'right',fontSize:12,fontWeight:600,color:exp>0?'#dc2626':'#cbd5e1'}}>
+              {exp>0?`−${fmt(exp)}`:'—'}
             </div>
-            <div style={{ textAlign: 'right', fontSize: 12, color: '#d97706', fontWeight: 600 }}>
-              {e.type === 'entry_fee' && e.credit > 0 ? fmt(e.credit) : '—'}
+            <div style={{textAlign:'right',fontSize:12,fontWeight:600,color:fee>0?'#d97706':'#cbd5e1'}}>
+              {fee>0?`+${fmt(fee)}`:'—'}
             </div>
-            <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
-              {e.count > 0 ? e.count : '—'}
-            </div>
-            <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#0f172a' }}>
+            <div style={{textAlign:'right',fontSize:12,fontWeight:700,
+              color:e.balance>=0?'#0f172a':'#dc2626'}}>
               {fmt(e.balance)}
             </div>
           </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── LedgerRow: grouped (monthly/yearly) view ──
+function LedgerRow({ row, isGrouped, allFlatEntries }) {
+  const [open, setOpen] = useState(false);
+  if (isGrouped) {
+    const totalCap  = row.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+    const totalExp  = row.entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
+    const totalFee  = row.entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
+    // Group sub-entries by date
+    const byDate = {};
+    row.entries.forEach(e=>{
+      if(!byDate[e.date]) byDate[e.date]=[];
+      byDate[e.date].push(e);
+    });
+    const dateGroups = Object.entries(byDate).sort(([a],[b])=>a.localeCompare(b));
+    return (
+      <div style={{borderBottom:'1px solid #e2e8f0'}}>
+        <div
+          onClick={()=>setOpen(o=>!o)}
+          style={{
+            display:'grid',
+            gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
+            padding:'10px 16px',
+            background:'#f8fafc',
+            cursor:'pointer',
+            userSelect:'none',
+            alignItems:'center',
+          }}
+        >
+          <div style={{fontSize:12,fontWeight:700,color:'#0f172a'}}>{open?'▾':'▸'} {row.label}</div>
+          <div style={{fontSize:12,color:'#64748b',fontStyle:'italic'}}>{row.entries.length} entries</div>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalCap>0?'#15803d':'#cbd5e1'}}>
+            {totalCap>0?`+${fmt(totalCap)}`:'—'}
+          </div>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalExp>0?'#dc2626':'#cbd5e1'}}>
+            {totalExp>0?`−${fmt(totalExp)}`:'—'}
+          </div>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:700,color:totalFee>0?'#d97706':'#cbd5e1'}}>
+            {totalFee>0?`+${fmt(totalFee)}`:'—'}
+          </div>
+          <div style={{textAlign:'right',fontSize:13,fontWeight:800,color:'#1d4ed8'}}>
+            {fmt(row.closingBalance)}
+          </div>
+        </div>
+        {open && dateGroups.map(([date, grpEntries])=>(
+          <DateGroupRow key={date} dateLabel={date} entries={grpEntries}/>
         ))}
       </div>
     );
   }
-  // Daily (flat) row
-  return (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
-      padding: '8px 16px',
-      borderBottom: '1px solid #f1f5f9',
-      background: '#fff',
-      alignItems: 'center',
-    }}>
-      <div style={{ fontSize: 12, color: '#94a3b8' }}>{row.date}</div>
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <TypeBadge type={row.type} />
-          <span style={{ fontSize: 12, fontWeight: 500, color: '#0f172a' }}>{row.desc}</span>
-        </div>
-        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{row.sub}</div>
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#dc2626' }}>
-        {row.debit > 0 ? fmt(row.debit) : '—'}
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#15803d' }}>
-        {row.type === 'installment' && row.credit > 0 ? fmt(row.credit) : '—'}
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#d97706' }}>
-        {row.type === 'entry_fee' && row.credit > 0 ? fmt(row.credit) : '—'}
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
-        {row.count > 0 ? row.count : '—'}
-      </div>
-      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
-        {fmt(row.balance)}
-      </div>
-    </div>
-  );
+  return null; // daily mode uses DateGroupRow directly — see buildDateGroups below
 }
 
 // ── FundCard: renders one fund allocation card in the Fund Breakdown tab ──
@@ -498,8 +562,9 @@ export default function AdminAccountBook() {
     return rows.map(r => { bal += r.credit-r.debit; return {...r, balance:bal}; });
   }, [allEntries, typeFilter, search]);
 
-  const monthly  = useMemo(()=>groupEntries(filteredEntries,ymKey,ymLabel),[filteredEntries]);
-  const yearly   = useMemo(()=>groupEntries(filteredEntries,yKey,k=>`Year ${k}`),[filteredEntries]);
+  const monthly    = useMemo(()=>groupEntries(filteredEntries,ymKey,ymLabel),[filteredEntries]);
+  const yearly     = useMemo(()=>groupEntries(filteredEntries,yKey,k=>`Year ${k}`),[filteredEntries]);
+  const dateGroups = useMemo(()=>buildDateGroups(filteredEntries),[filteredEntries]);
   const displayRows = viewMode==='daily' ? filteredEntries : viewMode==='monthly' ? monthly : yearly;
   const isGrouped   = viewMode !== 'daily';
 
@@ -740,10 +805,13 @@ export default function AdminAccountBook() {
                       <div key={r.id} style={{display:'flex',alignItems:'center',gap:12,
                         padding:'10px 16px',borderBottom:'1px solid #f1f5f9',
                         background:i%2===0?'#fff':'#fafafa'}}>
-                        <div style={{width:24,height:24,borderRadius:'50%',background:'#dbeafe',
+                        <div style={{width:32,height:32,borderRadius:'50%',background:'#dbeafe',
                           display:'flex',alignItems:'center',justifyContent:'center',
-                          fontSize:10,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                          {r.photoURL?<img src={r.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(r.nameEnglish||r.name)}
+                          fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,
+                          overflow:'hidden'}}>
+                          {r.photoURL
+                            ? <img src={r.photoURL} style={{width:32,height:32,objectFit:'cover',borderRadius:'50%',display:'block'}} alt=""/>
+                            : initials(r.nameEnglish||r.name)}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
                           <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
@@ -869,52 +937,54 @@ export default function AdminAccountBook() {
                 </div>
               ) : (
                 <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+                  {/* Header */}
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
+                    gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
                     padding:'9px 16px',background:'#0f172a'}}>
-                    {['Date','Description','Debit (−)','Capital (+)','Fees (+)','Inst.','Balance'].map(h => (
+                    {['Date','Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map(h => (
                       <div key={h} style={{fontSize:11,fontWeight:700,color:'#94a3b8',
                         textTransform:'uppercase',letterSpacing:'0.06em',
-                        textAlign:['Debit (−)','Capital (+)','Fees (+)','Inst.','Balance'].includes(h)?'right':'left'}}>
+                        textAlign:['Capital (+)','Expenses (−)','Fees (+)','Balance'].includes(h)?'right':'left'}}>
                         {h}
                       </div>
                     ))}
                   </div>
+                  {/* Opening balance row */}
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
-                    padding:'8px 16px',background:'#fafafa',borderBottom:'2px solid #e2e8f0'}}>
+                    gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
+                    padding:'7px 16px',background:'#fafafa',borderBottom:'2px solid #e2e8f0'}}>
                     <div style={{fontSize:12,color:'#94a3b8'}}>—</div>
                     <div style={{fontSize:12,color:'#64748b',fontStyle:'italic'}}>Opening Balance</div>
-                    <div/><div/><div/><div/>
+                    <div/><div/><div/>
                     <div style={{textAlign:'right',fontWeight:700,color:'#64748b'}}>{fmt(0)}</div>
                   </div>
-                  {displayRows.map(row => (
-                    <LedgerRow
-                      key={row.id||row.key}
-                      row={row}
-                      isGrouped={isGrouped}
-                    />
-                  ))}
+                  {/* Body — daily uses date-grouped rows; monthly/yearly use LedgerRow */}
+                  {isGrouped
+                    ? displayRows.map(row => (
+                        <LedgerRow key={row.key} row={row} isGrouped={true}/>
+                      ))
+                    : dateGroups.map(grp => (
+                        <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries}/>
+                      ))
+                  }
+                  {/* Closing / totals row */}
                   <div style={{display:'grid',
-                    gridTemplateColumns:'0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
+                    gridTemplateColumns:'90px 1.8fr 1fr 1fr 1fr 1fr',
                     padding:'10px 16px',background:'#0f172a'}}>
-                    <div style={{fontSize:12,color:'#94a3b8',fontWeight:600}}>Closing</div>
-                    <div/>
+                    <div style={{fontSize:12,color:'#94a3b8',fontWeight:600}}>Totals</div>
                     <div style={{fontSize:12,color:'#e2e8f0',fontWeight:700}}>Closing Balance</div>
-                    <div style={{textAlign:'right',fontWeight:700,color:'#fca5a5'}}>
-                      {totalDebit>0?fmt(totalDebit):'—'}
-                    </div>
                     <div style={{textAlign:'right',fontWeight:700,color:'#86efac'}}>
-                      {(() => { const t=filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0); return t>0?fmt(t):'—'; })()}
+                      {(() => { const t=filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0); return t>0?`+${fmt(t)}`:'—'; })()}
+                    </div>
+                    <div style={{textAlign:'right',fontWeight:700,color:'#fca5a5'}}>
+                      {totalDebit>0?`−${fmt(totalDebit)}`:'—'}
                     </div>
                     <div style={{textAlign:'right',fontWeight:700,color:'#fde68a'}}>
-                      {(() => { const t=filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='reregistration_fee').reduce((s,e)=>s+e.credit,0); return t>0?fmt(t):'—'; })()}
+                      {(() => { const t=filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0); return t>0?`+${fmt(t)}`:'—'; })()}
                     </div>
-                    <div style={{textAlign:'right',fontWeight:700,color:'#93c5fd'}}>{instCount}</div>
                     <div style={{textAlign:'right',fontWeight:800,fontSize:15,color:'#fff'}}>
                       {fmt(ledgerBalance)}
                     </div>
-                    <div/>
                   </div>
                 </div>
               )}
@@ -968,10 +1038,13 @@ export default function AdminAccountBook() {
                         onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
                         onMouseLeave={e=>e.currentTarget.style.background=sel?'#eff6ff':i%2===0?'#fff':'#fafafa'}>
                         <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <div style={{width:30,height:30,borderRadius:'50%',background:'#dbeafe',
+                          <div style={{width:34,height:34,borderRadius:'50%',background:'#dbeafe',
                             display:'flex',alignItems:'center',justifyContent:'center',
-                            fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0}}>
-                            {r.photoURL?<img src={r.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>:initials(r.nameEnglish||r.name)}
+                            fontSize:12,fontWeight:700,color:'#1d4ed8',flexShrink:0,
+                            overflow:'hidden'}}>
+                            {r.photoURL
+                              ? <img src={r.photoURL} style={{width:34,height:34,objectFit:'cover',borderRadius:'50%',display:'block'}} alt=""/>
+                              : initials(r.nameEnglish||r.name)}
                           </div>
                           <div>
                             <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>
