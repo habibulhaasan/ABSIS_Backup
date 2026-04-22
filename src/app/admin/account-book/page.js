@@ -37,6 +37,21 @@ function computeFundAlloc(key, totalCapital, settings) {
   return Math.min(p, mx);
 }
 
+
+// Normalise any date value → "18 Apr 2026" display string, so all entries share the same format
+function normDate(val) {
+  if (!val) return '—';
+  // ISO date-only string like "2024-04-18" — parse without TZ shift
+  if (typeof val === 'string') {
+    const iso = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) {
+      const d = new Date(Number(iso[1]), Number(iso[2])-1, Number(iso[3]));
+      return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    }
+  }
+  return tsDate(val);
+}
+
 function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
   const rows = [];
   payments.filter(p=>p.status==='verified').forEach(p => {
@@ -44,9 +59,9 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
     const m   = memberMap[p.userId]||{};
     rows.push({
       id:`pay-${p.id}`, type:'installment', ts:p.createdAt,
-      sortKey:tsSort(p.createdAt), date:tsDate(p.createdAt),
+      sortKey:tsSort(p.createdAt), date:normDate(p.createdAt),
       desc:'Capital Installment',
-      sub:`${m.nameEnglish||m.name||'Member'} — ${p.method||''}`,
+      sub:m.nameEnglish||m.name||'Member',
       debit:0, credit:net, count:1,
       meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
     });
@@ -54,18 +69,17 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
   expenses.forEach(e => {
     rows.push({
       id:`exp-${e.id}`, type:'expense', ts:e.createdAt,
-      sortKey:tsSort(e.createdAt), date:e.date||tsDate(e.createdAt),
+      sortKey:tsSort(e.createdAt), date:e.date?normDate(e.date):normDate(e.createdAt),
       desc:e.title||e.description||'Expense', sub:e.category||'',
       debit:e.amount||0, credit:0, count:0, meta:e,
     });
   });
   fees.forEach(f => {
     const m = memberMap[f.userId]||{};
-    const isContrib = !!f.countAsContribution;
     rows.push({
       id:`fee-${f.id}`, type:'entry_fee', ts:f.createdAt,
-      sortKey:tsSort(f.createdAt), date:f.paidAt||tsDate(f.createdAt),
-      desc: isContrib ? 'Entry Fee (Capital)' : 'Entry Fee (Expenses Fund)',
+      sortKey:tsSort(f.createdAt), date:f.paidAt?normDate(f.paidAt):normDate(f.createdAt),
+      desc:'Entry Fee',
       sub:m.nameEnglish||m.name||'Member',
       debit:0, credit:f.amount||0, count:0,
       meta:{...f, memberName:m.nameEnglish||m.name||'—'},
@@ -76,9 +90,9 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
     if (l.disbursedAt && l.amount) {
       rows.push({
         id:`loand-${l.id}`, type:'loan_disbursement', ts:l.disbursedAt,
-        sortKey:tsSort(l.disbursedAt), date:tsDate(l.disbursedAt),
+        sortKey:tsSort(l.disbursedAt), date:normDate(l.disbursedAt),
         desc:'Loan Disbursed',
-        sub:`${m.nameEnglish||m.name||'Member'} — ${l.purpose||''}`,
+        sub:`${m.nameEnglish||m.name||'Member'}${l.purpose?` — ${l.purpose}`:''}`,
         debit:l.amount, credit:0, count:0,
         meta:{...l, memberName:m.nameEnglish||m.name||'—'},
       });
@@ -88,8 +102,8 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
       rows.push({
         id:`loanr-${l.id}-${ri}`, type:'loan_repayment',
         ts:{seconds:d2.getTime()/1000}, sortKey:d2.getTime()/1000,
-        date:r.date, desc:'Loan Repayment',
-        sub:`${m.nameEnglish||m.name||'Member'} — ${l.purpose||''}`,
+        date:normDate(r.date), desc:'Loan Repayment',
+        sub:`${m.nameEnglish||m.name||'Member'}${l.purpose?` — ${l.purpose}`:''}`,
         debit:0, credit:r.amount, count:0,
         meta:{...l, repayment:r, memberName:m.nameEnglish||m.name||'—'},
       });
@@ -844,13 +858,13 @@ export default function AdminAccountBook() {
                       padding:'11px 16px',borderBottom:'1px solid #f1f5f9',
                       background:i%2===0?'#fff':'#fafafa',
                     }}>
-                      {/* Row 1: badge + amount */}
+                      {/* Row 1: badge + member name + amount */}
                       <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:4}}>
                         <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flexShrink:1}}>
                           <TypeBadge type={e.type}/>
                           <span style={{fontSize:13,fontWeight:600,color:'#0f172a',
                             overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                            {e.desc}
+                            {e.meta?.memberName || e.sub || '—'}
                           </span>
                         </div>
                         <div style={{flexShrink:0,fontWeight:800,fontSize:14,
@@ -858,19 +872,13 @@ export default function AdminAccountBook() {
                           {e.debit>0 ? `−${fmt(e.debit)}` : `+${fmt(e.credit)}`}
                         </div>
                       </div>
-                      {/* Row 2: sub-label + date + running balance */}
-                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-                        <div style={{fontSize:11,color:'#94a3b8',
-                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                          {e.sub}
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
-                          <span style={{fontSize:11,color:'#94a3b8'}}>{e.date}</span>
-                          <span style={{fontSize:11,fontWeight:600,color:'#64748b',
-                            background:'#f1f5f9',padding:'1px 7px',borderRadius:99,whiteSpace:'nowrap'}}>
-                            Bal: {fmt(e.balance)}
-                          </span>
-                        </div>
+                      {/* Row 2: date + running balance */}
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:10}}>
+                        <span style={{fontSize:11,color:'#94a3b8'}}>{e.date}</span>
+                        <span style={{fontSize:11,fontWeight:600,color:'#64748b',
+                          background:'#f1f5f9',padding:'1px 7px',borderRadius:99,whiteSpace:'nowrap'}}>
+                          Bal: {fmt(e.balance)}
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -1118,7 +1126,7 @@ export default function AdminAccountBook() {
                           {(() => {
                             const allFeeRows = [
                               ...(r.entryFees||[]).map(f=>({
-                                date: f.paidAt||tsDate(f.createdAt),
+                                date: f.paidAt?normDate(f.paidAt):normDate(f.createdAt),
                                 amount: f.amount||0,
                                 type: 'entry_fee',
                                 method: f.method||'—',
@@ -1127,7 +1135,7 @@ export default function AdminAccountBook() {
                               ...(r.feePays||[])
                                 .filter(p=>p.status!=='rejected')
                                 .map(p=>({
-                                  date: tsDate(p.createdAt),
+                                  date: normDate(p.createdAt),
                                   amount: (p.amount||0)-(p.gatewayFee||0),
                                   type: p.paymentType||'entry_fee',
                                   method: p.method||'—',
