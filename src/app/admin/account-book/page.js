@@ -145,9 +145,9 @@ function buildDateGroups(entries) {
 }
 
 const TYPE_CFG = {
-  installment:      {label:'Installment', bg:'#dbeafe', color:'#1e40af'},
+  installment:      {label:'Installment', bg:'#dbeafe', color:'#15803d'},
   expense:          {label:'Expense',     bg:'#fef2f2', color:'#dc2626'},
-  entry_fee:        {label:'Entry Fee',   bg:'#f0fdf4', color:'#15803d'},
+  entry_fee:        {label:'Entry Fee',   bg:'#f0fdf4', color:'#d97706'},
   loan_disbursement:{label:'Loan Out',    bg:'#fef3c7', color:'#92400e'},
   loan_repayment:   {label:'Loan In',     bg:'#f0fdf4', color:'#15803d'},
 };
@@ -162,10 +162,88 @@ function TypeBadge({type}) {
   );
 }
 
+function TypeDot({type}) {
+  const c = TYPE_CFG[type] || {label:type, color:'#475569'};
+  return (
+    <span title={c.label} style={{
+      display:'inline-block',width:8,height:8,borderRadius:'50%',
+      background:c.color,flexShrink:0,
+    }}/>
+  );
+}
+
+function LedgerLegend() {
+  return (
+    <div style={{display:'flex',flexWrap:'wrap',gap:'6px 16px',
+      padding:'8px 12px',background:'#f8fafc',borderRadius:8,
+      border:'1px solid #e2e8f0',marginBottom:10,alignItems:'center'}}>
+      <span style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',
+        letterSpacing:'0.05em',marginRight:4}}>Legend:</span>
+      {Object.entries(TYPE_CFG).map(([key,cfg])=>(
+        <span key={key} style={{display:'flex',alignItems:'center',gap:5,fontSize:11,color:'#475569'}}>
+          <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',
+            background:cfg.color,flexShrink:0}}/>
+          {cfg.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+
+// ── EntryDetailPanel: shows transaction details in a dropdown panel ──
+function EntryDetailPanel({ entry }) {
+  const cfg = TYPE_CFG[entry.type] || { label: entry.type, color: '#475569', bg: '#f1f5f9' };
+  const m = entry.meta || {};
+  const fields = [];
+
+  if (m.memberName)    fields.push(['Member',      m.memberName + (m.memberIdNo ? ` #${m.memberIdNo}` : '')]);
+  if (entry.desc)      fields.push(['Description', entry.desc]);
+  if (entry.sub && entry.sub !== m.memberName) fields.push(['Details', entry.sub]);
+  if (entry.credit>0)  fields.push(['Credit',      fmt(entry.credit)]);
+  if (entry.debit>0)   fields.push(['Debit',        fmt(entry.debit)]);
+  if (m.gatewayFee>0)  fields.push(['Gateway Fee', `−${fmt(m.gatewayFee)}`]);
+  if (m.method)        fields.push(['Method',      m.method]);
+  if (m.status)        fields.push(['Status',      m.status]);
+  if (m.purpose)       fields.push(['Purpose',     m.purpose]);
+  if (m.category)      fields.push(['Category',    m.category]);
+  // loan repayment sub-detail
+  if (m.repayment) {
+    if (m.repayment.principal) fields.push(['Principal', fmt(m.repayment.principal)]);
+    if (m.repayment.interest)  fields.push(['Interest',  fmt(m.repayment.interest)]);
+  }
+  fields.push(['Balance After', fmt(entry.balance)]);
+
+  return (
+    <div style={{
+      padding:'10px 16px 10px 28px',
+      background:'#f0f9ff',
+      borderTop:'1px solid #e0f2fe',
+      borderBottom:'1px solid #e0f2fe',
+    }}>
+      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:8}}>
+        <span style={{display:'inline-block',width:8,height:8,borderRadius:'50%',
+          background:cfg.color,flexShrink:0}}/>
+        <span style={{fontSize:11,fontWeight:700,color:cfg.color}}>{cfg.label}</span>
+        <span style={{fontSize:10,color:'#94a3b8',marginLeft:4}}>{entry.date}</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))',
+        gap:'4px 20px'}}>
+        {fields.map(([k,v])=>(
+          <div key={k} style={{display:'flex',gap:5,fontSize:11,alignItems:'baseline'}}>
+            <span style={{color:'#94a3b8',flexShrink:0,minWidth:80}}>{k}:</span>
+            <span style={{color:'#0f172a',fontWeight:600}}>{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // ── DateGroupRow: groups all transactions of the same date into one collapsible row ──
 function DateGroupRow({ dateLabel, entries }) {
   const [open, setOpen] = useState(false);
+  const [openEntry, setOpenEntry] = useState(null); // id of expanded entry
   const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
   const totalExpenses = entries.filter(e=>e.type==='expense').reduce((s,e)=>s+e.debit,0);
   const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
@@ -191,9 +269,9 @@ function DateGroupRow({ dateLabel, entries }) {
         onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
       >
         <div style={{fontSize:11,color:'#475569',fontWeight:600,whiteSpace:'nowrap'}}>{dateLabel}</div>
-        <div style={{display:'flex',alignItems:'center',gap:3,flexWrap:'nowrap',overflow:'hidden'}}>
+        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'nowrap',overflow:'hidden'}}>
           <span style={{fontSize:11,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
-          {typeSet.map(t=><TypeBadge key={t} type={t}/>)}
+          {typeSet.map(t=><TypeDot key={t} type={t}/>)}
           {entries.length>1 && <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>}
         </div>
         <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#15803d':'#cbd5e1'}}>
@@ -216,38 +294,50 @@ function DateGroupRow({ dateLabel, entries }) {
         const cap  = e.type==='installment' ? e.credit : 0;
         const exp  = e.type==='expense'     ? e.debit  : 0;
         const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
+        const isOpen = openEntry === e.id;
         return (
-          <div key={e.id} style={{
-            display:'grid',
-            gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
-            padding:'6px 12px 6px 24px',
-            borderTop:'1px solid #f1f5f9',
-            background:ei%2===0?'#fafeff':'#f0f9ff',
-            alignItems:'center',
-          }}>
-            <div style={{fontSize:10,color:'#94a3b8'}}>{e.date}</div>
-            <div style={{display:'flex',alignItems:'center',gap:4,overflow:'hidden'}}>
-              <TypeBadge type={e.type}/>
-              <span style={{fontSize:10,color:'#64748b',overflow:'hidden',
-                textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
-                {e.meta?.memberName
-                  ? `${e.meta.memberName}${e.meta.memberIdNo?` #${e.meta.memberIdNo}`:''}`
-                  : e.sub||''}
-              </span>
+          <div key={e.id}>
+            <div
+              onClick={()=>setOpenEntry(isOpen ? null : e.id)}
+              style={{
+                display:'grid',
+                gridTemplateColumns:'80px 1.6fr 90px 90px 80px 90px',
+                padding:'6px 12px 6px 24px',
+                borderTop:'1px solid #f1f5f9',
+                background: isOpen ? '#e0f2fe' : ei%2===0?'#fafeff':'#f0f9ff',
+                alignItems:'center',
+                cursor:'pointer',
+                userSelect:'none',
+              }}
+              onMouseEnter={e2=>{ if(!isOpen) e2.currentTarget.style.background='#e0f2fe'; }}
+              onMouseLeave={e2=>{ e2.currentTarget.style.background=isOpen?'#e0f2fe':ei%2===0?'#fafeff':'#f0f9ff'; }}
+            >
+              <div style={{fontSize:10,color:'#94a3b8'}}>{e.date}</div>
+              <div style={{display:'flex',alignItems:'center',gap:5,overflow:'hidden'}}>
+                <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{isOpen?'▾':'▸'}</span>
+                <TypeDot type={e.type}/>
+                <span style={{fontSize:10,color:'#64748b',overflow:'hidden',
+                  textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>
+                  {e.meta?.memberName
+                    ? `${e.meta.memberName}${e.meta.memberIdNo?` #${e.meta.memberIdNo}`:''}`
+                    : e.sub||''}
+                </span>
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:cap>0?'#15803d':'#cbd5e1'}}>
+                {cap>0?`+${fmt(cap)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:exp>0?'#dc2626':'#cbd5e1'}}>
+                {exp>0?`−${fmt(exp)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:fee>0?'#d97706':'#cbd5e1'}}>
+                {fee>0?`+${fmt(fee)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:700,
+                color:e.balance>=0?'#0f172a':'#dc2626'}}>
+                {fmt(e.balance)}
+              </div>
             </div>
-            <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:cap>0?'#15803d':'#cbd5e1'}}>
-              {cap>0?`+${fmt(cap)}`:'—'}
-            </div>
-            <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:exp>0?'#dc2626':'#cbd5e1'}}>
-              {exp>0?`−${fmt(exp)}`:'—'}
-            </div>
-            <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:fee>0?'#d97706':'#cbd5e1'}}>
-              {fee>0?`+${fmt(fee)}`:'—'}
-            </div>
-            <div style={{textAlign:'right',fontSize:11,fontWeight:700,
-              color:e.balance>=0?'#0f172a':'#dc2626'}}>
-              {fmt(e.balance)}
-            </div>
+            {isOpen && <EntryDetailPanel entry={e}/>}
           </div>
         );
       })}
@@ -441,6 +531,7 @@ function downloadCSV(entries, orgData) {
 // ── ReportModal: grouped-by-date, with letterhead, CSV download, print-to-PDF ──
 function ReportModal({ entries, orgData, onClose }) {
   const org = orgData || {};
+  const [showBreakdown, setShowBreakdown] = useState(false);
   const totalCapital = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
   const totalExpenses = entries.reduce((s,e)=>s+e.debit,0);
   const totalFees = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
@@ -462,10 +553,28 @@ function ReportModal({ entries, orgData, onClose }) {
         {/* ── Modal toolbar (screen only) ── */}
         <div className="no-print" style={{
           display:'flex',justifyContent:'space-between',alignItems:'center',
-          padding:'14px 20px',background:'#0f172a',
+          padding:'14px 20px',background:'#0f172a',flexWrap:'wrap',gap:8,
         }}>
           <div style={{color:'#fff',fontWeight:700,fontSize:14}}>📒 Ledger Report</div>
-          <div style={{display:'flex',gap:8}}>
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            {/* Breakdown toggle */}
+            <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',
+              color:'#e2e8f0',fontSize:12,userSelect:'none'}}>
+              <div
+                onClick={()=>setShowBreakdown(v=>!v)}
+                style={{
+                  width:34,height:18,borderRadius:99,
+                  background:showBreakdown?'#22c55e':'#475569',
+                  position:'relative',transition:'background 0.2s',cursor:'pointer',flexShrink:0,
+                }}>
+                <div style={{
+                  position:'absolute',top:2,left:showBreakdown?16:2,
+                  width:14,height:14,borderRadius:'50%',background:'#fff',
+                  transition:'left 0.2s',
+                }}/>
+              </div>
+              Show Breakdown
+            </label>
             <button onClick={()=>downloadCSV(entries,orgData)}
               style={{padding:'7px 15px',borderRadius:8,background:'#15803d',color:'#fff',
                 border:'none',cursor:'pointer',fontWeight:700,fontSize:12}}>
@@ -580,8 +689,8 @@ function ReportModal({ entries, orgData, onClose }) {
                         {fmt(gBal)}
                       </td>
                     </tr>
-                    {/* Individual entries */}
-                    {g.entries.map((e, ei) => {
+                    {/* Individual entries — only shown when breakdown is enabled */}
+                    {showBreakdown && g.entries.map((e, ei) => {
                       const cap = e.type==='installment'?e.credit:0;
                       const exp = e.type==='expense'?e.debit:0;
                       const fee = (e.type==='entry_fee'||e.type==='loan_repayment')?e.credit:0;
@@ -590,12 +699,10 @@ function ReportModal({ entries, orgData, onClose }) {
                         <tr key={e.id} style={{background:ei%2===0?'#fff':'#fafafa',borderTop:'1px solid #f1f5f9'}}>
                           <td style={{padding:'5px 10px 5px 18px',color:'#94a3b8',whiteSpace:'nowrap'}}>{e.date}</td>
                           <td style={{padding:'5px 10px 5px 18px'}}>
-                            <span style={{fontSize:9,fontWeight:700,padding:'1px 5px',borderRadius:4,
-                              background:TYPE_CFG[e.type]?.bg||'#f1f5f9',
-                              color:TYPE_CFG[e.type]?.color||'#475569',marginRight:5}}>
-                              {TYPE_CFG[e.type]?.label||e.type}
+                            <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+                              <TypeDot type={e.type}/>
+                              <span style={{color:'#334155'}}>{name}</span>
                             </span>
-                            <span style={{color:'#334155'}}>{name}</span>
                           </td>
                           <td style={{padding:'5px 10px',textAlign:'right',color:cap>0?'#15803d':'#cbd5e1',fontWeight:600}}>
                             {cap>0?`+${fmt(cap)}`:'—'}
@@ -650,7 +757,23 @@ function ReportModal({ entries, orgData, onClose }) {
         @media print {
           body > *:not(#__next) { display: none !important; }
           .no-print { display: none !important; }
-          @page { margin: 18mm 14mm; }
+          @page {
+            margin: 18mm 14mm;
+            @bottom-right {
+              content: "Page " counter(page) " of " counter(pages);
+              font-size: 9pt;
+              color: #64748b;
+            }
+            @bottom-left {
+              content: "${org.name_en || org.name || ''}";
+              font-size: 9pt;
+              color: #64748b;
+            }
+          }
+          table { page-break-inside: auto; }
+          tr { page-break-inside: avoid; page-break-after: auto; }
+          thead { display: table-header-group; }
+          tfoot { display: table-footer-group; }
         }
       `}</style>
     </div>
@@ -1118,6 +1241,7 @@ export default function AdminAccountBook() {
                 </div>
               ) : (
                 <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+                <LedgerLegend/>
                 <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',minWidth:520}}>
                   {/* Header */}
                   <div style={{display:'grid',
