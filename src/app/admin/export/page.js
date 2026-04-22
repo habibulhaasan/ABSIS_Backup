@@ -25,6 +25,32 @@ function fmtTS(ts) {
 }
 function n(v) { return Number(v)||0; }
 
+// ── CSV builder — no cell length limit, handles all Unicode ──────────────────
+function buildCSV(rows) {
+  return rows.map(row =>
+    row.map(v => {
+      const s = String(v ?? '');
+      // Wrap in quotes if contains comma, quote, or newline
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? '"' + s.replace(/"/g, '""') + '"'
+        : s;
+    }).join(',')
+  ).join('\n');
+}
+
+function downloadCSV(rows, filename) {
+  // BOM for Excel to recognise UTF-8 (Bengali / Unicode chars)
+  const bom  = '\uFEFF';
+  const csv  = bom + buildCSV(rows);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ── SheetJS loader ────────────────────────────────────────────────────────────
 function loadXLSX() {
   return new Promise((resolve,reject) => {
@@ -40,35 +66,93 @@ function loadXLSX() {
 // ── Sheet builders ────────────────────────────────────────────────────────────
 function buildMembersSheet(members) {
   const hdr = [
-    'Member ID','Name (English)','Name (Bangla)',
-    "Father's (En)","Father's (Bn)","Mother's (En)","Mother's (Bn)",
-    'DOB','NID','Blood Group','Marital Status','Education','Occupation',
-    'Phone','Email',
-    'Present Address (En)','Present Address (Bn)',
-    'Permanent Address (En)','Permanent Address (Bn)',
-    'Heir Name (En)','Heir Name (Bn)','Heir Relation','Heir NID','Heir Phone',
-    'Application No','Application Date','Agreement No','Agreement Date',
-    'Joining Date','Role','Status','Profile Submitted','Last Updated',
+    // Identity
+    'Member ID','Name (English)','Name (বাংলা)',
+    "Father's Name (En)","Father's Name (বাংলা)",
+    "Mother's Name (En)","Mother's Name (বাংলা)",
+    "Spouse Name (En)","Spouse Name (বাংলা)",
+    // Personal
+    'Date of Birth','NID','Blood Group','Marital Status',
+    'Education','Occupation','Monthly Income',
+    // Contact
+    'Phone','Alternative Phone','Email',
+    // Address
+    'Present Address (En)','Present Address (বাংলা)',
+    'Permanent Address (En)','Permanent Address (বাংলা)',
+    // Heir / Nominee
+    'Heir Name (En)','Heir Name (বাংলা)','Heir Relation',
+    'Heir NID','Heir Phone',
+    'Nominee Photo URL',
+    // Application / Agreement
+    'Application No','Application Date',
+    'Agreement No','Agreement Date',
+    // Membership
+    'Joining Date','Role','Status',
+    'Entry Fee Paid',
+    'Is Late Payer','Re-reg Required','Re-reg Granted',
+    'Committee Role',
+    'Member Status',   // active | archived | terminated
+    'Exit Date',
+    // Profile
+    'Profile Submitted','Last Updated',
+    // Drive / Files
     'Drive Folder ID','Photo URL',
+    'Drive Folder Link',
+    // Count of uploaded docs
+    'Legal Files Count',
   ];
   const rows = members.map(m => [
-    m.idNo, m.nameEnglish, m.nameBengali,
-    m.fatherNameEn||m.fatherName, m.fatherNameBn,
-    m.motherNameEn||m.motherName, m.motherNameBn,
-    m.dob, m.nid, m.bloodGroup, m.maritalStatus, m.education, m.occupation,
-    m.phone, m.email,
-    m.presentAddressEn||m.presentAddress, m.presentAddressBn,
-    m.permanentAddressEn||m.permanentAddress, m.permanentAddressBn,
-    m.heirNameEn||m.heirName, m.heirNameBn,
-    m.heirRelation, m.heirNID||m.nomineeNID, m.heirPhone||m.nomineePhone,
-    m.applicationNo, m.applicationDate, m.agreementNo, m.agreementDate,
+    m.idNo,
+    m.nameEnglish,
+    m.nameBengali,
+    m.fatherNameEn||m.fatherName,
+    m.fatherNameBn,
+    m.motherNameEn||m.motherName,
+    m.motherNameBn,
+    m.spouseNameEn,
+    m.spouseNameBn,
+    m.dob,
+    m.nid,
+    m.bloodGroup,
+    m.maritalStatus,
+    m.education,
+    m.occupation,
+    m.monthlyIncome||'',
+    m.phone,
+    m.alternativePhone||'',
+    m.email,
+    m.presentAddressEn||m.presentAddress,
+    m.presentAddressBn,
+    m.permanentAddressEn||m.permanentAddress,
+    m.permanentAddressBn,
+    m.heirNameEn||m.heirName,
+    m.heirNameBn,
+    m.heirRelation,
+    m.heirNID||m.nomineeNID,
+    m.heirPhone||m.nomineePhone,
+    m.nomineePhotoURL||'',
+    m.applicationNo,
+    m.applicationDate,
+    m.agreementNo,
+    m.agreementDate,
     fmtDate(m.joiningDate||m.createdAt),
     m.role||'member',
     m.approved?'Active':'Pending',
+    m.entryFeePaid?'Yes':'No',
+    m.isLatePayer?'Yes':'No',
+    m.reregRequired?'Yes':'No',
+    m.reregGranted?'Yes (Waived)':'No',
+    m.committeeRole||'',
+    m.memberStatus||'active',
+    m.exitDate||'',
     m.profileSubmitted?'Yes':'No',
     fmtTS(m.profileUpdatedAt),
     m.memberDriveFolderId||'',
     m.photoURL||'',
+    m.memberDriveFolderId
+      ? `https://drive.google.com/drive/folders/${m.memberDriveFolderId}`
+      : '',
+    (m.legalFiles||[]).length,
   ]);
   return [hdr, ...rows];
 }
@@ -231,14 +315,17 @@ function buildEntryFeesSheet(fees, members) {
 
 function buildMemorandaSheet(memos) {
   const hdr = ['Memo No.','Category','Year','Date','Title','Sender','Recipient',
-    'Prepared By','Approved By','Status','Visible to Members','Content','Notes',
+    'Prepared By','Approved By','Status','Visible to Members',
+    'Content (first 500 chars)','Full Content Length','Notes',
     'Attachment File ID','Attachment URL'];
   const rows = memos.map(m => [
     m.memoNo, m.category, m.year, m.date, m.title,
     m.sender||'', m.recipient||'', m.preparedBy||'', m.approvedBy||'',
     m.status, m.visibleToMembers?'Yes':'No',
-    xl(m.content||''),   // was: m.content||''
-    xl(m.notes||''),     // was: m.notes||''
+    // Content: first 500 chars in Excel; full content in JSON backup
+    (m.content||'').slice(0, 500) + ((m.content||'').length > 500 ? '…' : ''),
+    (m.content||'').length,
+    (m.notes||'').slice(0, 500) + ((m.notes||'').length > 500 ? '…' : ''),
     m.fileId||'',
     m.fileId ? `https://drive.google.com/file/d/${m.fileId}/view` : (m.fileUrl||''),
   ]);
@@ -278,9 +365,28 @@ function buildMemberLedgersSheet(payments, dists, loans, members) {
 }
 
 // ── XLSX write helper ─────────────────────────────────────────────────────────
+// Excel cell limit = 32767 chars. Sanitize every cell before writing.
+const CELL_LIMIT = 32700;
+function safeCell(v) {
+  if (v === null || v === undefined) return '';
+  const s = String(v);
+  return s.length > CELL_LIMIT ? s.slice(0, CELL_LIMIT) + '…' : s;
+}
+function sanitizeData(data) {
+  return data.map(row =>
+    Array.isArray(row)
+      ? row.map(cell => {
+          if (cell === null || cell === undefined || typeof cell === 'number' || typeof cell === 'boolean') return cell;
+          return safeCell(cell);
+        })
+      : row
+  );
+}
+
 function arrayToSheet(XLSX, data) {
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  const cols = data[0]?.map(h=>({wch:Math.max(14,String(h||'').length+2)}));
+  const safe = sanitizeData(data);
+  const ws = XLSX.utils.aoa_to_sheet(safe);
+  const cols = safe[0]?.map(h=>({wch:Math.max(14,String(h||'').length+2)}));
   if (cols) ws['!cols'] = cols;
   // Make URLs in columns clickable (best effort — works in newer XLSX versions)
   if (data.length > 1) {
@@ -315,6 +421,7 @@ export default function AdminExport() {
   const [stats,        setStats]        = useState(null);
   const [backupLoading,setBackupLoading]= useState(false);
   const [backupDone,   setBackupDone]   = useState(false);
+  const [csvLoading,   setCsvLoading]   = useState(false);
 
   if (!isOrgAdmin) return null;
 
@@ -445,6 +552,99 @@ export default function AdminExport() {
       console.error(e);
     }
     setLoading(false);
+  };
+
+  // ── Full CSV Export (no character limits) ────────────────────────────────
+  const handleCsvExport = async () => {
+    if (!orgId) return;
+    setCsvLoading(true);
+    try {
+      setProgress('Loading member data for CSV…');
+      const [memberSnap, paySnap, expSnap, feeSnap, loanSnap, distSnap, memoSnap] =
+        await Promise.all([
+          getDocs(collection(db,'organizations',orgId,'members')),
+          getDocs(query(collection(db,'organizations',orgId,'investments'), orderBy('createdAt','desc'))),
+          getDocs(query(collection(db,'organizations',orgId,'expenses'), orderBy('createdAt','desc'))),
+          getDocs(collection(db,'organizations',orgId,'entryFees')),
+          getDocs(collection(db,'organizations',orgId,'loans')),
+          getDocs(query(collection(db,'organizations',orgId,'profitDistributions'), orderBy('createdAt','desc'))),
+          getDocs(query(collection(db,'organizations',orgId,'memoranda'), orderBy('createdAt','desc'))),
+        ]);
+
+      setProgress('Merging member profiles…');
+      const memberDocs = memberSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const members = await Promise.all(memberDocs.map(async m => {
+        try {
+          const uSnap = await getDoc(doc(db,'users',m.id));
+          return uSnap.exists() ? {...uSnap.data(),...m,id:m.id} : m;
+        } catch { return m; }
+      }));
+
+      const payments      = paySnap.docs.map(d=>({id:d.id,...d.data()}));
+      const expenses      = expSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const entryFees     = feeSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const loans         = loanSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const distributions = distSnap.docs.map(d=>({id:d.id,...d.data()}));
+      const memoranda     = memoSnap.docs.map(d=>({id:d.id,...d.data()}));
+
+      const memberMap = Object.fromEntries(members.map(m=>[m.id,m]));
+      const slug = orgName.replace(/[^a-z0-9]/gi,'_');
+      const date = new Date().toISOString().slice(0,10);
+
+      // ── 1. Members (complete — all fields, no char limit) ──
+      setProgress('Writing members CSV…');
+      downloadCSV(buildMembersSheet(members), `${slug}_members_${date}.csv`);
+
+      // ── 2. Payments / Capital ──
+      setProgress('Writing payments CSV…');
+      downloadCSV(buildCapitalSheet(payments, members), `${slug}_payments_${date}.csv`);
+
+      // ── 3. Expenses ──
+      setProgress('Writing expenses CSV…');
+      downloadCSV(buildExpensesSheet(expenses), `${slug}_expenses_${date}.csv`);
+
+      // ── 4. Entry Fees ──
+      setProgress('Writing entry fees CSV…');
+      downloadCSV(buildEntryFeesSheet(entryFees, members), `${slug}_entry_fees_${date}.csv`);
+
+      // ── 5. Loans ──
+      setProgress('Writing loans CSV…');
+      downloadCSV(buildLoansSheet(loans, members), `${slug}_loans_${date}.csv`);
+
+      // ── 6. Distributions ──
+      setProgress('Writing distributions CSV…');
+      downloadCSV(buildDistributionsSheet(distributions), `${slug}_distributions_${date}.csv`);
+
+      // ── 7. Member Shares ──
+      setProgress('Writing member shares CSV…');
+      downloadCSV(buildMemberSharesSheet(distributions, members), `${slug}_member_shares_${date}.csv`);
+
+      // ── 8. Memoranda — FULL content (no Excel 32767 limit) ──
+      setProgress('Writing memoranda CSV…');
+      const memoHdr = ['Memo No.','Category','Year','Date','Title','Sender','Recipient',
+        'Prepared By','Approved By','Status','Visible to Members',
+        'Full Content','Notes','Attachment File ID','Attachment URL'];
+      const memoRows = memoranda.map(m => [
+        m.memoNo||'', m.category||'', m.year||'', m.date||'', m.title||'',
+        m.sender||'', m.recipient||'', m.preparedBy||'', m.approvedBy||'',
+        m.status||'', m.visibleToMembers?'Yes':'No',
+        m.content||'',   // full content, no truncation in CSV
+        m.notes||'',
+        m.fileId||'',
+        m.fileId ? `https://drive.google.com/file/d/${m.fileId}/view` : (m.fileUrl||''),
+      ]);
+      downloadCSV([memoHdr, ...memoRows], `${slug}_memoranda_${date}.csv`);
+
+      // ── 9. Member files ──
+      setProgress('Writing member files CSV…');
+      downloadCSV(buildMemberFilesSheet(members), `${slug}_member_files_${date}.csv`);
+
+      setProgress('');
+    } catch(e) {
+      setProgress('CSV Error: ' + e.message);
+      console.error(e);
+    }
+    setCsvLoading(false);
   };
 
   // ── JSON Full Backup ──────────────────────────────────────────────────────
@@ -841,6 +1041,56 @@ restore().catch(e => {
         background:'#fffbeb',border:'1px solid #fde68a',fontSize:12,color:'#92400e'}}>
         ⚠️ Export loads all data in one pass — may take 10–30 seconds on large organizations.
         Drive links in Excel are clickable — click any URL cell to open the file directly in Google Drive.
+      </div>
+
+      {/* ── Full CSV Export (no character limits) ── */}
+      <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',padding:'20px',marginTop:20}}>
+        <div style={{fontWeight:700,fontSize:15,color:'#0f172a',marginBottom:4}}>
+          📄 Full CSV Export
+        </div>
+        <div style={{fontSize:13,color:'#64748b',marginBottom:16,lineHeight:1.6}}>
+          Downloads <strong>9 separate CSV files</strong> — one per data type — with{' '}
+          <strong>no character limits</strong>. Includes all member fields (spouse, income,
+          alt phone, committee role, exit info, nominee photo URL, document count, Drive links),
+          full memoranda content, and all financial records.
+          CSV files open in Excel, Google Sheets, or any spreadsheet app.
+          UTF-8 encoded with BOM so Bengali text displays correctly.
+        </div>
+
+        <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(180px,1fr))',gap:8,marginBottom:16}}>
+          {[
+            {icon:'👥', label:'Members', desc:'All member fields, complete'},
+            {icon:'💰', label:'Payments', desc:'All investment records'},
+            {icon:'🧾', label:'Expenses', desc:'All org expenses'},
+            {icon:'🎫', label:'Entry Fees', desc:'Entry fee records'},
+            {icon:'🏦', label:'Loans', desc:'Loans + repayments'},
+            {icon:'📊', label:'Distributions', desc:'Profit distributions'},
+            {icon:'📋', label:'Member Shares', desc:'Per-member profit shares'},
+            {icon:'📝', label:'Memoranda', desc:'Full content, no truncation'},
+            {icon:'📂', label:'Member Files', desc:'Document links per member'},
+          ].map(({icon,label,desc}) => (
+            <div key={label} style={{padding:'10px 12px',borderRadius:8,
+              background:'#f8fafc',border:'1px solid #e2e8f0',fontSize:12}}>
+              <div style={{fontWeight:700,color:'#0f172a',marginBottom:2}}>{icon} {label}</div>
+              <div style={{color:'#64748b',fontSize:11}}>{desc}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap'}}>
+          <button onClick={handleCsvExport} disabled={csvLoading}
+            style={{padding:'12px 28px',borderRadius:8,background:'#059669',color:'#fff',
+              border:'none',cursor:csvLoading?'not-allowed':'pointer',
+              fontSize:14,fontWeight:700,flexShrink:0,opacity:csvLoading?0.7:1}}>
+            {csvLoading ? '⏳ Generating CSVs…' : '📄 Download All as CSV'}
+          </button>
+          {csvLoading && progress && (
+            <span style={{fontSize:13,color:'#64748b'}}>{progress}</span>
+          )}
+        </div>
+        <div style={{marginTop:10,fontSize:12,color:'#64748b'}}>
+          ℹ️ Multiple CSV files will download one after another. Allow pop-ups if your browser blocks them.
+        </div>
       </div>
 
       {/* ── Full JSON Backup + Restore Script ── */}
