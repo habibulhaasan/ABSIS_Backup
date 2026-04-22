@@ -137,6 +137,275 @@ function TypeBadge({type}) {
 }
 
 
+// ── LedgerRow: renders one daily entry or a grouped monthly/yearly summary ──
+function LedgerRow({ row, isGrouped }) {
+  const [open, setOpen] = useState(false);
+  if (isGrouped) {
+    return (
+      <div>
+        <div
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
+            padding: '9px 16px',
+            background: '#f8fafc',
+            borderBottom: '1px solid #e2e8f0',
+            cursor: 'pointer',
+            userSelect: 'none',
+          }}
+        >
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#0f172a' }}>{open ? '▾' : '▸'} {row.label}</div>
+          <div style={{ fontSize: 12, color: '#64748b', fontStyle: 'italic' }}>
+            {row.entries.length} transactions
+          </div>
+          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#dc2626' }}>
+            {row.debit > 0 ? fmt(row.debit) : '—'}
+          </div>
+          <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#15803d' }}>
+            {row.credit > 0 ? fmt(row.credit) : '—'}
+          </div>
+          <div />
+          <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+            {row.count > 0 ? row.count : '—'}
+          </div>
+          <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: '#1d4ed8' }}>
+            {fmt(row.closingBalance)}
+          </div>
+        </div>
+        {open && row.entries.map((e, ei) => (
+          <div key={e.id} style={{
+            display: 'grid',
+            gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
+            padding: '7px 16px 7px 28px',
+            borderBottom: '1px solid #f1f5f9',
+            background: ei % 2 === 0 ? '#fff' : '#fafafa',
+          }}>
+            <div style={{ fontSize: 12, color: '#94a3b8' }}>{e.date}</div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 500, color: '#0f172a' }}>{e.desc}</div>
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>{e.sub}</div>
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, color: '#dc2626', fontWeight: 600 }}>
+              {e.debit > 0 ? fmt(e.debit) : '—'}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, color: '#15803d', fontWeight: 600 }}>
+              {e.type === 'installment' && e.credit > 0 ? fmt(e.credit) : '—'}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, color: '#d97706', fontWeight: 600 }}>
+              {e.type === 'entry_fee' && e.credit > 0 ? fmt(e.credit) : '—'}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+              {e.count > 0 ? e.count : '—'}
+            </div>
+            <div style={{ textAlign: 'right', fontSize: 12, fontWeight: 700, color: '#0f172a' }}>
+              {fmt(e.balance)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  // Daily (flat) row
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '0.85fr 2.5fr 1fr 1fr 1fr 0.5fr 1fr',
+      padding: '8px 16px',
+      borderBottom: '1px solid #f1f5f9',
+      background: '#fff',
+      alignItems: 'center',
+    }}>
+      <div style={{ fontSize: 12, color: '#94a3b8' }}>{row.date}</div>
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <TypeBadge type={row.type} />
+          <span style={{ fontSize: 12, fontWeight: 500, color: '#0f172a' }}>{row.desc}</span>
+        </div>
+        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{row.sub}</div>
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#dc2626' }}>
+        {row.debit > 0 ? fmt(row.debit) : '—'}
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#15803d' }}>
+        {row.type === 'installment' && row.credit > 0 ? fmt(row.credit) : '—'}
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#d97706' }}>
+        {row.type === 'entry_fee' && row.credit > 0 ? fmt(row.credit) : '—'}
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 12, color: '#64748b' }}>
+        {row.count > 0 ? row.count : '—'}
+      </div>
+      <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 800, color: '#0f172a' }}>
+        {fmt(row.balance)}
+      </div>
+    </div>
+  );
+}
+
+// ── FundCard: renders one fund allocation card in the Fund Breakdown tab ──
+function FundCard({ label, icon, color, bg, desc, alloc, used, budgetType, budgetValue, allocBreakdown }) {
+  const remaining = alloc - used;
+  const pctUsed   = alloc > 0 ? Math.min(100, (used / alloc) * 100) : 0;
+  const over      = used > alloc;
+  return (
+    <div style={{
+      background: '#fff',
+      borderRadius: 12,
+      border: `1px solid #e2e8f0`,
+      overflow: 'hidden',
+    }}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', background: bg }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 20 }}>{icon}</span>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color }}>{label}</div>
+            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{desc}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '14px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+          <span style={{ color: '#64748b' }}>Budget</span>
+          <span style={{ fontWeight: 700, color: '#0f172a' }}>
+            {budgetType === 'amount' ? fmt(budgetValue) : budgetValue ? `${budgetValue}% of capital` : 'Not set'}
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+          <span style={{ color: '#64748b' }}>Allocated</span>
+          <span style={{ fontWeight: 700, color }}>{fmt(alloc)}</span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 12 }}>
+          <span style={{ color: '#64748b' }}>Used</span>
+          <span style={{ fontWeight: 700, color: over ? '#dc2626' : '#0f172a' }}>{fmt(used)}</span>
+        </div>
+        <div style={{ height: 8, borderRadius: 99, background: '#e2e8f0', overflow: 'hidden', marginBottom: 6 }}>
+          <div style={{
+            height: '100%', borderRadius: 99,
+            background: over ? '#dc2626' : color,
+            width: `${pctUsed}%`, transition: 'width 0.6s',
+          }} />
+        </div>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', fontSize: 12,
+          fontWeight: 700, color: over ? '#dc2626' : '#15803d',
+        }}>
+          <span>{over ? '⚠️ Over budget' : `${(100 - pctUsed).toFixed(1)}% remaining`}</span>
+          <span>{over ? `-${fmt(Math.abs(remaining))}` : fmt(remaining)}</span>
+        </div>
+        {allocBreakdown && alloc > 0 && (
+          <div style={{
+            marginTop: 10, padding: '8px 12px', borderRadius: 8,
+            background: '#fffbeb', border: '1px solid #fde68a',
+            display: 'flex', flexDirection: 'column', gap: 4,
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', marginBottom: 2 }}>Allocation Breakdown</div>
+            {allocBreakdown.fromCapital > 0 && (
+              <div style={{ fontSize: 11, color: '#92400e' }}>
+                📊 Capital %: {fmt(allocBreakdown.fromCapital)}
+              </div>
+            )}
+            {allocBreakdown.entryFees > 0 && (
+              <div style={{ fontSize: 11, color: '#92400e' }}>
+                🎫 Entry fees: {fmt(allocBreakdown.entryFees)}
+              </div>
+            )}
+            {allocBreakdown.reregFees > 0 && (
+              <div style={{ fontSize: 11, color: '#92400e' }}>
+                🔄 Re-reg fees: {fmt(allocBreakdown.reregFees)}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ReportModal: printable ledger report overlay ──
+function ReportModal({ entries, orgData, onClose }) {
+  const totalCredit = entries.reduce((s, e) => s + e.credit, 0);
+  const totalDebit  = entries.reduce((s, e) => s + e.debit,  0);
+  const balance     = entries.length > 0 ? entries[entries.length - 1].balance : 0;
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+      zIndex: 1000, display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+      padding: '24px 16px', overflowY: 'auto',
+    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{
+        background: '#fff', borderRadius: 14, width: '100%', maxWidth: 860,
+        boxShadow: '0 8px 40px rgba(0,0,0,0.18)', overflow: 'hidden',
+      }}>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+          padding: '16px 20px', borderBottom: '1px solid #e2e8f0', background: '#0f172a',
+        }}>
+          <div style={{ color: '#fff', fontWeight: 700, fontSize: 15 }}>
+            📒 Ledger Report — {orgData?.name || 'Organisation'}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => window.print()}
+              style={{ padding: '7px 16px', borderRadius: 8, background: '#2563eb', color: '#fff',
+                border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+              🖨 Print
+            </button>
+            <button onClick={onClose}
+              style={{ padding: '7px 14px', borderRadius: 8, background: '#334155', color: '#fff',
+                border: 'none', cursor: 'pointer', fontWeight: 700, fontSize: 13 }}>
+              ✕ Close
+            </button>
+          </div>
+        </div>
+        <div style={{ padding: '20px 24px' }}>
+          <div style={{ display: 'flex', gap: 20, marginBottom: 20, flexWrap: 'wrap' }}>
+            <div><span style={{ fontSize: 11, color: '#64748b' }}>Total Credits</span>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#15803d' }}>{fmt(totalCredit)}</div></div>
+            <div><span style={{ fontSize: 11, color: '#64748b' }}>Total Debits</span>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#dc2626' }}>{fmt(totalDebit)}</div></div>
+            <div><span style={{ fontSize: 11, color: '#64748b' }}>Net Balance</span>
+              <div style={{ fontWeight: 800, fontSize: 18, color: '#1d4ed8' }}>{fmt(balance)}</div></div>
+          </div>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: '#0f172a' }}>
+                {['Date', 'Type', 'Description', 'Debit', 'Credit', 'Balance'].map(h => (
+                  <th key={h} style={{
+                    padding: '8px 12px', color: '#94a3b8', fontWeight: 700,
+                    textAlign: ['Debit', 'Credit', 'Balance'].includes(h) ? 'right' : 'left',
+                    fontSize: 11, textTransform: 'uppercase',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e, i) => (
+                <tr key={e.id} style={{ background: i % 2 === 0 ? '#fff' : '#f8fafc' }}>
+                  <td style={{ padding: '7px 12px', color: '#64748b' }}>{e.date}</td>
+                  <td style={{ padding: '7px 12px' }}><TypeBadge type={e.type} /></td>
+                  <td style={{ padding: '7px 12px' }}>
+                    <div style={{ fontWeight: 500 }}>{e.desc}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{e.sub}</div>
+                  </td>
+                  <td style={{ padding: '7px 12px', textAlign: 'right', color: '#dc2626', fontWeight: 600 }}>
+                    {e.debit > 0 ? fmt(e.debit) : '—'}
+                  </td>
+                  <td style={{ padding: '7px 12px', textAlign: 'right', color: '#15803d', fontWeight: 600 }}>
+                    {e.credit > 0 ? fmt(e.credit) : '—'}
+                  </td>
+                  <td style={{ padding: '7px 12px', textAlign: 'right', fontWeight: 700 }}>
+                    {fmt(e.balance)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminAccountBook() {
   const { userData, orgData, isOrgAdmin } = useAuth();
   const router   = useRouter();
@@ -158,7 +427,7 @@ export default function AdminAccountBook() {
   const [showReport, setShowReport] = useState(false);
   const [search,     setSearch]     = useState('');
   const [memSearch,  setMemSearch]  = useState('');
-  const [memSort,    setMemSort]    = useState('capital');
+  const [memSort,    setMemSort]    = useState('idNo');
   const [selMember,  setSelMember]  = useState(null);
 
   useEffect(() => {
@@ -310,8 +579,9 @@ export default function AdminAccountBook() {
       (r.idNo||'').includes(memSearch)
     )
     .sort((a,b) =>
-      memSort==='capital'   ? b.capital-a.capital :
-      memSort==='payments'  ? b.verifiedCount-a.verifiedCount :
+      memSort==='idNo'     ? (a.idNo||'').localeCompare(b.idNo||'', undefined, {numeric:true}) :
+      memSort==='capital'  ? b.capital-a.capital :
+      memSort==='payments' ? b.verifiedCount-a.verifiedCount :
       (a.nameEnglish||a.name||'').localeCompare(b.nameEnglish||b.name||'')
     );
 
@@ -502,18 +772,37 @@ export default function AdminAccountBook() {
                         cursor:'pointer',fontWeight:600}}>Full ledger →</button>
                   </div>
                   {[...allEntries].reverse().slice(0,8).map((e,i) => (
-                    <div key={e.id} style={{display:'flex',alignItems:'center',gap:10,
-                      padding:'9px 16px',borderBottom:'1px solid #f1f5f9',
-                      background:i%2===0?'#fff':'#fafafa'}}>
-                      <TypeBadge type={e.type}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,fontWeight:500,color:'#0f172a',
-                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.desc}</div>
-                        <div style={{fontSize:11,color:'#94a3b8'}}>{e.sub} · {e.date}</div>
+                    <div key={e.id} style={{
+                      padding:'11px 16px',borderBottom:'1px solid #f1f5f9',
+                      background:i%2===0?'#fff':'#fafafa',
+                    }}>
+                      {/* Row 1: badge + amount */}
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,marginBottom:4}}>
+                        <div style={{display:'flex',alignItems:'center',gap:6,minWidth:0,flexShrink:1}}>
+                          <TypeBadge type={e.type}/>
+                          <span style={{fontSize:13,fontWeight:600,color:'#0f172a',
+                            overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                            {e.desc}
+                          </span>
+                        </div>
+                        <div style={{flexShrink:0,fontWeight:800,fontSize:14,
+                          color:e.debit>0?'#dc2626':'#15803d'}}>
+                          {e.debit>0 ? `−${fmt(e.debit)}` : `+${fmt(e.credit)}`}
+                        </div>
                       </div>
-                      <div style={{fontWeight:700,fontSize:13,flexShrink:0,
-                        color:e.debit>0?'#dc2626':'#15803d'}}>
-                        {e.debit>0 ? `−${fmt(e.debit)}` : `+${fmt(e.credit)}`}
+                      {/* Row 2: sub-label + date + running balance */}
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                        <div style={{fontSize:11,color:'#94a3b8',
+                          overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                          {e.sub}
+                        </div>
+                        <div style={{display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
+                          <span style={{fontSize:11,color:'#94a3b8'}}>{e.date}</span>
+                          <span style={{fontSize:11,fontWeight:600,color:'#64748b',
+                            background:'#f1f5f9',padding:'1px 7px',borderRadius:99,whiteSpace:'nowrap'}}>
+                            Bal: {fmt(e.balance)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -651,6 +940,7 @@ export default function AdminAccountBook() {
                 <select value={memSort} onChange={e=>setMemSort(e.target.value)}
                   style={{padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',
                     fontSize:13,color:'#475569'}}>
+                  <option value="idNo">Sort: Member ID</option>
                   <option value="capital">Sort: Most Capital</option>
                   <option value="name">Sort: Name A–Z</option>
                   <option value="payments">Sort: Most Payments</option>
@@ -709,7 +999,8 @@ export default function AdminAccountBook() {
                           {r.payments.length===0 ? (
                             <div style={{fontSize:12,color:'#94a3b8'}}>No installment payments.</div>
                           ) : (
-                            <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                            <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+                            <table style={{width:'100%',minWidth:380,borderCollapse:'collapse',fontSize:12}}>
                               <thead>
                                 <tr style={{background:'#dbeafe'}}>
                                   {['Date','Amount','Fee','Net','Status'].map(h => (
@@ -748,6 +1039,7 @@ export default function AdminAccountBook() {
                                 }
                               </tbody>
                             </table>
+                            </div>
                           )}
                           {/* ── Entry fees & Re-reg fees (not capital contributions) ── */}
                           {(() => {
@@ -780,7 +1072,8 @@ export default function AdminAccountBook() {
                                     (not counted as capital contribution)
                                   </span>
                                 </div>
-                                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                                <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
+                                <table style={{width:'100%',minWidth:320,borderCollapse:'collapse',fontSize:12}}>
                                   <thead>
                                     <tr style={{background:'#fef3c7'}}>
                                       {['Date','Type','Amount','Method'].map(h=>(
@@ -814,6 +1107,7 @@ export default function AdminAccountBook() {
                                     ))}
                                   </tbody>
                                 </table>
+                                </div>
                               </div>
                             );
                           })()}
