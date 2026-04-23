@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
-const PUBLIC = ['/', '/login', '/register', '/forgot-password', '/create-org', '/select-org', '/join', '/pending-approval'];
+const PUBLIC = ['/', '/login', '/register', '/forgot-password', '/reset-password', '/create-org', '/select-org', '/join', '/pending-approval'];
 
 export default function Shell({ children }) {
   const pathname = usePathname();
