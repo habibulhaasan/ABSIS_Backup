@@ -7,6 +7,7 @@ import {
   where, orderBy, updateDoc, deleteDoc,
 } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
+import Modal from '@/components/Modal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt(n)     { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
@@ -38,7 +39,7 @@ function getFundAlloc(key, totalCapital, settings) {
   return Math.min(pct, maxCap);
 }
 
-// ── Type badge config ─────────────────────────────────────────────────────────
+// ── Type config ───────────────────────────────────────────────────────────────
 const TYPE_CFG = {
   monthly:            { label:'Monthly',     short:'Mo',  color:'#15803d', bg:'#dcfce7' },
   general:            { label:'Special Sub', short:'Sp',  color:'#1d4ed8', bg:'#dbeafe' },
@@ -49,25 +50,10 @@ const TYPE_CFG = {
   loan_repayment:     { label:'Loan In',     short:'LoI', color:'#92400e', bg:'#fef3c7' },
 };
 
-// Short pill for use inside the compact table
-function TypePill({ type }) {
-  const c = TYPE_CFG[type] || { short: '?', color:'#475569', bg:'#f1f5f9', label: type||'Payment' };
-  return (
-    <span title={c.label} style={{
-      display:'inline-flex', alignItems:'center', justifyContent:'center',
-      padding:'2px 7px', borderRadius:99, fontSize:11, fontWeight:800,
-      background:c.bg, color:c.color, whiteSpace:'nowrap', letterSpacing:'0.03em',
-    }}>
-      {c.short}
-    </span>
-  );
-}
-
-// Full badge — kept for modal use
 function TypeBadge({ type }) {
   const c = TYPE_CFG[type] || { label:type||'Payment', color:'#475569', bg:'#f1f5f9' };
   return (
-    <span style={{ padding:'2px 7px', borderRadius:99, fontSize:10, fontWeight:700,
+    <span style={{ padding:'2px 8px', borderRadius:99, fontSize:11, fontWeight:700,
       background:c.bg, color:c.color, whiteSpace:'nowrap' }}>
       {c.label}
     </span>
@@ -86,7 +72,7 @@ function MemberAvatar({ m, size=36 }) {
   );
 }
 
-// ── Build unified ledger for a member ─────────────────────────────────────────
+// ── Build unified ledger ──────────────────────────────────────────────────────
 async function buildMemberLedger(orgId, memberId, settings) {
   const feeInAcct = !!settings?.gatewayFeeInAccounting;
 
@@ -115,7 +101,6 @@ async function buildMemberLedger(orgId, memberId, settings) {
       (r.paidMonths?.length > 0 ? 'monthly' : r.specialSubType || 'general');
     const isContrib = r.isContribution !== false;
     const paidMonthsLabel = (r.paidMonths||[]).map(fmtPaidMonth).filter(Boolean).join(', ');
-
     rows.push({
       id:'inv_'+r.id, _rawId:r.id, _collection:'investments',
       date:r.createdAt, type,
@@ -128,7 +113,6 @@ async function buildMemberLedger(orgId, memberId, settings) {
         : 0,
       penalty:r.penaltyPaid||0, gatewayFee:r.gatewayFee||0,
       status:r.status||'pending', isContrib,
-      countAsContribution:r.countAsContribution,
       _raw: r,
     });
   });
@@ -208,12 +192,11 @@ async function exportMemberExcel(member, ledger, orgData) {
   }
   const XLSX = window.XLSX;
   const wb   = XLSX.utils.book_new();
-  const org  = orgData || {};
-  const gen  = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
   const name = member.nameEnglish || member.name || 'Member';
+  const gen  = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 
   const data = [
-    [`${org.name_en||org.name||'Organisation'} — Member Ledger`],
+    [`${orgData?.name_en||orgData?.name||'Organisation'} — Member Ledger`],
     [`Member: ${name}  |  ID: ${member.idNo||'—'}`],
     [`Generated: ${gen}`],
     [],
@@ -233,7 +216,6 @@ async function exportMemberExcel(member, ledger, orgData) {
     ['','','','Total',
       ledger.reduce((s,r)=>s+r.amount,0), '',
       ledger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0),
-      '', '',
     ],
   ];
 
@@ -245,10 +227,10 @@ async function exportMemberExcel(member, ledger, orgData) {
 
 // ── Row Detail / CRUD Modal ───────────────────────────────────────────────────
 function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
-  const [editing, setEditing]   = useState(false);
-  const [delConf, setDelConf]   = useState(false);
-  const [saving,  setSaving]    = useState(false);
-  const [error,   setError]     = useState('');
+  const [editing, setEditing] = useState(false);
+  const [delConf, setDelConf] = useState(false);
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState('');
 
   const canEdit   = row._collection === 'investments';
   const canDelete = row._collection === 'investments';
@@ -261,20 +243,18 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
     txId:       row.txId || '',
     penalty:    row.penalty || 0,
   });
-
   const set = (k,v) => setFields(f => ({...f,[k]:v}));
 
   const handleSave = async () => {
     setSaving(true); setError('');
     try {
-      const ref = doc(db,'organizations',orgId,row._collection,row._rawId);
-      await updateDoc(ref, {
-        status:     fields.status,
-        amount:     Number(fields.amount),
-        gatewayFee: Number(fields.gatewayFee),
-        method:     fields.method,
-        txId:       fields.txId,
-        penaltyPaid:Number(fields.penalty),
+      await updateDoc(doc(db,'organizations',orgId,row._collection,row._rawId), {
+        status:      fields.status,
+        amount:      Number(fields.amount),
+        gatewayFee:  Number(fields.gatewayFee),
+        method:      fields.method,
+        txId:        fields.txId,
+        penaltyPaid: Number(fields.penalty),
       });
       onSaved({ ...row, ...fields, amount:Number(fields.amount),
         gatewayFee:Number(fields.gatewayFee), penalty:Number(fields.penalty) });
@@ -292,222 +272,208 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
 
   const raw = row._raw || {};
   const infoFields = [
-    ['Member',       member?.nameEnglish || '—'],
-    ['Member ID',    member?.idNo || '—'],
-    ['Date',         tsDate(row.date)],
-    ['Type',         TYPE_CFG[row.type]?.label || row.type],
+    ['Member',      member?.nameEnglish || '—'],
+    ['Member ID',   member?.idNo || '—'],
+    ['Date',        tsDate(row.date)],
+    ['Type',        TYPE_CFG[row.type]?.label || row.type],
     row.paidMonthsLabel && ['Installment', row.paidMonthsLabel],
-    raw.txId && ['Transaction ID', raw.txId],
-    raw.notes && ['Notes', raw.notes],
+    raw.txId   && ['Transaction ID', raw.txId],
+    raw.notes  && ['Notes', raw.notes],
     raw.purpose && ['Purpose', raw.purpose],
   ].filter(Boolean);
 
   const inputStyle = {
-    padding:'7px 10px', borderRadius:7, border:'1px solid #e2e8f0',
+    padding:'8px 10px', borderRadius:7, border:'1px solid #e2e8f0',
     fontSize:13, width:'100%', boxSizing:'border-box',
   };
-  const labelStyle = { fontSize:11, fontWeight:600, color:'#64748b', marginBottom:3, display:'block' };
+  const labelStyle = {
+    fontSize:11, fontWeight:600, color:'#64748b', marginBottom:3, display:'block',
+  };
 
   return (
-    <div style={{
-      position:'fixed', inset:0, background:'rgba(0,0,0,0.55)',
-      zIndex:2000, display:'flex', alignItems:'flex-end', justifyContent:'center',
-      padding:0,
-    }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
-      <div style={{
-        background:'#fff', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:560,
-        boxShadow:'0 -4px 40px rgba(0,0,0,0.18)', overflow:'hidden',
-        maxHeight:'92vh', display:'flex', flexDirection:'column',
-      }}>
-        {/* Drag handle */}
-        <div style={{ display:'flex', justifyContent:'center', padding:'10px 0 4px' }}>
-          <div style={{ width:36, height:4, borderRadius:99, background:'#e2e8f0' }}/>
+    <Modal title={editing ? 'Edit Record' : 'Record Details'} onClose={onClose}>
+
+      {/* Member banner */}
+      <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:18,
+        padding:'12px 14px', borderRadius:10, background:'#f8fafc', border:'1px solid #e2e8f0' }}>
+        <MemberAvatar m={member} size={40}/>
+        <div>
+          <div style={{ fontWeight:700, fontSize:14, color:'#0f172a' }}>{member?.nameEnglish}</div>
+          {member?.idNo && <div style={{ fontSize:12, color:'#64748b' }}>#{member.idNo}</div>}
         </div>
-
-        {/* Header */}
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-          padding:'8px 18px 12px', borderBottom:'1px solid #f1f5f9' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <TypeBadge type={row.type}/>
-            <span style={{ color:'#0f172a', fontWeight:700, fontSize:14 }}>
-              {editing ? 'Edit Record' : 'Record Details'}
-            </span>
-          </div>
-          <button onClick={onClose}
-            style={{ background:'#f1f5f9', border:'none', color:'#64748b',
-              fontSize:14, cursor:'pointer', lineHeight:1, borderRadius:99,
-              width:28, height:28, display:'flex', alignItems:'center', justifyContent:'center' }}>✕</button>
-        </div>
-
-        {/* Scrollable body */}
-        <div style={{ overflowY:'auto', flex:1, padding:'16px 18px',
-          display:'flex', flexDirection:'column', gap:14 }}>
-
-          {!editing && (
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px 16px' }}>
-              {infoFields.map(([k,v]) => (
-                <div key={k} style={{ minWidth:0 }}>
-                  <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
-                    letterSpacing:'0.05em', marginBottom:2 }}>{k}</div>
-                  <div style={{ fontSize:13, fontWeight:600, color:'#0f172a',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {!editing && (
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10,
-              padding:'12px 14px', borderRadius:10, background:'#f8fafc',
-              border:'1px solid #e2e8f0' }}>
-              {[
-                ['Amount',      fmt(row.amount),                            '#0f172a'],
-                ['Gateway Fee', row.gatewayFee>0?fmt(row.gatewayFee):'—',  '#dc2626'],
-                ['Capital Net', row.capitalCredit>0?fmt(row.capitalCredit):'—', '#15803d'],
-                ['Penalty',     row.penalty>0?fmt(row.penalty):'—',        '#d97706'],
-                ['Status',      row.status,                                 row.status==='verified'?'#15803d':row.status==='pending'?'#92400e':'#dc2626'],
-                ['Method',      row.method||'—',                           '#475569'],
-              ].map(([k,v,c]) => (
-                <div key={k}>
-                  <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
-                    letterSpacing:'0.05em' }}>{k}</div>
-                  <div style={{ fontSize:13, fontWeight:700, color:c }}>{v}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {editing && canEdit && (
-            <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                <div>
-                  <label style={labelStyle}>Status</label>
-                  <select value={fields.status} onChange={e=>set('status',e.target.value)} style={inputStyle}>
-                    <option value="pending">pending</option>
-                    <option value="verified">verified</option>
-                    <option value="rejected">rejected</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Method</label>
-                  <select value={fields.method} onChange={e=>set('method',e.target.value)} style={inputStyle}>
-                    {['bKash','Nagad','Rocket','Bank','Cash','Other'].map(m=>(
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                    {!['bKash','Nagad','Rocket','Bank','Cash','Other'].includes(fields.method) && (
-                      <option value={fields.method}>{fields.method}</option>
-                    )}
-                  </select>
-                </div>
-                <div>
-                  <label style={labelStyle}>Amount (৳)</label>
-                  <input type="number" value={fields.amount}
-                    onChange={e=>set('amount',e.target.value)} style={inputStyle}/>
-                </div>
-                <div>
-                  <label style={labelStyle}>Gateway Fee (৳)</label>
-                  <input type="number" value={fields.gatewayFee}
-                    onChange={e=>set('gatewayFee',e.target.value)} style={inputStyle}/>
-                </div>
-                <div>
-                  <label style={labelStyle}>Penalty (৳)</label>
-                  <input type="number" value={fields.penalty}
-                    onChange={e=>set('penalty',e.target.value)} style={inputStyle}/>
-                </div>
-                <div>
-                  <label style={labelStyle}>Transaction ID</label>
-                  <input value={fields.txId}
-                    onChange={e=>set('txId',e.target.value)} style={inputStyle}/>
-                </div>
-              </div>
-              <div style={{ padding:'8px 12px', borderRadius:8, background:'#f0fdf4',
-                border:'1px solid #bbf7d0', fontSize:12, color:'#15803d', fontWeight:600 }}>
-                Capital net preview: {fmt(Number(fields.amount)-Number(fields.gatewayFee)-Number(fields.penalty))}
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div style={{ padding:'8px 12px', borderRadius:8, background:'#fef2f2',
-              border:'1px solid #fca5a5', fontSize:12, color:'#dc2626' }}>
-              ⚠️ {error}
-            </div>
-          )}
-
-          {delConf && (
-            <div style={{ padding:'12px 14px', borderRadius:10, background:'#fef2f2',
-              border:'1px solid #fca5a5' }}>
-              <div style={{ fontWeight:700, color:'#dc2626', marginBottom:6, fontSize:13 }}>
-                ⚠️ Delete this record permanently?
-              </div>
-              <div style={{ fontSize:12, color:'#64748b', marginBottom:10 }}>
-                This removes the investment document from Firestore. This action cannot be undone.
-              </div>
-              <div style={{ display:'flex', gap:8 }}>
-                <button onClick={handleDelete} disabled={saving}
-                  style={{ padding:'8px 18px', borderRadius:8, background:'#dc2626', color:'#fff',
-                    border:'none', cursor:'pointer', fontWeight:700, fontSize:13, flex:1 }}>
-                  {saving ? 'Deleting…' : 'Yes, Delete'}
-                </button>
-                <button onClick={()=>setDelConf(false)} disabled={saving}
-                  style={{ padding:'8px 18px', borderRadius:8, background:'#f1f5f9', color:'#475569',
-                    border:'none', cursor:'pointer', fontWeight:600, fontSize:13, flex:1 }}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Sticky footer buttons */}
-        <div style={{ padding:'12px 18px', borderTop:'1px solid #f1f5f9',
-          display:'flex', gap:8, background:'#fff' }}>
-          {!editing && !delConf && (
-            <>
-              {canEdit && (
-                <button onClick={()=>setEditing(true)}
-                  style={{ flex:1, padding:'10px', borderRadius:10, background:'#2563eb', color:'#fff',
-                    border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                  ✏️ Edit
-                </button>
-              )}
-              {canDelete && (
-                <button onClick={()=>setDelConf(true)}
-                  style={{ flex:1, padding:'10px', borderRadius:10, background:'#fef2f2', color:'#dc2626',
-                    border:'1px solid #fca5a5', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                  🗑 Delete
-                </button>
-              )}
-              {!canEdit && (
-                <div style={{ fontSize:12, color:'#94a3b8', alignSelf:'center', flex:1 }}>
-                  Read-only — {row.type==='profit'?'distributions':row._collection} cannot be edited here.
-                </div>
-              )}
-              <button onClick={onClose}
-                style={{ flex:1, padding:'10px', borderRadius:10,
-                  background:'#f1f5f9', color:'#475569', border:'none',
-                  cursor:'pointer', fontWeight:600, fontSize:13 }}>
-                Close
-              </button>
-            </>
-          )}
-          {editing && (
-            <>
-              <button onClick={handleSave} disabled={saving}
-                style={{ flex:2, padding:'10px', borderRadius:10, background:'#15803d', color:'#fff',
-                  border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                {saving ? 'Saving…' : '✓ Save Changes'}
-              </button>
-              <button onClick={()=>{ setEditing(false); setError(''); }}
-                style={{ flex:1, padding:'10px', borderRadius:10, background:'#f1f5f9', color:'#475569',
-                  border:'none', cursor:'pointer', fontWeight:600, fontSize:13 }}>
-                Cancel
-              </button>
-            </>
-          )}
+        <div style={{ marginLeft:'auto' }}>
+          <TypeBadge type={row.type}/>
         </div>
       </div>
-    </div>
+
+      {/* ── READ VIEW ── */}
+      {!editing && (
+        <>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'6px 16px', marginBottom:14 }}>
+            {infoFields.map(([k,v]) => (
+              <div key={k} style={{ minWidth:0 }}>
+                <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
+                  letterSpacing:'0.05em', marginBottom:2 }}>{k}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:'#0f172a',
+                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10,
+            padding:'12px 14px', borderRadius:10, background:'#f8fafc',
+            border:'1px solid #e2e8f0', marginBottom:4 }}>
+            {[
+              ['Amount',      fmt(row.amount),                                 '#0f172a'],
+              ['Gateway Fee', row.gatewayFee>0?fmt(row.gatewayFee):'—',        '#dc2626'],
+              ['Capital Net', row.capitalCredit>0?fmt(row.capitalCredit):'—',  '#15803d'],
+              ['Penalty',     row.penalty>0?fmt(row.penalty):'—',              '#d97706'],
+              ['Status',      row.status,
+                row.status==='verified'?'#15803d':row.status==='pending'?'#92400e':'#dc2626'],
+              ['Method',      row.method||'—',                                 '#475569'],
+            ].map(([k,v,c]) => (
+              <div key={k}>
+                <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
+                  letterSpacing:'0.05em' }}>{k}</div>
+                <div style={{ fontSize:13, fontWeight:700, color:c }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── EDIT FORM ── */}
+      {editing && canEdit && (
+        <div style={{ display:'flex', flexDirection:'column', gap:12, marginBottom:4 }}>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+            <div>
+              <label style={labelStyle}>Status</label>
+              <select value={fields.status} onChange={e=>set('status',e.target.value)} style={inputStyle}>
+                <option value="pending">pending</option>
+                <option value="verified">verified</option>
+                <option value="rejected">rejected</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Method</label>
+              <select value={fields.method} onChange={e=>set('method',e.target.value)} style={inputStyle}>
+                {['bKash','Nagad','Rocket','Bank','Cash','Other'].map(m=>(
+                  <option key={m} value={m}>{m}</option>
+                ))}
+                {!['bKash','Nagad','Rocket','Bank','Cash','Other'].includes(fields.method) && (
+                  <option value={fields.method}>{fields.method}</option>
+                )}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Amount (৳)</label>
+              <input type="number" value={fields.amount}
+                onChange={e=>set('amount',e.target.value)} style={inputStyle}/>
+            </div>
+            <div>
+              <label style={labelStyle}>Gateway Fee (৳)</label>
+              <input type="number" value={fields.gatewayFee}
+                onChange={e=>set('gatewayFee',e.target.value)} style={inputStyle}/>
+            </div>
+            <div>
+              <label style={labelStyle}>Penalty (৳)</label>
+              <input type="number" value={fields.penalty}
+                onChange={e=>set('penalty',e.target.value)} style={inputStyle}/>
+            </div>
+            <div>
+              <label style={labelStyle}>Transaction ID</label>
+              <input value={fields.txId}
+                onChange={e=>set('txId',e.target.value)} style={inputStyle}/>
+            </div>
+          </div>
+          <div style={{ padding:'8px 12px', borderRadius:8, background:'#f0fdf4',
+            border:'1px solid #bbf7d0', fontSize:12, color:'#15803d', fontWeight:600 }}>
+            Capital net preview: {fmt(Number(fields.amount)-Number(fields.gatewayFee)-Number(fields.penalty))}
+          </div>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ padding:'8px 12px', borderRadius:8, background:'#fef2f2',
+          border:'1px solid #fca5a5', fontSize:12, color:'#dc2626', marginBottom:4 }}>
+          ⚠️ {error}
+        </div>
+      )}
+
+      {/* Delete confirmation */}
+      {delConf && (
+        <div style={{ padding:'12px 14px', borderRadius:10, background:'#fef2f2',
+          border:'1px solid #fca5a5', marginBottom:4 }}>
+          <div style={{ fontWeight:700, color:'#dc2626', marginBottom:6, fontSize:13 }}>
+            ⚠️ Delete this record permanently?
+          </div>
+          <div style={{ fontSize:12, color:'#64748b', marginBottom:12 }}>
+            This removes the document from Firestore. Cannot be undone.
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={handleDelete} disabled={saving}
+              style={{ flex:1, padding:'9px', borderRadius:8, background:'#dc2626', color:'#fff',
+                border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
+              {saving ? 'Deleting…' : 'Yes, Delete'}
+            </button>
+            <button onClick={()=>setDelConf(false)} disabled={saving}
+              style={{ flex:1, padding:'9px', borderRadius:8, background:'#f1f5f9', color:'#475569',
+                border:'none', cursor:'pointer', fontWeight:600, fontSize:13 }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display:'flex', gap:8, marginTop:20, paddingTop:16,
+        borderTop:'1px solid #e2e8f0' }}>
+        {!editing && !delConf && (
+          <>
+            {canEdit && (
+              <button onClick={()=>setEditing(true)}
+                style={{ padding:'9px 20px', borderRadius:8, background:'#eff6ff', color:'#1d4ed8',
+                  border:'1px solid #bfdbfe', cursor:'pointer', fontWeight:600, fontSize:13 }}>
+                ✏️ Edit
+              </button>
+            )}
+            {canDelete && (
+              <button onClick={()=>setDelConf(true)}
+                style={{ padding:'9px 20px', borderRadius:8, background:'#fff', color:'#b91c1c',
+                  border:'1px solid #fca5a5', cursor:'pointer', fontWeight:600, fontSize:13 }}>
+                🗑 Delete
+              </button>
+            )}
+            {!canEdit && (
+              <div style={{ fontSize:12, color:'#94a3b8', alignSelf:'center' }}>
+                Read-only — {row.type==='profit'?'distributions':row._collection} cannot be edited here.
+              </div>
+            )}
+            <button onClick={onClose}
+              style={{ flex:1, padding:'9px 20px', borderRadius:8, background:'#fff',
+                color:'#475569', border:'1px solid #e2e8f0', cursor:'pointer',
+                fontWeight:600, fontSize:13 }}>
+              Close
+            </button>
+          </>
+        )}
+        {editing && (
+          <>
+            <button onClick={handleSave} disabled={saving}
+              style={{ flex:2, padding:'10px', borderRadius:8, background:'#15803d', color:'#fff',
+                border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
+              {saving ? 'Saving…' : '✓ Save Changes'}
+            </button>
+            <button onClick={()=>{ setEditing(false); setError(''); }}
+              style={{ flex:1, padding:'10px', borderRadius:8, background:'#f1f5f9',
+                color:'#475569', border:'none', cursor:'pointer', fontWeight:600, fontSize:13 }}>
+              Cancel
+            </button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
 
@@ -607,7 +573,7 @@ export default function AdminLedger() {
   ];
   const hasFundBudgets = FUNDS.some(f => f.orgAlloc > 0);
 
-  const filteredLedger = typeFilter==='all'            ? ledger
+  const filteredLedger = typeFilter==='all'           ? ledger
     : typeFilter==='contributions' ? ledger.filter(r=>r.isContrib)
     : typeFilter==='fees'          ? ledger.filter(r=>r.type==='entry_fee'||r.type==='reregistration_fee')
     : typeFilter==='profit'        ? ledger.filter(r=>r.type==='profit')
@@ -674,7 +640,8 @@ export default function AdminLedger() {
 
     return (
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
-        {/* Member header */}
+
+        {/* Member header card */}
         <div className="card" style={{ padding:'14px 16px' }}>
           <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
             <MemberAvatar m={selMember} size={44}/>
@@ -701,9 +668,8 @@ export default function AdminLedger() {
             </div>
           </div>
 
-          {/* Action buttons */}
           <div style={{ marginTop:12, paddingTop:10, borderTop:'1px solid #f1f5f9',
-            display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+            display:'flex', gap:8, flexWrap:'wrap' }}>
             <button
               onClick={async () => {
                 setExporting(true);
@@ -712,8 +678,9 @@ export default function AdminLedger() {
                 setExporting(false);
               }}
               disabled={exporting || ledger.length===0}
-              style={{ padding:'7px 14px', borderRadius:8, background:exporting?'#94a3b8':'#15803d',
-                color:'#fff', border:'none', cursor:exporting?'not-allowed':'pointer',
+              style={{ padding:'7px 14px', borderRadius:8,
+                background:exporting?'#94a3b8':'#15803d', color:'#fff',
+                border:'none', cursor:exporting?'not-allowed':'pointer',
                 fontSize:12, fontWeight:700 }}>
               {exporting ? '⏳ Exporting…' : '⬇ Export Excel'}
             </button>
@@ -755,8 +722,7 @@ export default function AdminLedger() {
                         {fund.icon} {fund.label}
                       </span>
                       <div style={{ textAlign:'right' }}>
-                        <div style={{ fontSize:12, fontWeight:700,
-                          color:over?'#dc2626':fund.color }}>
+                        <div style={{ fontSize:12, fontWeight:700, color:over?'#dc2626':fund.color }}>
                           {fmt(rem)} left
                         </div>
                         <div style={{ fontSize:10, color:'#94a3b8' }}>of {fmt(mAlloc)}</div>
@@ -778,7 +744,7 @@ export default function AdminLedger() {
           </div>
         )}
 
-        {/* Filter bar — horizontally scrollable on mobile */}
+        {/* Filter pills — horizontally scrollable */}
         <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:2,
           WebkitOverflowScrolling:'touch', scrollbarWidth:'none' }}>
           {[
@@ -786,7 +752,8 @@ export default function AdminLedger() {
             ['fees','Fees'],['profit','Profit'],['loans','Loans'],
           ].map(([k,l]) => (
             <button key={k} onClick={()=>setTypeFilter(k)}
-              style={{ padding:'5px 12px', fontSize:11, borderRadius:7, cursor:'pointer', flexShrink:0,
+              style={{ padding:'5px 12px', fontSize:12, borderRadius:7, cursor:'pointer',
+                flexShrink:0,
                 border:typeFilter===k?'2px solid #2563eb':'1px solid #e2e8f0',
                 background:typeFilter===k?'#eff6ff':'#fff',
                 color:typeFilter===k?'#1d4ed8':'#475569', fontWeight:500 }}>
@@ -801,24 +768,24 @@ export default function AdminLedger() {
           </div>
         )}
 
-        {/* ── Ledger table — horizontally scrollable on mobile ── */}
+        {/* ── Table — horizontally scrollable ── */}
         {filteredLedger.length === 0 ? (
-          <div className="card" style={{ textAlign:'center', padding:32, color:'#94a3b8', fontSize:13 }}>
+          <div className="card" style={{ textAlign:'center', padding:32,
+            color:'#94a3b8', fontSize:13 }}>
             No records in this category.
           </div>
         ) : (
           <div style={{ borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
-            {/* Outer scroll wrapper */}
             <div style={{ overflowX:'auto', WebkitOverflowScrolling:'touch' }}>
-              {/* cols: Date | T | Installment | Amount | Capital | St */}
-              <div style={{ minWidth:420 }}>
+              <div style={{ minWidth:580 }}>
+
                 {/* Header */}
                 <div style={{ display:'grid',
-                  gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
-                  gap:4, padding:'7px 10px', background:'#f8fafc',
+                  gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
+                  gap:8, padding:'8px 14px', background:'#f8fafc',
                   borderBottom:'1px solid #e2e8f0' }}>
-                  {['Date','T','Installment','Amount','Capital','St'].map((h,i)=>(
-                    <div key={i} style={{ fontSize:10, fontWeight:700, color:'#64748b',
+                  {['Date','Type','Installment','Amount','Capital','Status'].map((h,i) => (
+                    <div key={i} style={{ fontSize:11, fontWeight:700, color:'#64748b',
                       textTransform:'uppercase', letterSpacing:'0.05em' }}>{h}</div>
                   ))}
                 </div>
@@ -829,8 +796,8 @@ export default function AdminLedger() {
                     onClick={()=>setModalRow(r)}
                     style={{
                       display:'grid',
-                      gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
-                      gap:4, padding:'8px 10px', alignItems:'center',
+                      gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
+                      gap:8, padding:'10px 14px', alignItems:'center',
                       borderBottom:'1px solid #f1f5f9',
                       background: r.isContrib && r.status==='verified'
                         ? '#f0fdf4' : i%2===0 ? '#fff' : '#fafafa',
@@ -842,68 +809,66 @@ export default function AdminLedger() {
                     }}
                     onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
                     onMouseLeave={e=>e.currentTarget.style.background=
-                      r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'
-                    }
+                      r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'}
                   >
-                    {/* Date — dd Mon yy to save width */}
-                    <div style={{ fontSize:11, color:'#64748b', whiteSpace:'nowrap' }}>
+                    <div style={{ fontSize:12, color:'#64748b', whiteSpace:'nowrap' }}>
                       {tsDate(r.date)}
                     </div>
 
-                    {/* Short type pill */}
-                    <TypePill type={r.type}/>
+                    <TypeBadge type={r.type}/>
 
-                    {/* Installment */}
                     <div style={{ minWidth:0 }}>
                       <div style={{ fontSize:12, fontWeight:600, color:'#1d4ed8',
-                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
                         {r.paidMonthsLabel || '—'}
                       </div>
                       {r.txId && (
-                        <div style={{ fontSize:9, color:'#94a3b8', fontFamily:'monospace',
-                          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {r.txId.slice(0,12)}…
+                        <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'monospace',
+                          whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                          {r.txId.slice(0,16)}…
                         </div>
                       )}
                     </div>
 
-                    <div style={{ fontWeight:700, fontSize:12, color:'#0f172a', minWidth:0 }}>
+                    <div style={{ fontWeight:700, fontSize:13, color:'#0f172a' }}>
                       {fmt(r.amount)}
                       {r.penalty>0 && (
-                        <div style={{ fontSize:9, color:'#d97706' }}>+pen.</div>
+                        <div style={{ fontSize:10, color:'#d97706' }}>+{fmt(r.penalty)} pen.</div>
                       )}
                     </div>
-                    <div style={{ fontSize:12, fontWeight:600,
+
+                    <div style={{ fontSize:13, fontWeight:600,
                       color:r.capitalCredit>0?'#15803d':'#94a3b8' }}>
                       {r.capitalCredit>0 ? fmt(r.capitalCredit) : '—'}
                     </div>
-                    {/* Status — single letter to save space */}
-                    <span style={{
-                      fontSize:10, fontWeight:700, textTransform:'capitalize',
-                      color: r.status==='verified'?'#15803d':r.status==='pending'?'#92400e':'#dc2626',
-                    }}>
-                      {r.status==='verified'?'✓':r.status==='pending'?'…':'✕'}
+
+                    <span className={`badge ${
+                      r.status==='verified' ? 'badge-green' :
+                      r.status==='pending'  ? 'badge-yellow' : 'badge-red'}`}
+                      style={{ fontSize:10, textTransform:'capitalize' }}>
+                      {r.status}
                     </span>
                   </div>
                 ))}
 
-                {/* Footer */}
+                {/* Footer totals */}
                 <div style={{ display:'grid',
-                  gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
-                  gap:4, padding:'7px 10px', background:'#f8fafc',
+                  gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
+                  gap:8, padding:'8px 14px', background:'#f8fafc',
                   borderTop:'2px solid #e2e8f0' }}>
                   <div/><div/>
                   <div style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>
-                    {filteredLedger.length} rows
+                    {filteredLedger.length} records
                   </div>
-                  <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>
+                  <div style={{ fontSize:13, fontWeight:800, color:'#0f172a' }}>
                     {fmt(filteredLedger.reduce((s,r)=>s+r.amount,0))}
                   </div>
-                  <div style={{ fontSize:12, fontWeight:800, color:'#15803d' }}>
+                  <div style={{ fontSize:13, fontWeight:800, color:'#15803d' }}>
                     {fmt(filteredLedger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0))}
                   </div>
                   <div/>
                 </div>
+
               </div>
             </div>
           </div>
@@ -914,6 +879,8 @@ export default function AdminLedger() {
 
   return (
     <div className="page-wrap animate-fade">
+
+      {/* Row detail / CRUD modal — uses shared Modal component */}
       {modalRow && (
         <RowModal
           row={modalRow}
@@ -928,30 +895,27 @@ export default function AdminLedger() {
       <style>{`
         .adm-ledger { display: block; }
         @media (min-width: 768px) {
-          .adm-ledger { display: grid !important;
+          .adm-ledger  { display: grid !important;
             grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
-          .adm-list  { display: block !important; }
-          .adm-detail { display: block !important; }
-          .adm-back  { display: none !important; }
+          .adm-back    { display: none !important; }
         }
         @media (max-width: 767px) {
           .adm-list.hide   { display: none; }
           .adm-detail.hide { display: none; }
         }
-        /* hide scrollbar on filter row */
         div::-webkit-scrollbar { display: none; }
       `}</style>
 
       <div className="page-header" style={{ display:'flex', alignItems:'center', gap:12 }}>
         {orgData?.logoURL && (
           <div style={{ width:38, height:38, borderRadius:9, overflow:'hidden', flexShrink:0 }}>
-            <img src={orgData.logoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
+            <img src={orgData.logoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt=""/>
           </div>
         )}
         <div>
           <div className="page-title">Member Ledger</div>
           <div className="page-subtitle">
-            {members.length} members · Tap row to view/edit
+            {members.length} members · Sorted by Member ID · Tap row to view/edit
           </div>
         </div>
       </div>
