@@ -2,19 +2,22 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
-import { collection, onSnapshot, addDoc, deleteDoc, doc,
-  query, orderBy, serverTimestamp, getDocs } from 'firebase/firestore';
+import {
+  collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc,
+  query, orderBy, serverTimestamp, getDocs
+} from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import Modal from '@/components/Modal';
 
 function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
 function tsDate(ts) {
   if (!ts) return '—';
-  const d = ts.seconds?new Date(ts.seconds*1000):new Date(ts);
+  const d = ts.seconds ? new Date(ts.seconds*1000) : new Date(ts);
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
 
 const CATEGORIES = ['Office','Meeting','Travel','Utilities','Maintenance','Marketing','Legal','Other'];
+const EMPTY_FORM  = { title:'', amount:'', category:'Office', date:new Date().toISOString().split('T')[0], notes:'' };
 
 function Stat({label,value,sub,color='#0f172a',bg='#f8fafc'}) {
   return (
@@ -30,25 +33,23 @@ export default function AdminExpenses() {
   const { user, userData, orgData, isOrgAdmin } = useAuth();
   const orgId = userData?.activeOrgId;
 
-  const [expenses,      setExpenses]      = useState([]);
-  const [totalCapital,  setTotalCapital]  = useState(0);
-  const [totalFeeIncome,setTotalFeeIncome] = useState(0);
-  const [loading,       setLoading]       = useState(true);
-  const [showAdd,       setShowAdd]       = useState(false);
-  const [saving,        setSaving]        = useState(false);
-  const [toast,         setToast]         = useState('');
-  const [search,        setSearch]        = useState('');
-  const [catFilter,     setCatFilter]     = useState('all');
-  const [form,          setForm]          = useState({
-    title:'', amount:'', category:'Office', date:new Date().toISOString().split('T')[0], notes:''
-  });
+  const [expenses,       setExpenses]       = useState([]);
+  const [totalCapital,   setTotalCapital]   = useState(0);
+  const [totalFeeIncome, setTotalFeeIncome] = useState(0);
+  const [loading,        setLoading]        = useState(true);
+  const [showAdd,        setShowAdd]        = useState(false);
+  const [editTarget,     setEditTarget]     = useState(null); // expense obj being edited
+  const [saving,         setSaving]         = useState(false);
+  const [toast,          setToast]          = useState('');
+  const [search,         setSearch]         = useState('');
+  const [catFilter,      setCatFilter]      = useState('all');
+  const [form,           setForm]           = useState(EMPTY_FORM);
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3000); };
 
   useEffect(() => {
     if (!orgId) return;
-    // Load capital + fee income for correct expenses fund budget
     (async () => {
       const [paySnap, feeSnap] = await Promise.all([
         getDocs(collection(db,'organizations',orgId,'investments')),
@@ -59,7 +60,6 @@ export default function AdminExpenses() {
         .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
       setTotalCapital(cap);
 
-      // Entry/re-reg fees collected → add to expenses fund budget
       const adminFees = feeSnap.docs.reduce((s,d)=>s+(d.data().amount||0), 0);
       const invFees   = paySnap.docs.map(d=>d.data())
         .filter(p=>p.status==='verified' &&
@@ -76,9 +76,8 @@ export default function AdminExpenses() {
     return unsubExp;
   }, [orgId]);
 
-  // Expenses fund budget = % of capital allocation + all fee income collected
-  const fb = orgData?.settings?.fundBudgets?.expenses;
-  const capAlloc = fb?.value
+  const fb          = orgData?.settings?.fundBudgets?.expenses;
+  const capAlloc    = fb?.value
     ? (fb.type==='amount'
         ? Number(fb.value)||0
         : Math.min(
@@ -87,12 +86,15 @@ export default function AdminExpenses() {
           ))
     : 0;
   const expenseBudget = capAlloc + totalFeeIncome;
-  const totalUsed   = expenses.reduce((s,e)=>s+(e.amount||0), 0);
-  const fundBalance = expenseBudget > 0 ? expenseBudget - totalUsed : null;
-  const overBudget  = fundBalance !== null && fundBalance < 0;
-  const newAmount   = Number(form.amount)||0;
-  const afterAdd    = fundBalance !== null ? fundBalance - newAmount : null;
+  const totalUsed     = expenses.reduce((s,e)=>s+(e.amount||0), 0);
+  const fundBalance   = expenseBudget > 0 ? expenseBudget - totalUsed : null;
+  const overBudget    = fundBalance !== null && fundBalance < 0;
+  const newAmount     = Number(form.amount)||0;
+  // When editing, exclude the original amount so preview stays accurate
+  const baseBalance   = editTarget ? (fundBalance !== null ? fundBalance + (editTarget.amount||0) : null) : fundBalance;
+  const afterAdd      = baseBalance !== null ? baseBalance - newAmount : null;
 
+  // ── CREATE ────────────────────────────────────────────────────────────────
   const handleAdd = async () => {
     if (!form.title.trim()) return alert('Title is required.');
     if (!form.amount || Number(form.amount)<=0) return alert('Enter a valid amount.');
@@ -105,12 +107,49 @@ export default function AdminExpenses() {
         recordedBy:user.uid, createdAt:serverTimestamp(),
       });
       setShowAdd(false);
-      setForm({title:'',amount:'',category:'Office',date:new Date().toISOString().split('T')[0],notes:''});
+      setForm(EMPTY_FORM);
       showToast('✅ Expense recorded!');
     } catch(e) { showToast('Error: '+e.message); }
     setSaving(false);
   };
 
+  // ── OPEN EDIT MODAL ───────────────────────────────────────────────────────
+  const openEdit = (expense) => {
+    setEditTarget(expense);
+    setForm({
+      title:    expense.title    || '',
+      amount:   expense.amount   || '',
+      category: expense.category || 'Office',
+      date:     expense.date     || new Date().toISOString().split('T')[0],
+      notes:    expense.notes    || '',
+    });
+  };
+
+  const closeEdit = () => { setEditTarget(null); setForm(EMPTY_FORM); };
+
+  // ── UPDATE ────────────────────────────────────────────────────────────────
+  const handleUpdate = async () => {
+    if (!form.title.trim()) return alert('Title is required.');
+    if (!form.amount || Number(form.amount)<=0) return alert('Enter a valid amount.');
+    if (!form.date) return alert('Date is required.');
+    setSaving(true);
+    try {
+      await updateDoc(doc(db,'organizations',orgId,'expenses',editTarget.id), {
+        title:    form.title,
+        amount:   Number(form.amount),
+        category: form.category,
+        date:     form.date,
+        notes:    form.notes,
+        updatedBy: user.uid,
+        updatedAt: serverTimestamp(),
+      });
+      closeEdit();
+      showToast('✅ Expense updated!');
+    } catch(e) { showToast('Error: '+e.message); }
+    setSaving(false);
+  };
+
+  // ── DELETE ────────────────────────────────────────────────────────────────
   const handleDelete = async (e) => {
     if (!confirm(`Delete "${e.title}"?`)) return;
     try { await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id)); showToast('Deleted.'); }
@@ -124,6 +163,58 @@ export default function AdminExpenses() {
     .filter(e => !search || e.title?.toLowerCase().includes(search.toLowerCase()));
 
   const usedPct = expenseBudget > 0 ? Math.min(100, (totalUsed/expenseBudget)*100) : 0;
+
+  // ── SHARED FORM FIELDS ────────────────────────────────────────────────────
+  const FormFields = () => (
+    <div style={{display:'flex',flexDirection:'column',gap:14}}>
+      {expenseBudget > 0 && (
+        <div style={{padding:'10px 14px',borderRadius:8,
+          background:afterAdd!==null&&afterAdd<0?'#fef2f2':'#f0fdf4',
+          border:`1px solid ${afterAdd!==null&&afterAdd<0?'#fca5a5':'#86efac'}`}}>
+          <div style={{display:'flex',justifyContent:'space-between',fontSize:13}}>
+            <span style={{color:'#64748b'}}>Expenses Fund remaining:</span>
+            <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
+              {fmt(baseBalance)}
+            </span>
+          </div>
+          {newAmount > 0 && (
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginTop:4}}>
+              <span style={{color:'#64748b'}}>After this expense:</span>
+              <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
+                {afterAdd!==null ? fmt(afterAdd) : '—'}
+                {afterAdd!==null && afterAdd<0 && ' ⚠️ Over budget'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+      <div>
+        <label className="form-label">Title *</label>
+        <input value={form.title} onChange={e=>set('title',e.target.value)} placeholder="e.g. Office supplies"/>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+        <div>
+          <label className="form-label">Amount (৳) *</label>
+          <input type="number" min="0" value={form.amount}
+            onChange={e=>set('amount',e.target.value)} placeholder="0"/>
+        </div>
+        <div>
+          <label className="form-label">Date *</label>
+          <input type="date" value={form.date} onChange={e=>set('date',e.target.value)}/>
+        </div>
+        <div>
+          <label className="form-label">Category</label>
+          <select value={form.category} onChange={e=>set('category',e.target.value)}>
+            {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="form-label">Notes</label>
+          <input value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional"/>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="page-wrap animate-fade">
@@ -139,9 +230,11 @@ export default function AdminExpenses() {
         </div>
       </div>
 
-      {toast && <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,
-        background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',
-        color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>}
+      {toast && (
+        <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,
+          background:toast.startsWith('Error')?'#fee2e2':'#dcfce7',
+          color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>
+      )}
 
       {/* Fund balance banner */}
       {expenseBudget > 0 && (
@@ -150,13 +243,13 @@ export default function AdminExpenses() {
           border:`1.5px solid ${overBudget?'#fca5a5':'#86efac'}`}}>
           <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
             <div>
-                <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>🧾 Expenses Fund</div>
-                <div style={{fontSize:11,color:'#92400e',marginTop:2}}>
-                  {capAlloc>0 && <span>{fb?.value}{fb?.type==='pct'?'% of capital':' fixed'}: {fmt(capAlloc)}</span>}
-                  {capAlloc>0 && totalFeeIncome>0 && <span> + </span>}
-                  {totalFeeIncome>0 && <span>Fees: {fmt(totalFeeIncome)}</span>}
-                </div>
+              <div style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>🧾 Expenses Fund</div>
+              <div style={{fontSize:11,color:'#92400e',marginTop:2}}>
+                {capAlloc>0 && <span>{fb?.value}{fb?.type==='pct'?'% of capital':' fixed'}: {fmt(capAlloc)}</span>}
+                {capAlloc>0 && totalFeeIncome>0 && <span> + </span>}
+                {totalFeeIncome>0 && <span>Fees: {fmt(totalFeeIncome)}</span>}
               </div>
+            </div>
             <div style={{display:'flex',gap:20,flexWrap:'wrap'}}>
               <div style={{textAlign:'right'}}>
                 <div style={{fontSize:11,color:'#64748b'}}>Budget</div>
@@ -189,18 +282,21 @@ export default function AdminExpenses() {
 
       {/* Stats */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:12,marginBottom:24}}>
-        <Stat label="Total Expenses" value={fmt(totalUsed)}    color="#dc2626" bg="#fef2f2"/>
+        <Stat label="Total Expenses" value={fmt(totalUsed)} color="#dc2626" bg="#fef2f2"/>
         <Stat label="This Month"
           value={fmt(expenses.filter(e=>{
-            const d=e.createdAt?.seconds?new Date(e.createdAt.seconds*1000):new Date();
-            const now=new Date(); return d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear();
+            const d = e.createdAt?.seconds ? new Date(e.createdAt.seconds*1000) : new Date();
+            const now = new Date();
+            return d.getMonth()===now.getMonth() && d.getFullYear()===now.getFullYear();
           }).reduce((s,e)=>s+(e.amount||0),0))}
           bg="#f8fafc"/>
         <Stat label="Entries" value={expenses.length} bg="#f8fafc"/>
-        {expenseBudget>0 && <Stat label="Fund Remaining"
-          value={fmt(fundBalance)}
-          color={overBudget?'#dc2626':'#15803d'}
-          bg={overBudget?'#fef2f2':'#f0fdf4'}/>}
+        {expenseBudget>0 && (
+          <Stat label="Fund Remaining"
+            value={fmt(fundBalance)}
+            color={overBudget?'#dc2626':'#15803d'}
+            bg={overBudget?'#fef2f2':'#f0fdf4'}/>
+        )}
       </div>
 
       {/* Filters */}
@@ -242,14 +338,22 @@ export default function AdminExpenses() {
               <div style={{fontSize:12,color:'#475569'}}>{e.date||tsDate(e.createdAt)}</div>
               <div>
                 <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{e.title}</div>
-                {e.notes&&<div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
+                {e.notes && <div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
               </div>
               <div><span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
                 color:'#92400e',fontSize:11,fontWeight:600}}>{e.category}</span></div>
               <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(e.amount)}</div>
-              <button onClick={()=>handleDelete(e)}
-                style={{background:'none',border:'none',cursor:'pointer',
-                  color:'#94a3b8',fontSize:13,padding:'4px 8px'}}>✕</button>
+              {/* ── Edit + Delete buttons ── */}
+              <div style={{display:'flex',gap:4}}>
+                <button onClick={()=>openEdit(e)}
+                  title="Edit"
+                  style={{background:'none',border:'none',cursor:'pointer',
+                    color:'#64748b',fontSize:13,padding:'4px 8px'}}>✏️</button>
+                <button onClick={()=>handleDelete(e)}
+                  title="Delete"
+                  style={{background:'none',border:'none',cursor:'pointer',
+                    color:'#94a3b8',fontSize:13,padding:'4px 8px'}}>✕</button>
+              </div>
             </div>
           ))}
           {/* Total row */}
@@ -264,64 +368,30 @@ export default function AdminExpenses() {
         </div>
       )}
 
-      {/* Add modal */}
+      {/* ── ADD MODAL ── */}
       {showAdd && (
-        <Modal title="Add Expense" onClose={()=>setShowAdd(false)}>
-          {/* Fund balance preview */}
-          {expenseBudget > 0 && (
-            <div style={{padding:'10px 14px',borderRadius:8,marginBottom:16,
-              background:afterAdd!==null&&afterAdd<0?'#fef2f2':'#f0fdf4',
-              border:`1px solid ${afterAdd!==null&&afterAdd<0?'#fca5a5':'#86efac'}`}}>
-              <div style={{display:'flex',justifyContent:'space-between',fontSize:13}}>
-                <span style={{color:'#64748b'}}>Expenses Fund remaining:</span>
-                <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
-                  {fmt(fundBalance)}
-                </span>
-              </div>
-              {newAmount > 0 && (
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginTop:4}}>
-                  <span style={{color:'#64748b'}}>After this expense:</span>
-                  <span style={{fontWeight:700,color:afterAdd!==null&&afterAdd<0?'#dc2626':'#15803d'}}>
-                    {afterAdd!==null ? fmt(afterAdd) : '—'}
-                    {afterAdd!==null && afterAdd<0 && ' ⚠️ Over budget'}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div style={{display:'flex',flexDirection:'column',gap:14}}>
-            <div>
-              <label className="form-label">Title *</label>
-              <input value={form.title} onChange={e=>set('title',e.target.value)} placeholder="e.g. Office supplies"/>
-            </div>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
-              <div>
-                <label className="form-label">Amount (৳) *</label>
-                <input type="number" min="0" value={form.amount}
-                  onChange={e=>set('amount',e.target.value)} placeholder="0"/>
-              </div>
-              <div>
-                <label className="form-label">Date *</label>
-                <input type="date" value={form.date} onChange={e=>set('date',e.target.value)}/>
-              </div>
-              <div>
-                <label className="form-label">Category</label>
-                <select value={form.category} onChange={e=>set('category',e.target.value)}>
-                  {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="form-label">Notes</label>
-                <input value={form.notes} onChange={e=>set('notes',e.target.value)} placeholder="Optional"/>
-              </div>
-            </div>
-          </div>
+        <Modal title="Add Expense" onClose={()=>{ setShowAdd(false); setForm(EMPTY_FORM); }}>
+          <FormFields/>
           <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
             <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
               {saving?'Saving…':'Record Expense'}
             </button>
-            <button onClick={()=>setShowAdd(false)}
+            <button onClick={()=>{ setShowAdd(false); setForm(EMPTY_FORM); }}
+              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── EDIT MODAL ── */}
+      {editTarget && (
+        <Modal title="Edit Expense" onClose={closeEdit}>
+          <FormFields/>
+          <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
+            <button onClick={handleUpdate} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
+              {saving?'Saving…':'Save Changes'}
+            </button>
+            <button onClick={closeEdit}
               style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
                 background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
           </div>
