@@ -28,6 +28,20 @@ function ymLabel(key) {
 function yKey(ts)  { const d=ts?.seconds?new Date(ts.seconds*1000):ts instanceof Date?ts:new Date(ts); return String(d.getFullYear()); }
 function initials(n) { return (n||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 
+// ── NEW: format a paidMonths entry (e.g. "2026-04" or timestamp) → "Apr 2026"
+function fmtPaidMonth(val) {
+  if (!val) return '—';
+  // "YYYY-MM" string format
+  if (typeof val === 'string' && /^\d{4}-\d{2}$/.test(val)) {
+    const [y, m] = val.split('-');
+    return new Date(+y, +m - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+  }
+  // Firestore timestamp or Date
+  const d = val?.seconds ? new Date(val.seconds * 1000) : val instanceof Date ? val : new Date(val);
+  if (isNaN(d)) return String(val);
+  return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+}
+
 function computeFundAlloc(key, totalCapital, settings) {
   const fb = settings?.fundBudgets?.[key];
   if (!fb?.value) return 0;
@@ -246,7 +260,6 @@ function EntryDetailPanel({ entry }) {
 }
 
 // ── DateGroupRow ──────────────────────────────────────────────────────────────
-// Columns: Date/Type | Capital(+) | Expenses(−) | Fees(+) | Balance
 function DateGroupRow({ dateLabel, entries, isMobile }) {
   const [open, setOpen] = useState(false);
   const [openEntry, setOpenEntry] = useState(null);
@@ -259,7 +272,6 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
 
   return (
     <div style={{borderBottom:'1px solid #f1f5f9'}}>
-      {/* Summary row — 5-col grid */}
       <div
         onClick={()=>setOpen(o=>!o)}
         style={{
@@ -276,36 +288,29 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
         onMouseEnter={e=>{ if(!open) e.currentTarget.style.background='#f8fafc'; }}
         onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
       >
-        {/* Col 1: date + type tags (hide type tags on mobile when collapsed) */}
         <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
           <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
           <span style={{fontSize:11,color:'#475569',fontWeight:600,flexShrink:0}}>{dateLabel}</span>
-          {/* On mobile, only show type tags when expanded; always show on desktop */}
           {(!isMobile || open) && typeSet.map(t=><TypeTag key={t} type={t}/>)}
           {entries.length>1 && !isMobile && (
             <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>
           )}
         </div>
-        {/* Col 2: Capital */}
         <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#1e40af':'#cbd5e1'}}>
           {totalCapital>0 ? `+${fmt(totalCapital)}` : '—'}
         </div>
-        {/* Col 3: Expenses */}
         <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
           {totalExpenses>0 ? `−${fmt(totalExpenses)}` : '—'}
         </div>
-        {/* Col 4: Fees */}
         <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalFees>0?'#0d9488':'#cbd5e1'}}>
           {totalFees>0 ? `+${fmt(totalFees)}` : '—'}
         </div>
-        {/* Col 5: Balance */}
         <div style={{textAlign:'right',fontSize:12,fontWeight:800,flexShrink:0,
           color:closingBal>=0?'#0f172a':'#dc2626'}}>
           {fmt(closingBal)}
         </div>
       </div>
 
-      {/* Expanded entry rows — same 5-col grid */}
       {open && entries.map((e,ei)=>{
         const isOpen = openEntry === e.id;
         const cap  = e.type==='installment' ? e.credit : 0;
@@ -329,7 +334,6 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
               onMouseEnter={e2=>{ if(!isOpen) e2.currentTarget.style.background='#e0f2fe'; }}
               onMouseLeave={e2=>{ e2.currentTarget.style.background=isOpen?'#e0f2fe':ei%2===0?'#fafeff':'#f0f9ff'; }}
             >
-              {/* Col 1: tag + name — always show type tag inside expanded row */}
               <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,overflow:'hidden'}}>
                 <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{isOpen?'▾':'▸'}</span>
                 <TypeTag type={e.type}/>
@@ -340,22 +344,18 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
                     : e.sub||''}
                 </span>
               </div>
-              {/* Col 2: Capital */}
               <div style={{textAlign:'right',fontSize:11,fontWeight:600,
                 color:cap>0?'#1e40af':'#cbd5e1'}}>
                 {cap>0?`+${fmt(cap)}`:'—'}
               </div>
-              {/* Col 3: Expenses */}
               <div style={{textAlign:'right',fontSize:11,fontWeight:600,
                 color:exp>0?'#dc2626':'#cbd5e1'}}>
                 {exp>0?`−${fmt(exp)}`:'—'}
               </div>
-              {/* Col 4: Fees */}
               <div style={{textAlign:'right',fontSize:11,fontWeight:600,
                 color:fee>0?'#0d9488':'#cbd5e1'}}>
                 {fee>0?`+${fmt(fee)}`:'—'}
               </div>
-              {/* Col 5: Balance */}
               <div style={{textAlign:'right',fontSize:11,fontWeight:700,
                 color:e.balance>=0?'#0f172a':'#dc2626'}}>
                 {fmt(e.balance)}
@@ -369,7 +369,7 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
   );
 }
 
-// ── LedgerRow: grouped (monthly/yearly) view ──────────────────────────────────
+// ── LedgerRow ─────────────────────────────────────────────────────────────────
 function LedgerRow({ row, isGrouped, isMobile }) {
   const [open, setOpen] = useState(false);
   if (isGrouped) {
@@ -388,7 +388,6 @@ function LedgerRow({ row, isGrouped, isMobile }) {
           onClick={()=>setOpen(o=>!o)}
           style={{
             display:'grid',
-            // On mobile, label gets more space; entries count hidden
             gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
             padding:'8px 10px',
             background:'#f8fafc',
@@ -400,7 +399,6 @@ function LedgerRow({ row, isGrouped, isMobile }) {
         >
           <div style={{fontSize:12,fontWeight:700,color:'#0f172a',display:'flex',alignItems:'center',gap:5,minWidth:0}}>
             <span style={{color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
-            {/* Label takes full available width; entries count hidden on mobile to prevent cutoff */}
             <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1}}>{row.label}</span>
             {!isMobile && (
               <span style={{fontSize:11,color:'#94a3b8',fontWeight:400,flexShrink:0}}>
@@ -436,71 +434,53 @@ function FundCard({ label, icon, color, bg, desc, alloc, used, budgetType, budge
   const pctUsed   = alloc > 0 ? Math.min(100, (used / alloc) * 100) : 0;
   const over      = used > alloc;
   return (
-    <div style={{
-      background: '#fff',
-      borderRadius: 12,
-      border: `1px solid #e2e8f0`,
-      overflow: 'hidden',
-    }}>
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', background: bg }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 20 }}>{icon}</span>
+    <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
+      <div style={{padding:'14px 18px',borderBottom:'1px solid #f1f5f9',background:bg}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          <span style={{fontSize:20}}>{icon}</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color }}>{label}</div>
-            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{desc}</div>
+            <div style={{fontWeight:700,fontSize:14,color}}>{label}</div>
+            <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{desc}</div>
           </div>
         </div>
       </div>
-      <div style={{ padding: '14px 18px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
-          <span style={{ color: '#64748b' }}>Budget</span>
-          <span style={{ fontWeight: 700, color: '#0f172a' }}>
-            {budgetType === 'amount' ? fmt(budgetValue) : budgetValue ? `${budgetValue}% of capital` : 'Not set'}
+      <div style={{padding:'14px 18px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,fontSize:12}}>
+          <span style={{color:'#64748b'}}>Budget</span>
+          <span style={{fontWeight:700,color:'#0f172a'}}>
+            {budgetType==='amount'?fmt(budgetValue):budgetValue?`${budgetValue}% of capital`:'Not set'}
           </span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
-          <span style={{ color: '#64748b' }}>Allocated</span>
-          <span style={{ fontWeight: 700, color }}>{fmt(alloc)}</span>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:6,fontSize:12}}>
+          <span style={{color:'#64748b'}}>Allocated</span>
+          <span style={{fontWeight:700,color}}>{fmt(alloc)}</span>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, fontSize: 12 }}>
-          <span style={{ color: '#64748b' }}>Used</span>
-          <span style={{ fontWeight: 700, color: over ? '#dc2626' : '#0f172a' }}>{fmt(used)}</span>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12}}>
+          <span style={{color:'#64748b'}}>Used</span>
+          <span style={{fontWeight:700,color:over?'#dc2626':'#0f172a'}}>{fmt(used)}</span>
         </div>
-        <div style={{ height: 8, borderRadius: 99, background: '#e2e8f0', overflow: 'hidden', marginBottom: 6 }}>
-          <div style={{
-            height: '100%', borderRadius: 99,
-            background: over ? '#dc2626' : color,
-            width: `${pctUsed}%`, transition: 'width 0.6s',
-          }} />
+        <div style={{height:8,borderRadius:99,background:'#e2e8f0',overflow:'hidden',marginBottom:6}}>
+          <div style={{height:'100%',borderRadius:99,background:over?'#dc2626':color,
+            width:`${pctUsed}%`,transition:'width 0.6s'}}/>
         </div>
-        <div style={{
-          display: 'flex', justifyContent: 'space-between', fontSize: 12,
-          fontWeight: 700, color: over ? '#dc2626' : '#15803d',
-        }}>
-          <span>{over ? '⚠️ Over budget' : `${(100 - pctUsed).toFixed(1)}% remaining`}</span>
-          <span>{over ? `-${fmt(Math.abs(remaining))}` : fmt(remaining)}</span>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:12,
+          fontWeight:700,color:over?'#dc2626':'#15803d'}}>
+          <span>{over?'⚠️ Over budget':`${(100-pctUsed).toFixed(1)}% remaining`}</span>
+          <span>{over?`-${fmt(Math.abs(remaining))}`:fmt(remaining)}</span>
         </div>
-        {allocBreakdown && alloc > 0 && (
-          <div style={{
-            marginTop: 10, padding: '8px 12px', borderRadius: 8,
-            background: '#fffbeb', border: '1px solid #fde68a',
-            display: 'flex', flexDirection: 'column', gap: 4,
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#92400e', marginBottom: 2 }}>Allocation Breakdown</div>
-            {allocBreakdown.fromCapital > 0 && (
-              <div style={{ fontSize: 11, color: '#92400e' }}>
-                📊 Capital %: {fmt(allocBreakdown.fromCapital)}
-              </div>
+        {allocBreakdown && alloc>0 && (
+          <div style={{marginTop:10,padding:'8px 12px',borderRadius:8,
+            background:'#fffbeb',border:'1px solid #fde68a',
+            display:'flex',flexDirection:'column',gap:4}}>
+            <div style={{fontSize:10,fontWeight:700,color:'#92400e',marginBottom:2}}>Allocation Breakdown</div>
+            {allocBreakdown.fromCapital>0 && (
+              <div style={{fontSize:11,color:'#92400e'}}>📊 Capital %: {fmt(allocBreakdown.fromCapital)}</div>
             )}
-            {allocBreakdown.entryFees > 0 && (
-              <div style={{ fontSize: 11, color: '#92400e' }}>
-                🎫 Entry fees: {fmt(allocBreakdown.entryFees)}
-              </div>
+            {allocBreakdown.entryFees>0 && (
+              <div style={{fontSize:11,color:'#92400e'}}>🎫 Entry fees: {fmt(allocBreakdown.entryFees)}</div>
             )}
-            {allocBreakdown.reregFees > 0 && (
-              <div style={{ fontSize: 11, color: '#92400e' }}>
-                🔄 Re-reg fees: {fmt(allocBreakdown.reregFees)}
-              </div>
+            {allocBreakdown.reregFees>0 && (
+              <div style={{fontSize:11,color:'#92400e'}}>🔄 Re-reg fees: {fmt(allocBreakdown.reregFees)}</div>
             )}
           </div>
         )}
@@ -509,7 +489,7 @@ function FundCard({ label, icon, color, bg, desc, alloc, used, budgetType, budge
   );
 }
 
-// ── Report helpers ─────────────────────────────────────────────────────────────
+// ── Report helpers ────────────────────────────────────────────────────────────
 function buildReportDateGroups(entries) {
   const map = {};
   entries.forEach(e => {
@@ -522,13 +502,13 @@ function buildReportDateGroups(entries) {
 
 function downloadCSV(entries, orgData) {
   const org = orgData || {};
-  const genDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const genDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
   const groups = buildReportDateGroups(entries);
   const rows = [
-    [`Organisation: ${org.name || org.name_en || ''}`, '', '', '', '', '', ''],
+    [`Organisation: ${org.name||org.name_en||''}`, '', '', '', '', '', ''],
     [`Report generated: ${genDate}`, '', '', '', '', '', ''],
     ['', '', '', '', '', '', ''],
-    ['Date', 'Type', 'Member / Description', 'Capital (+)', 'Expenses (−)', 'Fees (+)', 'Balance'],
+    ['Date','Type','Member / Description','Capital (+)','Expenses (−)','Fees (+)','Balance'],
   ];
   groups.forEach(g => {
     const cap = g.entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
@@ -551,14 +531,162 @@ function downloadCSV(entries, orgData) {
   const totalExp = entries.reduce((s,e)=>s+e.debit,0);
   const totalFee = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
   const finalBal = entries.length>0?entries[entries.length-1].balance:0;
-  rows.push(['TOTALS', '', '', totalCap, totalExp, totalFee, finalBal]);
+  rows.push(['TOTALS','','',totalCap,totalExp,totalFee,finalBal]);
 
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
-  const blob = new Blob(['\uFEFF'+csv], { type: 'text/csv;charset=utf-8;' });
+  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url;
-  a.download = `ledger-${new Date().toISOString().slice(0,10)}.csv`;
+  const a = document.createElement('a'); a.href=url;
+  a.download=`ledger-${new Date().toISOString().slice(0,10)}.csv`;
   a.click(); URL.revokeObjectURL(url);
+}
+
+// ── NEW: Export per-member Excel (one sheet per member) ───────────────────────
+// Uses SheetJS (xlsx) loaded from CDN. We lazy-load it so the page doesn't block.
+async function exportMembersExcel(memberRows, orgData) {
+  // Dynamically load SheetJS if not already present
+  if (!window.XLSX) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  const XLSX = window.XLSX;
+  const wb = XLSX.utils.book_new();
+  const org = orgData || {};
+  const genDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+
+  // ── Sheet 1: Summary of all members ──────────────────────────────────────
+  const summaryData = [
+    [`${org.name_en || org.name || 'Organisation'} — Member Capital Summary`],
+    [`Generated: ${genDate}`],
+    [],
+    ['#', 'Member ID', 'Name', 'Capital (Net)', 'Pending', 'Verified Payments', 'Total Payments'],
+    ...memberRows.map((r, i) => [
+      i + 1,
+      r.idNo || '',
+      r.nameEnglish || r.name || '—',
+      r.capital,
+      r.pending,
+      r.verifiedCount,
+      r.paymentCount,
+    ]),
+    [],
+    ['', '', 'TOTAL',
+      memberRows.reduce((s, r) => s + r.capital, 0),
+      memberRows.reduce((s, r) => s + r.pending, 0),
+      memberRows.reduce((s, r) => s + r.verifiedCount, 0),
+      memberRows.reduce((s, r) => s + r.paymentCount, 0),
+    ],
+  ];
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+  summarySheet['!cols'] = [
+    {wch:4},{wch:10},{wch:24},{wch:14},{wch:12},{wch:18},{wch:16},
+  ];
+  XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
+
+  // ── One sheet per member ──────────────────────────────────────────────────
+  memberRows.forEach(r => {
+    const name = (r.nameEnglish || r.name || 'Member').slice(0, 28); // sheet name max 31 chars
+    const safeSheetName = name.replace(/[:\\/?*\[\]]/g, '').trim() || `M_${r.idNo || 'unknown'}`;
+
+    // Build unified payment rows (same logic as MemberPaymentHistory)
+    const allRows = [];
+
+    // Installment payments
+    (r.payments || [])
+      .filter(p => !p.paymentType || p.paymentType === 'monthly')
+      .forEach(p => {
+        const net = (p.amount || 0) - (p.gatewayFee || 0);
+        // Collect paidMonths labels
+        const months = (p.paidMonths || []).map(fmtPaidMonth).join(', ');
+        allRows.push({
+          _sortKey: tsSort(p.createdAt),
+          date: tsDate(p.createdAt),
+          type: 'Installment',
+          installmentMonth: months,
+          amount: p.amount || 0,
+          gatewayFee: p.gatewayFee || 0,
+          net,
+          method: p.method || '—',
+          status: p.status || '—',
+        });
+      });
+
+    // Entry fees from entryFees collection
+    (r.entryFees || []).forEach(f => {
+      allRows.push({
+        _sortKey: tsSort(f.paidAt || f.createdAt),
+        date: f.paidAt ? normDate(f.paidAt) : normDate(f.createdAt),
+        type: 'Entry Fee',
+        installmentMonth: '',
+        amount: f.amount || 0,
+        gatewayFee: 0,
+        net: f.amount || 0,
+        method: f.method || '—',
+        status: 'verified',
+      });
+    });
+
+    // Fee payments from investments collection
+    (r.feePays || [])
+      .filter(p => p.status !== 'rejected')
+      .forEach(p => {
+        const net = (p.amount || 0) - (p.gatewayFee || 0);
+        allRows.push({
+          _sortKey: tsSort(p.createdAt),
+          date: normDate(p.createdAt),
+          type: p.paymentType === 'reregistration_fee' ? 'Re-Registration Fee' : 'Entry Fee',
+          installmentMonth: '',
+          amount: p.amount || 0,
+          gatewayFee: p.gatewayFee || 0,
+          net,
+          method: p.method || '—',
+          status: p.status || '—',
+        });
+      });
+
+    allRows.sort((a, b) => a._sortKey - b._sortKey);
+
+    const capitalNet = allRows
+      .filter(x => x.type === 'Installment' && x.status === 'verified')
+      .reduce((s, x) => s + x.net, 0);
+    const feeTotal = allRows
+      .filter(x => x.type !== 'Installment')
+      .reduce((s, x) => s + x.net, 0);
+
+    const sheetData = [
+      [`${org.name_en || org.name || 'Organisation'} — Member Payment History`],
+      [`Member: ${r.nameEnglish || r.name || '—'}  |  ID: ${r.idNo || '—'}`],
+      [`Generated: ${genDate}`],
+      [],
+      ['Date', 'Type', 'Installment Month', 'Amount', 'Gateway Fee', 'Net', 'Method', 'Status'],
+      ...allRows.map(row => [
+        row.date,
+        row.type,
+        row.installmentMonth,
+        row.amount,
+        row.gatewayFee || '',
+        row.net,
+        row.method,
+        row.status,
+      ]),
+      [],
+      ['', '', 'Capital Net (verified)', '', '', capitalNet, '', ''],
+      ['', '', 'Fee Income (not capital)', '', '', feeTotal, '', ''],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    ws['!cols'] = [
+      {wch:14},{wch:20},{wch:18},{wch:12},{wch:12},{wch:12},{wch:12},{wch:10},
+    ];
+    XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
+  });
+
+  XLSX.writeFile(wb, `members-capital-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 // ── ReportModal ───────────────────────────────────────────────────────────────
@@ -582,27 +710,22 @@ function ReportModal({ entries, orgData, onClose }) {
         background:'#fff',borderRadius:14,width:'100%',maxWidth:900,
         boxShadow:'0 8px 40px rgba(0,0,0,0.22)',overflow:'hidden',
       }}>
-        {/* Modal toolbar */}
         <div className="no-print" style={{
           display:'flex',justifyContent:'space-between',alignItems:'center',
           padding:'14px 20px',background:'#0f172a',flexWrap:'wrap',gap:8,
         }}>
-          <div style={{color:'#fff',fontWeight:700,fontSize:14}}>📒 Ledger Report</div>
+          <div style={{color:'#fff',fontWeight:700,fontSize:14}}>📋 Ledger Report</div>
           <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
             <label style={{display:'flex',alignItems:'center',gap:6,cursor:'pointer',
               color:'#e2e8f0',fontSize:12,userSelect:'none'}}>
               <div
                 onClick={()=>setShowBreakdown(v=>!v)}
-                style={{
-                  width:34,height:18,borderRadius:99,
+                style={{width:34,height:18,borderRadius:99,
                   background:showBreakdown?'#22c55e':'#475569',
-                  position:'relative',transition:'background 0.2s',cursor:'pointer',flexShrink:0,
-                }}>
-                <div style={{
-                  position:'absolute',top:2,left:showBreakdown?16:2,
+                  position:'relative',transition:'background 0.2s',cursor:'pointer',flexShrink:0}}>
+                <div style={{position:'absolute',top:2,left:showBreakdown?16:2,
                   width:14,height:14,borderRadius:'50%',background:'#fff',
-                  transition:'left 0.2s',
-                }}/>
+                  transition:'left 0.2s'}}/>
               </div>
               Show Breakdown
             </label>
@@ -624,9 +747,7 @@ function ReportModal({ entries, orgData, onClose }) {
           </div>
         </div>
 
-        {/* Printable content */}
         <div id="ledger-print-root" style={{padding:'28px 32px'}}>
-          {/* Letterhead */}
           <div style={{borderBottom:'2.5px solid #000',paddingBottom:14,marginBottom:18,
             display:'flex',alignItems:'flex-start',gap:16}}>
             {org.logoURL && (
@@ -658,7 +779,6 @@ function ReportModal({ entries, orgData, onClose }) {
             </div>
           </div>
 
-          {/* Summary row */}
           <div style={{display:'flex',gap:24,marginBottom:20,flexWrap:'wrap'}}>
             {[
               ['Total Capital',  fmt(totalCapital),  '#15803d'],
@@ -673,7 +793,6 @@ function ReportModal({ entries, orgData, onClose }) {
             ))}
           </div>
 
-          {/* Ledger table */}
           <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
             <thead>
               <tr style={{background:'#0f172a'}}>
@@ -695,9 +814,7 @@ function ReportModal({ entries, orgData, onClose }) {
                 return (
                   <>
                     <tr key={`g-${gi}`} style={{background:'#f1f5f9',borderTop:'2px solid #e2e8f0'}}>
-                      <td style={{padding:'6px 10px',fontWeight:700,color:'#0f172a',whiteSpace:'nowrap'}}>
-                        {g.date}
-                      </td>
+                      <td style={{padding:'6px 10px',fontWeight:700,color:'#0f172a',whiteSpace:'nowrap'}}>{g.date}</td>
                       <td style={{padding:'6px 10px',color:'#64748b',fontStyle:'italic',fontSize:10}}>
                         {g.entries.length} transaction{g.entries.length!==1?'s':''}
                       </td>
@@ -748,9 +865,7 @@ function ReportModal({ entries, orgData, onClose }) {
                 );
               })}
               <tr style={{background:'#0f172a',borderTop:'2px solid #334155'}}>
-                <td colSpan={2} style={{padding:'8px 10px',color:'#e2e8f0',fontWeight:700,fontSize:11}}>
-                  CLOSING TOTALS
-                </td>
+                <td colSpan={2} style={{padding:'8px 10px',color:'#e2e8f0',fontWeight:700,fontSize:11}}>CLOSING TOTALS</td>
                 <td style={{padding:'8px 10px',textAlign:'right',fontWeight:700,color:'#93c5fd'}}>
                   {totalCapital>0?`+${fmt(totalCapital)}`:'—'}
                 </td>
@@ -780,11 +895,8 @@ function ReportModal({ entries, orgData, onClose }) {
           #ledger-print-root,
           #ledger-print-root * { visibility: visible !important; }
           #ledger-print-root {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 100% !important;
-            padding: 14mm 14mm 20mm 14mm !important;
+            position: fixed !important; top: 0 !important; left: 0 !important;
+            width: 100% !important; padding: 14mm 14mm 20mm 14mm !important;
             box-sizing: border-box !important;
           }
           @page { size: A4 portrait; margin: 0; }
@@ -798,24 +910,23 @@ function ReportModal({ entries, orgData, onClose }) {
   );
 }
 
-// ── MemberPaymentHistory — unified table ──────────────────────────────────────
-// Combines installment payments + entry fees + re-reg fees into one table.
-// Fee rows are clearly labelled and NOT counted in the capital net total.
+// ── MemberPaymentHistory — with Installment Month column ─────────────────────
 function MemberPaymentHistory({ member }) {
   const r = member;
-
-  // Build unified rows
   const allRows = [];
 
-  // Installment payments (capital contributions)
+  // Installment payments
   (r.payments || [])
     .filter(p => !p.paymentType || p.paymentType === 'monthly')
     .forEach(p => {
       const net = (p.amount || 0) - (p.gatewayFee || 0);
+      // Format each entry in paidMonths array → "Apr 2026"
+      const months = (p.paidMonths || []).map(fmtPaidMonth).join(', ');
       allRows.push({
         _sortKey: tsSort(p.createdAt),
         date: tsDate(p.createdAt),
         type: 'installment',
+        installmentMonth: months,
         label: '',
         amount: p.amount || 0,
         gatewayFee: p.gatewayFee || 0,
@@ -832,6 +943,7 @@ function MemberPaymentHistory({ member }) {
       _sortKey: tsSort(f.paidAt || f.createdAt),
       date: f.paidAt ? normDate(f.paidAt) : normDate(f.createdAt),
       type: 'entry_fee',
+      installmentMonth: '',
       label: '',
       amount: f.amount || 0,
       gatewayFee: 0,
@@ -842,7 +954,7 @@ function MemberPaymentHistory({ member }) {
     });
   });
 
-  // Fee payments from investments/payments collection (entry_fee / reregistration_fee)
+  // Fee payments from investments collection
   (r.feePays || [])
     .filter(p => p.status !== 'rejected')
     .forEach(p => {
@@ -851,6 +963,7 @@ function MemberPaymentHistory({ member }) {
         _sortKey: tsSort(p.createdAt),
         date: normDate(p.createdAt),
         type: p.paymentType || 'entry_fee',
+        installmentMonth: '',
         label: p.paymentType === 'reregistration_fee' ? 'Re-Registration Fee' : 'Entry Fee',
         amount: p.amount || 0,
         gatewayFee: p.gatewayFee || 0,
@@ -872,10 +985,10 @@ function MemberPaymentHistory({ member }) {
 
   return (
     <div style={{overflowX:'auto',WebkitOverflowScrolling:'touch'}}>
-      <table style={{width:'100%',minWidth:460,borderCollapse:'collapse',fontSize:12}}>
+      <table style={{width:'100%',minWidth:560,borderCollapse:'collapse',fontSize:12}}>
         <thead>
           <tr style={{background:'#dbeafe'}}>
-            {['Date','Type','Amount','Fee','Net','Method','Status'].map(h => (
+            {['Date','Type','Inst. Month','Amount','Fee','Net','Method','Status'].map(h => (
               <th key={h} style={{
                 padding:'6px 10px',
                 textAlign:['Amount','Fee','Net'].includes(h)?'right':'left',
@@ -886,16 +999,17 @@ function MemberPaymentHistory({ member }) {
         </thead>
         <tbody>
           {allRows.map((row, i) => (
-            <tr key={i} style={{background:i%2===0?'#fff':'#f0f9ff', borderTop:'1px solid #e2e8f0'}}>
+            <tr key={i} style={{background:i%2===0?'#fff':'#f0f9ff',borderTop:'1px solid #e2e8f0'}}>
               <td style={{padding:'6px 10px',color:'#64748b',whiteSpace:'nowrap'}}>{row.date}</td>
               <td style={{padding:'6px 10px'}}>
                 <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
                   <TypeTag type={row.type}/>
                   <span style={{color:'#334155',fontSize:11}}>{row.label}</span>
-                  {!row.isCapital && (
-                    <span style={{fontSize:9,color:'#94a3b8',fontStyle:'italic'}}></span>
-                  )}
                 </span>
+              </td>
+              {/* ── NEW: Installment Month column ── */}
+              <td style={{padding:'6px 10px',color:'#475569',fontSize:11,whiteSpace:'nowrap'}}>
+                {row.installmentMonth || <span style={{color:'#cbd5e1'}}>—</span>}
               </td>
               <td style={{padding:'6px 10px',textAlign:'right'}}>{fmt(row.amount)}</td>
               <td style={{padding:'6px 10px',textAlign:'right',color:row.gatewayFee>0?'#dc2626':'#94a3b8'}}>
@@ -907,30 +1021,24 @@ function MemberPaymentHistory({ member }) {
               }}>
                 {fmt(row.net)}
                 {!row.isCapital && (
-                  <span style={{
-                    display:'block',fontSize:9,fontWeight:400,
-                    color:'#94a3b8',fontStyle:'italic',
-                  }}>not capital</span>
+                  <span style={{display:'block',fontSize:9,fontWeight:400,
+                    color:'#94a3b8',fontStyle:'italic'}}>not capital</span>
                 )}
               </td>
               <td style={{padding:'6px 10px',color:'#64748b'}}>{row.method}</td>
               <td style={{padding:'6px 10px'}}>
-                <span style={{
-                  fontSize:11,fontWeight:700,
-                  color:statusColor(row.status),
-                  background:statusBg(row.status),
-                  padding:'2px 8px',borderRadius:99,
-                }}>
+                <span style={{fontSize:11,fontWeight:700,
+                  color:statusColor(row.status),background:statusBg(row.status),
+                  padding:'2px 8px',borderRadius:99}}>
                   {row.status}
                 </span>
               </td>
             </tr>
           ))}
         </tbody>
-        {/* Footer: show capital net vs fee income separately */}
         <tfoot>
           <tr style={{background:'#f1f5f9',borderTop:'2px solid #e2e8f0'}}>
-            <td colSpan={4} style={{padding:'7px 10px',fontWeight:700,color:'#0f172a',fontSize:12}}>
+            <td colSpan={5} style={{padding:'7px 10px',fontWeight:700,color:'#0f172a',fontSize:12}}>
               Capital Net (verified)
             </td>
             <td style={{padding:'7px 10px',textAlign:'right',fontWeight:800,color:'#15803d',fontSize:13}}>
@@ -940,7 +1048,7 @@ function MemberPaymentHistory({ member }) {
           </tr>
           {allRows.some(x=>!x.isCapital) && (
             <tr style={{background:'#f0fdfa',borderTop:'1px solid #e2e8f0'}}>
-              <td colSpan={4} style={{padding:'7px 10px',fontWeight:700,color:'#0d9488',fontSize:12}}>
+              <td colSpan={5} style={{padding:'7px 10px',fontWeight:700,color:'#0d9488',fontSize:12}}>
                 Fee Income (not capital)
               </td>
               <td style={{padding:'7px 10px',textAlign:'right',fontWeight:800,color:'#0d9488',fontSize:13}}>
@@ -979,8 +1087,9 @@ export default function AdminAccountBook() {
   const [memSearch,  setMemSearch]  = useState('');
   const [memSort,    setMemSort]    = useState('idNo');
   const [selMember,  setSelMember]  = useState(null);
-  // Detect mobile via window width — SSR-safe
+  const [exporting,  setExporting]  = useState(false); // ← NEW
   const [isMobile,   setIsMobile]   = useState(false);
+
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
     check();
@@ -992,7 +1101,7 @@ export default function AdminAccountBook() {
     if (!orgId || !isOrgAdmin) return;
     (async () => {
       const [paySnap,expSnap,feeSnap,loanSnap,projSnap,distSnap,memSnap] = await Promise.all([
-        getDocs(query(collection(db,'organizations',orgId,'investments'), orderBy('createdAt','asc'))),
+        getDocs(query(collection(db,'organizations',orgId,'investments'),orderBy('createdAt','asc'))),
         getDocs(collection(db,'organizations',orgId,'expenses')),
         getDocs(collection(db,'organizations',orgId,'entryFees')),
         getDocs(collection(db,'organizations',orgId,'loans')),
@@ -1015,13 +1124,13 @@ export default function AdminAccountBook() {
       const rows = enriched.map(m => {
         const myPay    = rawPay.filter(p=>p.userId===m.id);
         const verified = myPay.filter(p=>p.status==='verified');
-        const capital  = verified.reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0), 0);
-        const pending  = myPay.filter(p=>p.status==='pending').reduce((s,p)=>s+(p.amount||0), 0);
+        const capital  = verified.reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
+        const pending  = myPay.filter(p=>p.status==='pending').reduce((s,p)=>s+(p.amount||0),0);
         const myEntryFees = rawFees.filter(f=>f.userId===m.id);
         const myFeePays   = myPay.filter(p=>p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee');
         return {...m, capital, pending, verifiedCount:verified.length,
           paymentCount:myPay.length, payments:myPay,
-          entryFees: myEntryFees, feePays: myFeePays};
+          entryFees:myEntryFees, feePays:myFeePays};
       });
 
       setPayments(rawPay);
@@ -1059,13 +1168,13 @@ export default function AdminAccountBook() {
   const displayRows = viewMode==='daily' ? filteredEntries : viewMode==='monthly' ? monthly : yearly;
   const isGrouped   = viewMode !== 'daily';
 
-  const totalCredit    = filteredEntries.reduce((s,e)=>s+e.credit, 0);
-  const totalDebit     = filteredEntries.reduce((s,e)=>s+e.debit,  0);
+  const totalCredit    = filteredEntries.reduce((s,e)=>s+e.credit,0);
+  const totalDebit     = filteredEntries.reduce((s,e)=>s+e.debit,0);
   const ledgerBalance  = filteredEntries.length>0 ? filteredEntries[filteredEntries.length-1].balance : 0;
   const instCount      = filteredEntries.filter(e=>e.type==='installment').length;
-  const totalCapital   = memberRows.reduce((s,r)=>s+r.capital, 0);
-  const totalPending   = memberRows.reduce((s,r)=>s+r.pending, 0);
-  const totalExpenses  = expenses.reduce((s,e)=>s+(e.amount||0), 0);
+  const totalCapital   = memberRows.reduce((s,r)=>s+r.capital,0);
+  const totalPending   = memberRows.reduce((s,r)=>s+r.pending,0);
+  const totalExpenses  = expenses.reduce((s,e)=>s+(e.amount||0),0);
   const totalLoansOut  = loans.filter(l=>l.status==='disbursed'||l.status==='repaid').reduce((s,l)=>s+(l.amount||0),0);
   const activeLoans    = loans.filter(l=>l.status==='disbursed').length;
   const activeProjects = projects.filter(p=>p.status==='active').length;
@@ -1073,12 +1182,12 @@ export default function AdminAccountBook() {
   const distCount      = dists.filter(d=>d.status==='distributed').length;
   const totalFees      = fees.reduce((s,f)=>s+(f.amount||0),0);
   const totalEntryFeeInv = payments
-    .filter(p=>p.status==='verified' && p.paymentType==='entry_fee' && p.isContribution===false)
+    .filter(p=>p.status==='verified'&&p.paymentType==='entry_fee'&&p.isContribution===false)
     .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
   const totalReregFeeInv = payments
-    .filter(p=>p.status==='verified' && p.paymentType==='reregistration_fee')
+    .filter(p=>p.status==='verified'&&p.paymentType==='reregistration_fee')
     .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
-  const totalFeeIncome   = totalFees + totalEntryFeeInv + totalReregFeeInv;
+  const totalFeeIncome = totalFees + totalEntryFeeInv + totalReregFeeInv;
 
   const fb = settings.fundBudgets || {};
   let investInv = 0, investRes = 0;
@@ -1088,12 +1197,12 @@ export default function AdminAccountBook() {
       investRes += Number(p.fundSources.reserve)||0;
     } else {
       const a = p.investedAmount||0;
-      if (p.fundSource==='reserve') investRes += a; else investInv += a;
+      if (p.fundSource==='reserve') investRes+=a; else investInv+=a;
     }
   });
   const usedBenevolent = loans
     .filter(l=>l.status==='disbursed'||l.status==='repaid')
-    .reduce((s,l)=>s+(l.amount||0), 0);
+    .reduce((s,l)=>s+(l.amount||0),0);
 
   const FUNDS = [
     {key:'investment', label:'Investment Fund', icon:'📈', color:'#2563eb', bg:'#eff6ff',
@@ -1109,7 +1218,7 @@ export default function AdminAccountBook() {
       alloc:computeFundAlloc('benevolent',totalCapital,settings), used:usedBenevolent,
       budgetType:fb.benevolent?.type, budgetValue:fb.benevolent?.value},
     {key:'expenses', label:'Expenses Fund', icon:'🧾', color:'#d97706', bg:'#fffbeb',
-      desc:'Operational running costs (entry fees fund this, but are not spending from it)',
+      desc:'Operational running costs',
       alloc: computeFundAlloc('expenses',totalCapital,settings) + totalFeeIncome,
       used: totalExpenses,
       allocBreakdown: {
@@ -1129,7 +1238,7 @@ export default function AdminAccountBook() {
       (r.idNo||'').includes(memSearch)
     )
     .sort((a,b) =>
-      memSort==='idNo'     ? (a.idNo||'').localeCompare(b.idNo||'', undefined, {numeric:true}) :
+      memSort==='idNo'     ? (a.idNo||'').localeCompare(b.idNo||'',undefined,{numeric:true}) :
       memSort==='capital'  ? b.capital-a.capital :
       memSort==='payments' ? b.verifiedCount-a.verifiedCount :
       (a.nameEnglish||a.name||'').localeCompare(b.nameEnglish||b.name||'')
@@ -1151,21 +1260,17 @@ export default function AdminAccountBook() {
     </div>
   );
 
-  // ── Shared ledger-style mini transaction list (used in Summary tab) ──────────
   const RecentTransactionsList = ({ entries }) => (
     <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
       <div style={{padding:'12px 16px',borderBottom:'1px solid #e2e8f0',
-        display:'flex',justifyContent:'space-between',alignItems:'center',
-        background:'#fff'}}>
+        display:'flex',justifyContent:'space-between',alignItems:'center',background:'#fff'}}>
         <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>Recent Transactions</div>
         <button onClick={()=>setTab('ledger')}
-          style={{fontSize:12,color:'#2563eb',background:'none',border:'none',
-            cursor:'pointer',fontWeight:600}}>Full ledger →</button>
+          style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>
+          Full ledger →
+        </button>
       </div>
-
       <LedgerLegend/>
-
-      {/* Column header — mirrors ledger tab */}
       <div style={{
         display:'grid',
         gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
@@ -1173,24 +1278,29 @@ export default function AdminAccountBook() {
       }}>
         {['Date / Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map((h,hi)=>(
           <div key={h} style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-            textTransform:'uppercase',letterSpacing:'0.05em',
-            textAlign:hi===0?'left':'right'}}>
+            textTransform:'uppercase',letterSpacing:'0.05em',textAlign:hi===0?'left':'right'}}>
             {h}
           </div>
         ))}
       </div>
-
-      {/* Date-grouped rows using the same DateGroupRow component */}
-      {buildDateGroups([...entries].reverse().slice(0, 20)).map(grp => (
-        <DateGroupRow
-          key={grp.dateLabel}
-          dateLabel={grp.dateLabel}
-          entries={grp.entries}
-          isMobile={isMobile}
-        />
+      {buildDateGroups([...entries].reverse().slice(0,20)).map(grp => (
+        <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries} isMobile={isMobile}/>
       ))}
     </div>
   );
+
+  // ── Export handler ────────────────────────────────────────────────────────
+  const handleExportExcel = async () => {
+    setExporting(true);
+    try {
+      await exportMembersExcel(memberRows, orgData);
+    } catch (err) {
+      console.error('Export failed:', err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="page-wrap animate-fade">
@@ -1210,6 +1320,19 @@ export default function AdminAccountBook() {
               style={{padding:'10px 18px',borderRadius:8,background:'#0f172a',color:'#fff',
                 border:'none',cursor:'pointer',fontSize:13,fontWeight:700,flexShrink:0}}>
               🖨 Generate Report
+            </button>
+          )}
+          {/* ── NEW: Export Excel button on members tab ── */}
+          {tab==='members' && (
+            <button
+              onClick={handleExportExcel}
+              disabled={exporting || memberRows.length === 0}
+              style={{padding:'10px 18px',borderRadius:8,
+                background:exporting?'#94a3b8':'#15803d',color:'#fff',
+                border:'none',cursor:exporting?'not-allowed':'pointer',
+                fontSize:13,fontWeight:700,flexShrink:0,
+                opacity: memberRows.length===0 ? 0.5 : 1}}>
+              {exporting ? '⏳ Exporting…' : '⬇ Export Excel'}
             </button>
           )}
           {tab==='funds' && (
@@ -1264,8 +1387,7 @@ export default function AdminAccountBook() {
                   <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
                     <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>Fund Overview</div>
                     <button onClick={()=>setTab('funds')}
-                      style={{fontSize:12,color:'#2563eb',background:'none',border:'none',
-                        cursor:'pointer',fontWeight:600}}>
+                      style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>
                       Full breakdown →
                     </button>
                   </div>
@@ -1322,19 +1444,19 @@ export default function AdminAccountBook() {
                     display:'flex',justifyContent:'space-between',alignItems:'center'}}>
                     <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>Top Members by Capital</div>
                     <button onClick={()=>setTab('members')}
-                      style={{fontSize:12,color:'#2563eb',background:'none',border:'none',
-                        cursor:'pointer',fontWeight:600}}>See all →</button>
+                      style={{fontSize:12,color:'#2563eb',background:'none',border:'none',cursor:'pointer',fontWeight:600}}>
+                      See all →
+                    </button>
                   </div>
                   {[...memberRows].sort((a,b)=>b.capital-a.capital).slice(0,5).map((r,i) => {
-                    const cp = totalCapital>0 ? ((r.capital/totalCapital)*100).toFixed(1) : '0';
+                    const cp = totalCapital>0?((r.capital/totalCapital)*100).toFixed(1):'0';
                     return (
                       <div key={r.id} style={{display:'flex',alignItems:'center',gap:12,
                         padding:'10px 16px',borderBottom:'1px solid #f1f5f9',
                         background:i%2===0?'#fff':'#fafafa'}}>
                         <div style={{width:32,height:32,borderRadius:'50%',background:'#dbeafe',
                           display:'flex',alignItems:'center',justifyContent:'center',
-                          fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,
-                          overflow:'hidden'}}>
+                          fontSize:11,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
                           {r.photoURL
                             ? <img src={r.photoURL} style={{width:32,height:32,objectFit:'cover',borderRadius:'50%',display:'block'}} alt=""/>
                             : initials(r.nameEnglish||r.name)}
@@ -1356,10 +1478,7 @@ export default function AdminAccountBook() {
                 </div>
               )}
 
-              {/* ── Recent Transactions — ledger-style (replaces old grid layout) ── */}
-              {allEntries.length > 0 && (
-                <RecentTransactionsList entries={allEntries}/>
-              )}
+              {allEntries.length > 0 && <RecentTransactionsList entries={allEntries}/>}
             </div>
           )}
 
@@ -1423,7 +1542,6 @@ export default function AdminAccountBook() {
                 <div>
                   <LedgerLegend/>
                   <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-                    {/* Header — 5 cols */}
                     <div style={{
                       display:'grid',
                       gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
@@ -1431,13 +1549,11 @@ export default function AdminAccountBook() {
                     }}>
                       {['Date / Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map((h,hi)=>(
                         <div key={h} style={{fontSize:10,fontWeight:700,color:'#94a3b8',
-                          textTransform:'uppercase',letterSpacing:'0.05em',
-                          textAlign:hi===0?'left':'right'}}>
+                          textTransform:'uppercase',letterSpacing:'0.05em',textAlign:hi===0?'left':'right'}}>
                           {h}
                         </div>
                       ))}
                     </div>
-                    {/* Opening balance row */}
                     <div style={{
                       display:'grid',
                       gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
@@ -1447,7 +1563,6 @@ export default function AdminAccountBook() {
                       <div/><div/><div/>
                       <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#64748b'}}>{fmt(0)}</div>
                     </div>
-                    {/* Body */}
                     {isGrouped
                       ? displayRows.map(row => (
                           <LedgerRow key={row.key} row={row} isGrouped={true} isMobile={isMobile}/>
@@ -1456,7 +1571,6 @@ export default function AdminAccountBook() {
                           <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries} isMobile={isMobile}/>
                         ))
                     }
-                    {/* Closing row */}
                     <div style={{
                       display:'grid',
                       gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
@@ -1464,17 +1578,17 @@ export default function AdminAccountBook() {
                     }}>
                       <div style={{fontSize:11,color:'#e2e8f0',fontWeight:700}}>Closing Balance</div>
                       <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#93c5fd'}}>
-                        {filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0) > 0
+                        {filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0)>0
                           ? `+${fmt(filteredEntries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0))}`
                           : '—'}
                       </div>
                       <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#fca5a5'}}>
-                        {filteredEntries.reduce((s,e)=>s+e.debit,0) > 0
+                        {filteredEntries.reduce((s,e)=>s+e.debit,0)>0
                           ? `−${fmt(filteredEntries.reduce((s,e)=>s+e.debit,0))}`
                           : '—'}
                       </div>
                       <div style={{textAlign:'right',fontWeight:700,fontSize:11,color:'#5eead4'}}>
-                        {filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0) > 0
+                        {filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0)>0
                           ? `+${fmt(filteredEntries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0))}`
                           : '—'}
                       </div>
@@ -1523,7 +1637,7 @@ export default function AdminAccountBook() {
                   ))}
                 </div>
                 {filteredMembers.map((r,i) => {
-                  const cp  = totalCapital>0 ? ((r.capital/totalCapital)*100).toFixed(1) : '0';
+                  const cp  = totalCapital>0?((r.capital/totalCapital)*100).toFixed(1):'0';
                   const sel = selMember===r.id;
                   return (
                     <div key={r.id} onClick={()=>setSelMember(sel?null:r.id)}
@@ -1537,8 +1651,7 @@ export default function AdminAccountBook() {
                         <div style={{display:'flex',alignItems:'center',gap:8}}>
                           <div style={{width:34,height:34,borderRadius:'50%',background:'#dbeafe',
                             display:'flex',alignItems:'center',justifyContent:'center',
-                            fontSize:12,fontWeight:700,color:'#1d4ed8',flexShrink:0,
-                            overflow:'hidden'}}>
+                            fontSize:12,fontWeight:700,color:'#1d4ed8',flexShrink:0,overflow:'hidden'}}>
                             {r.photoURL
                               ? <img src={r.photoURL} style={{width:34,height:34,objectFit:'cover',borderRadius:'50%',display:'block'}} alt=""/>
                               : initials(r.nameEnglish||r.name)}
@@ -1603,7 +1716,7 @@ export default function AdminAccountBook() {
                   bg={FUNDS.reduce((s,f)=>s+f.alloc-f.used,0)>=0?'#f0fdf4':'#fef2f2'}/>
               </div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(280px,1fr))',gap:16}}>
-                {FUNDS.map(({key:fKey, ...fProps}) => <FundCard key={fKey} {...fProps}/>)}
+                {FUNDS.map(({key:fKey,...fProps}) => <FundCard key={fKey} {...fProps}/>)}
               </div>
             </div>
           )}
