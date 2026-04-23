@@ -4,13 +4,12 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCO7IxQKmFJyO1qJX4M8ArpJe5HfTxRpRw",
-  authDomain: "absis-capital-sync.firebaseapp.com",
-  projectId: "absis-capital-sync",
-  storageBucket: "absis-capital-sync.firebasestorage.app",
-  messagingSenderId: "938799579766",
-  appId: "1:938799579766:web:cac43182704b5bb36ad557",
-  measurementId: "G-TPQC0F7RME"
+  apiKey: ",
+  authDomain: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: "",
+  measurementId: ""
 };
 
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
