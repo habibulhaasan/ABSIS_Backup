@@ -50,12 +50,15 @@ const TYPE_CFG = {
   loan_repayment:     { label:'Loan In',     short:'LoI', color:'#92400e', bg:'#fef3c7' },
 };
 
-function TypeBadge({ type }) {
-  const c = TYPE_CFG[type] || { label:type||'Payment', color:'#475569', bg:'#f1f5f9' };
+function TypeBadge({ type, short = false }) {
+  const c = TYPE_CFG[type] || { label:type||'Payment', short:(type||'?').slice(0,3), color:'#475569', bg:'#f1f5f9' };
   return (
-    <span style={{ padding:'2px 8px', borderRadius:99, fontSize:11, fontWeight:700,
-      background:c.bg, color:c.color, whiteSpace:'nowrap' }}>
-      {c.label}
+    <span style={{
+      padding: short ? '2px 5px' : '2px 8px',
+      borderRadius:99, fontSize:11, fontWeight:700,
+      background:c.bg, color:c.color, whiteSpace:'nowrap',
+    }}>
+      {short ? c.short : c.label}
     </span>
   );
 }
@@ -638,6 +641,9 @@ export default function AdminLedger() {
       </div>
     );
 
+    // Shared grid template used in header, rows, and footer
+    const GRID = '82px 40px minmax(0,1fr) 76px 72px 58px';
+
     return (
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
 
@@ -744,7 +750,7 @@ export default function AdminLedger() {
           </div>
         )}
 
-        {/* Filter pills — horizontally scrollable */}
+        {/* Filter pills */}
         <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:2,
           WebkitOverflowScrolling:'touch', scrollbarWidth:'none' }}>
           {[
@@ -768,7 +774,7 @@ export default function AdminLedger() {
           </div>
         )}
 
-        {/* ── Table — horizontally scrollable ── */}
+        {/* ── Table ── */}
         {filteredLedger.length === 0 ? (
           <div className="card" style={{ textAlign:'center', padding:32,
             color:'#94a3b8', fontSize:13 }}>
@@ -777,16 +783,15 @@ export default function AdminLedger() {
         ) : (
           <div style={{ borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
             <div style={{ overflowX:'auto', WebkitOverflowScrolling:'touch' }}>
-              <div style={{ minWidth:580 }}>
+              <div style={{ minWidth:420 }}>
 
                 {/* Header */}
-                <div style={{ display:'grid',
-                  gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
-                  gap:8, padding:'8px 14px', background:'#f8fafc',
+                <div style={{ display:'grid', gridTemplateColumns:GRID,
+                  gap:6, padding:'8px 10px', background:'#f8fafc',
                   borderBottom:'1px solid #e2e8f0' }}>
                   {['Date','Type','Installment','Amount','Capital','Status'].map((h,i) => (
-                    <div key={i} style={{ fontSize:11, fontWeight:700, color:'#64748b',
-                      textTransform:'uppercase', letterSpacing:'0.05em' }}>{h}</div>
+                    <div key={i} style={{ fontSize:10, fontWeight:700, color:'#64748b',
+                      textTransform:'uppercase', letterSpacing:'0.04em' }}>{h}</div>
                   ))}
                 </div>
 
@@ -795,15 +800,14 @@ export default function AdminLedger() {
                   <div key={r.id}
                     onClick={()=>setModalRow(r)}
                     style={{
-                      display:'grid',
-                      gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
-                      gap:8, padding:'10px 14px', alignItems:'center',
+                      display:'grid', gridTemplateColumns:GRID,
+                      gap:6, padding:'9px 10px', alignItems:'center',
                       borderBottom:'1px solid #f1f5f9',
                       background: r.isContrib && r.status==='verified'
                         ? '#f0fdf4' : i%2===0 ? '#fff' : '#fafafa',
                       borderLeft:`3px solid ${
                         r.isContrib && r.status==='verified' ? '#86efac' :
-                        r.status==='pending' ? '#fde68a' :
+                        r.status==='pending'  ? '#fde68a' :
                         r.status==='rejected' ? '#fca5a5' : 'transparent'}`,
                       cursor:'pointer',
                     }}
@@ -811,37 +815,43 @@ export default function AdminLedger() {
                     onMouseLeave={e=>e.currentTarget.style.background=
                       r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'}
                   >
-                    <div style={{ fontSize:12, color:'#64748b', whiteSpace:'nowrap' }}>
+                    {/* Date */}
+                    <div style={{ fontSize:11, color:'#64748b', whiteSpace:'nowrap' }}>
                       {tsDate(r.date)}
                     </div>
 
-                    <TypeBadge type={r.type}/>
+                    {/* Type — short badge */}
+                    <TypeBadge type={r.type} short />
 
+                    {/* Installment / label */}
                     <div style={{ minWidth:0 }}>
-                      <div style={{ fontSize:12, fontWeight:600, color:'#1d4ed8',
+                      <div style={{ fontSize:11, fontWeight:600, color:'#1d4ed8',
                         whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                        {r.paidMonthsLabel || '—'}
+                        {r.paidMonthsLabel || r.label || '—'}
                       </div>
                       {r.txId && (
                         <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'monospace',
                           whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                          {r.txId.slice(0,16)}…
+                          {r.txId.slice(0,10)}…
                         </div>
                       )}
                     </div>
 
-                    <div style={{ fontWeight:700, fontSize:13, color:'#0f172a' }}>
+                    {/* Amount */}
+                    <div style={{ fontWeight:700, fontSize:12, color:'#0f172a' }}>
                       {fmt(r.amount)}
-                      {r.penalty>0 && (
-                        <div style={{ fontSize:10, color:'#d97706' }}>+{fmt(r.penalty)} pen.</div>
+                      {r.penalty > 0 && (
+                        <div style={{ fontSize:10, color:'#d97706' }}>+{fmt(r.penalty)}</div>
                       )}
                     </div>
 
-                    <div style={{ fontSize:13, fontWeight:600,
+                    {/* Capital credit */}
+                    <div style={{ fontSize:12, fontWeight:600,
                       color:r.capitalCredit>0?'#15803d':'#94a3b8' }}>
-                      {r.capitalCredit>0 ? fmt(r.capitalCredit) : '—'}
+                      {r.capitalCredit > 0 ? fmt(r.capitalCredit) : '—'}
                     </div>
 
+                    {/* Status badge */}
                     <span className={`badge ${
                       r.status==='verified' ? 'badge-green' :
                       r.status==='pending'  ? 'badge-yellow' : 'badge-red'}`}
@@ -852,18 +862,17 @@ export default function AdminLedger() {
                 ))}
 
                 {/* Footer totals */}
-                <div style={{ display:'grid',
-                  gridTemplateColumns:'100px 110px 1fr 100px 100px 80px',
-                  gap:8, padding:'8px 14px', background:'#f8fafc',
+                <div style={{ display:'grid', gridTemplateColumns:GRID,
+                  gap:6, padding:'8px 10px', background:'#f8fafc',
                   borderTop:'2px solid #e2e8f0' }}>
                   <div/><div/>
                   <div style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>
                     {filteredLedger.length} records
                   </div>
-                  <div style={{ fontSize:13, fontWeight:800, color:'#0f172a' }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>
                     {fmt(filteredLedger.reduce((s,r)=>s+r.amount,0))}
                   </div>
-                  <div style={{ fontSize:13, fontWeight:800, color:'#15803d' }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:'#15803d' }}>
                     {fmt(filteredLedger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0))}
                   </div>
                   <div/>
@@ -880,7 +889,6 @@ export default function AdminLedger() {
   return (
     <div className="page-wrap animate-fade">
 
-      {/* Row detail / CRUD modal — uses shared Modal component */}
       {modalRow && (
         <RowModal
           row={modalRow}
