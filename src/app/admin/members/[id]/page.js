@@ -49,11 +49,8 @@ function fmtDate(ts) {
 }
 
 // ── Upload legal file to GAS (admin version) ──────────────────────────────────
-// File will be named: {Category}_{memberId}_{memberName}_{fileTitle}
 async function uploadLegalFileToGAS(file, memberId, memberName, category, title, userFolderId) {
   const base64 = await toBase64(file);
-
-  // Build the formatted file name: Category_MemberId_MemberName_FileTitle
   const safeCategory = (category || 'Other').replace(/[\s/]+/g, '-');
   const safeName     = memberName.replace(/\s+/g, '_');
   const safeTitle    = title.trim().replace(/\s+/g, '-');
@@ -64,7 +61,7 @@ async function uploadLegalFileToGAS(file, memberId, memberName, category, title,
     action:       'uploadLegalFile',
     secret:       SECRET,
     file:         base64.split(',')[1],
-    fileName:     legalFileName,  // formatted: Category_MemberId_Name_Title.ext
+    fileName:     legalFileName,
     mimeType:     file.type,
     memberId:     memberId,
     memberName:   memberName,
@@ -73,7 +70,25 @@ async function uploadLegalFileToGAS(file, memberId, memberName, category, title,
 
   const res = await fetch(GAS_URL, {
     method:  'POST',
-    headers: { 'Content-Type': 'text/plain' }, // avoids preflight for GAS
+    headers: { 'Content-Type': 'text/plain' },
+    body:    JSON.stringify(payload),
+  });
+
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+
+// ── Delete legal file from GAS / Google Drive ─────────────────────────────────
+async function deleteLegalFileFromGAS(fileId) {
+  const payload = {
+    action:  'deleteLegalFile',
+    secret:  SECRET,
+    fileId:  fileId,
+  };
+
+  const res = await fetch(GAS_URL, {
+    method:  'POST',
+    headers: { 'Content-Type': 'text/plain' },
     body:    JSON.stringify(payload),
   });
 
@@ -286,9 +301,7 @@ function PrintModal({ member, orgData, capital, onClose }) {
         <div style={{flex:1,minHeight:0,overflowY:'auto',background:'#f0f0f0',padding:'20px'}}>
           <div id="mpp" style={{background:'#fff',maxWidth:780,margin:'0 auto',
             padding:'28px 32px',fontFamily:'serif',boxShadow:'0 2px 12px rgba(0,0,0,0.12)'}}>
-
             <Letterhead org={org}/>
-
             <div style={{textAlign:'center',marginBottom:20}}>
               <div style={{fontSize:14,fontWeight:900,letterSpacing:'0.1em',
                 textTransform:'uppercase',color:'#000',
@@ -301,10 +314,8 @@ function PrintModal({ member, orgData, capital, onClose }) {
                 {member.profileUpdatedAt && ` · Last updated: ${fmtTS(member.profileUpdatedAt)}`}
               </div>
             </div>
-
             <div style={{display:'flex',gap:20,marginBottom:20,
-              border:'1px solid #ddd',borderRadius:6,padding:'14px 16px',
-              background:'#fafafa'}}>
+              border:'1px solid #ddd',borderRadius:6,padding:'14px 16px',background:'#fafafa'}}>
               <div style={{width:90,height:110,border:'1.5px solid #999',borderRadius:4,
                 overflow:'hidden',flexShrink:0,background:'#eee',
                 display:'flex',alignItems:'center',justifyContent:'center',
@@ -330,18 +341,14 @@ function PrintModal({ member, orgData, capital, onClose }) {
                 ):null)}
               </div>
               {member.nomineePhotoURL && (
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',
-                  gap:4,flexShrink:0}}>
-                  <div style={{width:60,height:75,border:'1px solid #999',borderRadius:3,
-                    overflow:'hidden',background:'#eee'}}>
-                    <img src={member.nomineePhotoURL} alt=""
-                      style={{width:'100%',height:'100%',objectFit:'cover'}}/>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,flexShrink:0}}>
+                  <div style={{width:60,height:75,border:'1px solid #999',borderRadius:3,overflow:'hidden',background:'#eee'}}>
+                    <img src={member.nomineePhotoURL} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
                   </div>
                   <div style={{fontSize:8,color:'#666',textAlign:'center'}}>Nominee</div>
                 </div>
               )}
             </div>
-
             <SectionTable title="Personal Information"    rows={INFO}/>
             <SectionTable title="Address Information"     rows={ADDR}/>
             <SectionTable title="Nominee / Heir Details"  rows={HEIR}/>
@@ -353,7 +360,6 @@ function PrintModal({ member, orgData, capital, onClose }) {
               ]}/>
             )}
             <SectionTable title="Legal & Agreement Details" rows={LEGAL}/>
-
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:48,marginTop:40}}>
               {['Member Signature','Authorized Signatory'].map(l=>(
                 <div key={l} style={{textAlign:'center'}}>
@@ -362,7 +368,6 @@ function PrintModal({ member, orgData, capital, onClose }) {
                 </div>
               ))}
             </div>
-
             <div style={{marginTop:32,paddingTop:8,borderTop:'1px solid #ddd',
               display:'flex',justifyContent:'space-between',fontSize:8,color:'#888'}}>
               <span>{org.name||'Organization'} — Confidential</span>
@@ -481,8 +486,7 @@ function FilePreviewModal({ file, onClose }) {
         )}
         <div style={{flex:1,minHeight:0,overflow:'hidden',background:'#f8fafc'}}>
           {file.mimeType?.startsWith('image/') ? (
-            <div style={{height:'100%',display:'flex',alignItems:'center',
-              justifyContent:'center',padding:16}}>
+            <div style={{height:'100%',display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
               <img src={file.url || file.viewUrl} alt={file.name}
                 style={{maxWidth:'100%',maxHeight:'100%',objectFit:'contain',borderRadius:8}}/>
             </div>
@@ -548,15 +552,15 @@ function AdminPhotoUpload({ label, orgId, orgData, memberId, memberFolderId, onU
 }
 
 // ── File row ─────────────────────────────────────────────────────────────────
-function FileRow({ file, index, onPreview }) {
+function FileRow({ file, index, onPreview, onDelete }) {
   const fIcon = (mime='') => {
     if (mime.startsWith('image/')) return '🖼️';
     if (mime.includes('pdf'))      return '📕';
     if (mime.includes('word')||mime.includes('document')) return '📝';
     return '📄';
   };
-  const isAdmin  = file.uploadedBy === 'admin';
-  const fileUrl  = file.url || file.viewUrl;
+  const isAdmin = file.uploadedBy === 'admin';
+  const fileUrl = file.url || file.viewUrl;
 
   return (
     <div style={{display:'flex',alignItems:'flex-start',gap:10,
@@ -568,6 +572,12 @@ function FileRow({ file, index, onPreview }) {
           overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
           {file.title || file.name}
         </div>
+        {(file.driveFileName || file.name) && (
+          <div style={{fontSize:10,color:'#94a3b8',marginTop:1,
+            overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'monospace'}}>
+            📂 {file.driveFileName || file.name}
+          </div>
+        )}
         <div style={{display:'flex',gap:8,flexWrap:'wrap',marginTop:3,alignItems:'center'}}>
           {file.category && (
             <span style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:999,
@@ -590,9 +600,9 @@ function FileRow({ file, index, onPreview }) {
           )}
         </div>
         {file.description && (
-          <div style={{fontSize:11,color:'#64748b',marginTop:4,
-            overflow:'hidden',textOverflow:'ellipsis',
-            display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+          <div style={{fontSize:11,color:'#64748b',marginTop:4,overflow:'hidden',
+            textOverflow:'ellipsis',display:'-webkit-box',
+            WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
             {file.description}
           </div>
         )}
@@ -610,22 +620,25 @@ function FileRow({ file, index, onPreview }) {
             ↗ Open
           </a>
         )}
+        {/* ── RESTORED: Delete button ── */}
+        {onDelete && (
+          <button onClick={()=>onDelete(file)}
+            title="Delete file from Drive and profile"
+            style={{padding:'4px 10px',borderRadius:6,border:'1px solid #fecaca',
+              background:'#fff5f5',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer'}}>
+            🗑 Delete
+          </button>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Upload progress row (for multi-file feedback) ─────────────────────────────
+// ── Upload progress row ───────────────────────────────────────────────────────
 function UploadProgressRow({ fileName, status, error }) {
-  const color  = status === 'done'     ? '#15803d'
-               : status === 'error'    ? '#b91c1c'
-               : '#64748b';
-  const bg     = status === 'done'     ? '#f0fdf4'
-               : status === 'error'    ? '#fee2e2'
-               : '#f8fafc';
-  const icon   = status === 'done'     ? '✅'
-               : status === 'error'    ? '❌'
-               : '⏳';
+  const color = status==='done' ? '#15803d' : status==='error' ? '#b91c1c' : '#64748b';
+  const bg    = status==='done' ? '#f0fdf4' : status==='error' ? '#fee2e2' : '#f8fafc';
+  const icon  = status==='done' ? '✅'      : status==='error' ? '❌'      : '⏳';
   return (
     <div style={{display:'flex',alignItems:'center',gap:8,padding:'5px 8px',
       borderRadius:6,background:bg,marginBottom:4,fontSize:12}}>
@@ -646,122 +659,110 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
   const [uploadTitle,    setUploadTitle]    = useState('');
   const [uploadCategory, setUploadCategory] = useState('');
   const [uploadDesc,     setUploadDesc]     = useState('');
-  const [uploadFiles,    setUploadFiles]    = useState([]); // array of File objects
-  const [uploadProgress, setUploadProgress] = useState([]); // [{name, status, error}]
+  const [uploadFiles,    setUploadFiles]    = useState([]);
+  const [uploadProgress, setUploadProgress] = useState([]);
   const [showUploadForm, setShowUploadForm] = useState(false);
-
   const fileRef = useRef(null);
 
-  const showToast = (msg, err=false) => {
-    setToast({msg,err}); setTimeout(()=>setToast(''),4000);
-  };
+  const showToast = (msg, err=false) => { setToast({msg,err}); setTimeout(()=>setToast(''),4000); };
 
   const allFiles = member.legalFiles || [];
-  const filtered = activeTab === 'all'    ? allFiles
-                 : activeTab === 'admin'  ? allFiles.filter(f => f.uploadedBy === 'admin')
-                 : allFiles.filter(f => f.uploadedBy !== 'admin');
+  const filtered = activeTab==='all'   ? allFiles
+                 : activeTab==='admin' ? allFiles.filter(f=>f.uploadedBy==='admin')
+                 : allFiles.filter(f=>f.uploadedBy!=='admin');
 
   const handleFileChange = (e) => {
     const files = Array.from(e.target.files || []);
     setUploadFiles(files);
-    setUploadProgress(files.map(f => ({ name: f.name, status: 'pending', error: null })));
+    setUploadProgress(files.map(f=>({name:f.name,status:'pending',error:null})));
   };
 
   const handleUpload = async () => {
-    if (uploadFiles.length === 0) { showToast('Please select at least one file.', true); return; }
-    if (!uploadTitle.trim())      { showToast('Please enter a title.', true); return; }
-
+    if (uploadFiles.length===0) { showToast('Please select at least one file.',true); return; }
+    if (!uploadTitle.trim())    { showToast('Please enter a title.',true); return; }
     setUploading(true);
-    const memberName = member.nameEnglish || member.nameBengali || 'Member';
-    const memberId   = member.idNo || member.id;
-
-    let currentFiles  = [...allFiles];
-    let currentFolder = member.driveFolderId || null;
-
-    // Upload files one by one so we can show per-file progress
-    const progCopy = uploadFiles.map(f => ({ name: f.name, status: 'uploading', error: null }));
+    const memberName   = member.nameEnglish || member.nameBengali || 'Member';
+    const memberId     = member.idNo || member.id;
+    let currentFiles   = [...allFiles];
+    let currentFolder  = member.driveFolderId || null;
+    const progCopy     = uploadFiles.map(f=>({name:f.name,status:'uploading',error:null}));
     setUploadProgress([...progCopy]);
 
-    for (let i = 0; i < uploadFiles.length; i++) {
+    for (let i=0; i<uploadFiles.length; i++) {
       const file = uploadFiles[i];
       try {
         const res = await uploadLegalFileToGAS(
           file, memberId, memberName,
-          uploadCategory || 'Other',
-          uploadFiles.length === 1 ? uploadTitle.trim() : `${uploadTitle.trim()}-${i + 1}`,
+          uploadCategory||'Other',
+          uploadFiles.length===1 ? uploadTitle.trim() : `${uploadTitle.trim()}-${i+1}`,
           currentFolder,
         );
-
-        if (!res.success) throw new Error(res.error || 'Upload failed');
-
-        // Save folder ID back on first successful upload
+        if (!res.success) throw new Error(res.error||'Upload failed');
         if (res.folderId && !currentFolder) {
           currentFolder = res.folderId;
-          await updateDoc(doc(db,'organizations',orgId,'members',member.id),{
-            driveFolderId: res.folderId,
-          });
-          onMemberUpdate({ driveFolderId: res.folderId });
+          await updateDoc(doc(db,'organizations',orgId,'members',member.id),{ driveFolderId:res.folderId });
+          onMemberUpdate({ driveFolderId:res.folderId });
         }
-
         const newFile = {
-          // Display name uses the title for single uploads, or title + index for multi
-          name:        file.name,
-          title:       uploadFiles.length === 1
-                         ? uploadTitle.trim()
-                         : `${uploadTitle.trim()} (${i + 1})`,
-          category:    uploadCategory || 'Other',
-          description: uploadDesc.trim(),
-          url:         res.url,
-          fileId:      res.fileId,
-          mimeType:    file.type,
-          uploadedBy:  'admin',
-          uploadedAt:  new Date().toISOString(),
-          // Store the GAS-formatted file name for reference
+          name:          file.name,
+          title:         uploadFiles.length===1 ? uploadTitle.trim() : `${uploadTitle.trim()} (${i+1})`,
+          category:      uploadCategory||'Other',
+          description:   uploadDesc.trim(),
+          url:           res.url,
+          fileId:        res.fileId,
+          mimeType:      file.type,
+          uploadedBy:    'admin',
+          uploadedAt:    new Date().toISOString(),
           driveFileName: res.name,
         };
-
         currentFiles = [...currentFiles, newFile];
-
-        progCopy[i] = { name: file.name, status: 'done', error: null };
+        progCopy[i]  = { name:file.name, status:'done', error:null };
         setUploadProgress([...progCopy]);
-
       } catch(err) {
-        progCopy[i] = { name: file.name, status: 'error', error: err.message };
+        progCopy[i] = { name:file.name, status:'error', error:err.message };
         setUploadProgress([...progCopy]);
       }
     }
 
-    // Persist all successfully uploaded files to Firestore in one write
     const newlyAdded = currentFiles.length - allFiles.length;
-    if (newlyAdded > 0) {
-      await updateDoc(doc(db,'organizations',orgId,'members',member.id),{
-        legalFiles: currentFiles,
-      });
-      onMemberUpdate({ legalFiles: currentFiles });
+    if (newlyAdded>0) {
+      await updateDoc(doc(db,'organizations',orgId,'members',member.id),{ legalFiles:currentFiles });
+      onMemberUpdate({ legalFiles:currentFiles });
     }
-
-    const successCount = progCopy.filter(p => p.status === 'done').length;
-    const failCount    = progCopy.filter(p => p.status === 'error').length;
-
-    if (successCount > 0 && failCount === 0) {
-      showToast(`✅ ${successCount} file${successCount > 1 ? 's' : ''} uploaded successfully!`);
-      // Reset form after a short delay so user can see the progress
-      setTimeout(() => {
-        setUploadTitle('');
-        setUploadCategory('');
-        setUploadDesc('');
-        setUploadFiles([]);
-        setUploadProgress([]);
-        if (fileRef.current) fileRef.current.value = '';
+    const successCount = progCopy.filter(p=>p.status==='done').length;
+    const failCount    = progCopy.filter(p=>p.status==='error').length;
+    if (successCount>0 && failCount===0) {
+      showToast(`✅ ${successCount} file${successCount>1?'s':''} uploaded successfully!`);
+      setTimeout(()=>{
+        setUploadTitle(''); setUploadCategory(''); setUploadDesc('');
+        setUploadFiles([]); setUploadProgress([]);
+        if (fileRef.current) fileRef.current.value='';
         setShowUploadForm(false);
-      }, 1500);
-    } else if (successCount > 0) {
-      showToast(`⚠️ ${successCount} uploaded, ${failCount} failed.`, false);
+      },1500);
+    } else if (successCount>0) {
+      showToast(`⚠️ ${successCount} uploaded, ${failCount} failed.`,false);
     } else {
-      showToast(`Upload failed for all ${failCount} file${failCount > 1 ? 's' : ''}.`, true);
+      showToast(`Upload failed for all ${failCount} file${failCount>1?'s':''}.`,true);
     }
-
     setUploading(false);
+  };
+
+  // ── RESTORED: Delete file from Drive + Firestore ──
+  const handleDeleteFile = async (file, originalIndex) => {
+    const label = file.title || file.name || 'this file';
+    if (!window.confirm(`Delete "${label}"?\n\nThis will permanently delete the file from Google Drive and remove it from this profile.`)) return;
+    const updatedFiles = allFiles.filter((_,i)=>i!==originalIndex);
+    try {
+      if (file.fileId) {
+        const gasRes = await deleteLegalFileFromGAS(file.fileId);
+        if (!gasRes.success) throw new Error(gasRes.error||'Google Drive delete failed');
+      }
+      await updateDoc(doc(db,'organizations',orgId,'members',member.id),{ legalFiles:updatedFiles });
+      onMemberUpdate({ legalFiles:updatedFiles });
+      showToast(`🗑 "${label}" deleted from Drive and profile.`);
+    } catch(err) {
+      showToast('Failed to delete: '+err.message,true);
+    }
   };
 
   const TAB_COUNTS = {
@@ -771,36 +772,30 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
   };
 
   return (
-    <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
-      overflow:'hidden',marginBottom:12}}>
+    <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
 
       {/* Header */}
-      <div style={{padding:'12px 16px',background:'#f8fafc',
-        borderBottom:'1px solid #e2e8f0',display:'flex',
-        justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+      <div style={{padding:'12px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',
+        display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
         <div style={{display:'flex',alignItems:'center',gap:10}}>
-          <span style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>
-            📁 Legal Papers &amp; Documents
-          </span>
+          <span style={{fontWeight:700,fontSize:13,color:'#0f172a'}}>📁 Legal Papers &amp; Documents</span>
           <span style={{fontSize:11,color:'#64748b',fontWeight:500}}>
-            {allFiles.length} file{allFiles.length !== 1 ? 's' : ''}
+            {allFiles.length} file{allFiles.length!==1?'s':''}
           </span>
         </div>
-        <button
-          onClick={()=>{ setShowUploadForm(v=>!v); setUploadProgress([]); }}
+        <button onClick={()=>{ setShowUploadForm(v=>!v); setUploadProgress([]); }}
           style={{padding:'6px 14px',borderRadius:8,border:'none',cursor:'pointer',
             fontSize:12,fontWeight:700,
-            background: showUploadForm ? '#f1f5f9' : '#0f172a',
-            color:      showUploadForm ? '#475569'  : '#fff'}}>
-          {showUploadForm ? '✕ Cancel' : '+ Upload Files'}
+            background:showUploadForm?'#f1f5f9':'#0f172a',
+            color:showUploadForm?'#475569':'#fff'}}>
+          {showUploadForm?'✕ Cancel':'+ Upload Files'}
         </button>
       </div>
 
       {/* Toast */}
       {toast && (
         <div style={{padding:'8px 16px',fontSize:12,fontWeight:600,
-          background:toast.err?'#fee2e2':'#dcfce7',
-          color:toast.err?'#b91c1c':'#15803d'}}>
+          background:toast.err?'#fee2e2':'#dcfce7',color:toast.err?'#b91c1c':'#15803d'}}>
           {toast.msg}
         </div>
       )}
@@ -808,120 +803,74 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
       {/* Upload form */}
       {showUploadForm && (
         <div style={{padding:'16px',borderBottom:'1px solid #e2e8f0',background:'#fafafa'}}>
-
           <div style={{padding:'8px 12px',borderRadius:7,background:'#eff6ff',
             border:'1px solid #bfdbfe',fontSize:11,color:'#1e40af',marginBottom:14}}>
-            📌 Files will be named: <strong>{uploadCategory || 'Category'}_{member.idNo}_{(member.nameEnglish||'Member').replace(/\s+/g,'_')}_File-Title.ext</strong>
+            📌 Files will be named: <strong>{uploadCategory||'Category'}_{member.idNo}_{(member.nameEnglish||'Member').replace(/\s+/g,'_')}_File-Title.ext</strong>
           </div>
-
-          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',
-            gap:12,marginBottom:12}}>
-
-            {/* Title */}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))',gap:12,marginBottom:12}}>
             <div style={{gridColumn:'1/-1'}}>
               <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
                 textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>
                 Title <span style={{color:'#ef4444'}}>*</span>
               </label>
-              <input
-                value={uploadTitle}
-                onChange={e=>setUploadTitle(e.target.value)}
+              <input value={uploadTitle} onChange={e=>setUploadTitle(e.target.value)}
                 placeholder="e.g. NID Copy, Agreement Form…"
-                style={{width:'100%',padding:'8px 10px',borderRadius:7,
-                  border:'1px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}}
-              />
-              {uploadFiles.length > 1 && (
-                <div style={{fontSize:11,color:'#64748b',marginTop:3}}>
-                  For multiple files, titles will be suffixed with (1), (2), etc.
-                </div>
+                style={{width:'100%',padding:'8px 10px',borderRadius:7,border:'1px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}}/>
+              {uploadFiles.length>1 && (
+                <div style={{fontSize:11,color:'#64748b',marginTop:3}}>For multiple files, titles will be suffixed with (1), (2), etc.</div>
               )}
             </div>
-
-            {/* Category */}
             <div>
               <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
-                textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>
-                Category
-              </label>
-              <select
-                value={uploadCategory}
-                onChange={e=>setUploadCategory(e.target.value)}
-                style={{width:'100%',padding:'8px 10px',borderRadius:7,
-                  border:'1px solid #e2e8f0',fontSize:13,boxSizing:'border-box',
-                  background:'#fff'}}>
+                textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>Category</label>
+              <select value={uploadCategory} onChange={e=>setUploadCategory(e.target.value)}
+                style={{width:'100%',padding:'8px 10px',borderRadius:7,border:'1px solid #e2e8f0',fontSize:13,boxSizing:'border-box',background:'#fff'}}>
                 <option value="">Select category…</option>
                 {FILE_CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-
-            {/* File — multiple allowed */}
             <div>
               <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
                 textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>
                 Files <span style={{color:'#ef4444'}}>*</span>{' '}
-                <span style={{fontWeight:400,fontSize:10,color:'#94a3b8',textTransform:'none'}}>
-                  (select one or more)
-                </span>
+                <span style={{fontWeight:400,fontSize:10,color:'#94a3b8',textTransform:'none'}}>(select one or more)</span>
               </label>
-              <input
-                ref={fileRef}
-                type="file"
-                multiple
-                onChange={handleFileChange}
-                style={{width:'100%',padding:'6px 0',fontSize:12}}
-              />
-              {uploadFiles.length > 0 && (
-                <div style={{fontSize:11,color:'#475569',marginTop:4,
-                  padding:'6px 8px',background:'#f1f5f9',borderRadius:6}}>
-                  {uploadFiles.length} file{uploadFiles.length > 1 ? 's' : ''} selected:{' '}
+              <input ref={fileRef} type="file" multiple onChange={handleFileChange}
+                style={{width:'100%',padding:'6px 0',fontSize:12}}/>
+              {uploadFiles.length>0 && (
+                <div style={{fontSize:11,color:'#475569',marginTop:4,padding:'6px 8px',background:'#f1f5f9',borderRadius:6}}>
+                  {uploadFiles.length} file{uploadFiles.length>1?'s':''} selected:{' '}
                   {uploadFiles.map(f=>`${f.name} (${(f.size/1024).toFixed(1)}KB)`).join(', ')}
                 </div>
               )}
             </div>
-
-            {/* Description */}
             <div style={{gridColumn:'1/-1'}}>
               <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
                 textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>
-                Description{' '}
-                <span style={{color:'#94a3b8',fontWeight:400}}>(optional)</span>
+                Description <span style={{color:'#94a3b8',fontWeight:400}}>(optional)</span>
               </label>
-              <textarea
-                value={uploadDesc}
-                onChange={e=>setUploadDesc(e.target.value)}
-                rows={2}
+              <textarea value={uploadDesc} onChange={e=>setUploadDesc(e.target.value)} rows={2}
                 placeholder="Additional notes about this file…"
-                style={{width:'100%',padding:'8px 10px',borderRadius:7,
-                  border:'1px solid #e2e8f0',fontSize:13,resize:'vertical',
-                  boxSizing:'border-box'}}
-              />
+                style={{width:'100%',padding:'8px 10px',borderRadius:7,border:'1px solid #e2e8f0',fontSize:13,resize:'vertical',boxSizing:'border-box'}}/>
             </div>
           </div>
-
-          {/* Per-file progress */}
-          {uploadProgress.length > 0 && (
+          {uploadProgress.length>0 && (
             <div style={{marginBottom:12}}>
-              {uploadProgress.map((p, i) => (
-                <UploadProgressRow key={i} fileName={p.name} status={p.status} error={p.error}/>
-              ))}
+              {uploadProgress.map((p,i)=><UploadProgressRow key={i} fileName={p.name} status={p.status} error={p.error}/>)}
             </div>
           )}
-
           <div style={{display:'flex',justifyContent:'flex-end',gap:8}}>
             <button onClick={()=>{ setShowUploadForm(false); setUploadProgress([]); }}
-              style={{padding:'8px 16px',borderRadius:8,border:'1px solid #e2e8f0',
-                background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
+              style={{padding:'8px 16px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
               Cancel
             </button>
-            <button onClick={handleUpload} disabled={uploading || uploadFiles.length === 0}
-              style={{padding:'8px 20px',borderRadius:8,border:'none',cursor:'pointer',
-                fontSize:13,fontWeight:700,
-                background: (uploading || uploadFiles.length === 0) ? '#94a3b8' : '#0f172a',
-                color:'#fff',
-                opacity: (uploading || uploadFiles.length === 0) ? 0.8 : 1}}>
+            <button onClick={handleUpload} disabled={uploading||uploadFiles.length===0}
+              style={{padding:'8px 20px',borderRadius:8,border:'none',cursor:'pointer',fontSize:13,fontWeight:700,
+                background:(uploading||uploadFiles.length===0)?'#94a3b8':'#0f172a',color:'#fff',
+                opacity:(uploading||uploadFiles.length===0)?0.8:1}}>
               {uploading
                 ? `⏳ Uploading… (${uploadProgress.filter(p=>p.status==='done').length}/${uploadFiles.length})`
-                : `⬆ Upload ${uploadFiles.length > 1 ? `${uploadFiles.length} Files` : 'File'} to Drive`}
+                : `⬆ Upload ${uploadFiles.length>1?`${uploadFiles.length} Files`:'File'} to Drive`}
             </button>
           </div>
         </div>
@@ -929,32 +878,30 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
 
       {/* Drive folder link */}
       {member.driveFolderId && (
-        <div style={{padding:'6px 16px',fontSize:11,color:'#64748b',
-          borderBottom:'1px solid #f1f5f9'}}>
+        <div style={{padding:'6px 16px',fontSize:11,color:'#64748b',borderBottom:'1px solid #f1f5f9'}}>
           📂 Drive folder:{' '}
           <a href={`https://drive.google.com/drive/folders/${member.driveFolderId}`}
-            target="_blank" rel="noreferrer"
-            style={{color:'#2563eb'}}>
+            target="_blank" rel="noreferrer" style={{color:'#2563eb'}}>
             Open in Google Drive ↗
           </a>
         </div>
       )}
 
       {/* Tabs */}
-      {allFiles.length > 0 && (
+      {allFiles.length>0 && (
         <div style={{display:'flex',gap:0,borderBottom:'1px solid #e2e8f0',background:'#f8fafc'}}>
           {[['all','All'],['admin','Admin Uploads'],['member','Member Uploads']].map(([key,label])=>(
             <button key={key} onClick={()=>setActiveTab(key)}
               style={{padding:'8px 14px',border:'none',cursor:'pointer',fontSize:12,
-                fontWeight: activeTab===key ? 700 : 500,
-                color:      activeTab===key ? '#0f172a' : '#64748b',
-                background: activeTab===key ? '#fff' : 'transparent',
-                borderBottom: activeTab===key ? '2px solid #0f172a' : '2px solid transparent',
+                fontWeight:activeTab===key?700:500,
+                color:activeTab===key?'#0f172a':'#64748b',
+                background:activeTab===key?'#fff':'transparent',
+                borderBottom:activeTab===key?'2px solid #0f172a':'2px solid transparent',
                 transition:'all 0.15s'}}>
               {label}
               <span style={{marginLeft:5,fontSize:10,padding:'1px 5px',borderRadius:99,
-                background: activeTab===key ? '#0f172a' : '#e2e8f0',
-                color:      activeTab===key ? '#fff' : '#64748b'}}>
+                background:activeTab===key?'#0f172a':'#e2e8f0',
+                color:activeTab===key?'#fff':'#64748b'}}>
                 {TAB_COUNTS[key]}
               </span>
             </button>
@@ -963,17 +910,21 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
       )}
 
       {/* File list */}
-      {filtered.length === 0 ? (
+      {filtered.length===0 ? (
         <div style={{textAlign:'center',padding:'32px 20px',color:'#94a3b8',fontSize:13}}>
-          {allFiles.length === 0
-            ? 'No documents uploaded yet.'
-            : 'No files in this category.'}
+          {allFiles.length===0 ? 'No documents uploaded yet.' : 'No files in this category.'}
         </div>
       ) : (
         <div>
-          {filtered.map((f,i)=>(
-            <FileRow key={i} file={f} index={i} onPreview={setPreview}/>
-          ))}
+          {filtered.map((f,i)=>{
+            const originalIndex = allFiles.indexOf(f);
+            return (
+              <FileRow key={i} file={f} index={i}
+                onPreview={setPreview}
+                onDelete={(file)=>handleDeleteFile(file,originalIndex)}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -982,8 +933,7 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
   );
 }
 
-
-// ── Exit Workflow component ────────────────────────────────────────────────────
+// ── Exit Workflow ─────────────────────────────────────────────────────────────
 function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
   const [showModal, setShowModal] = useState(false);
   const [exitType,  setExitType]  = useState('archived');
@@ -998,12 +948,12 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
   const handleExit = async () => {
     if (!reason.trim()) { alert('Please enter a reason.'); return; }
     if (!confirm(
-      `${exitType === 'archived' ? 'Archive' : 'Terminate'} ${member.nameEnglish}?\n\n` +
+      `${exitType==='archived'?'Archive':'Terminate'} ${member.nameEnglish}?\n\n` +
       `Returnable capital: ৳${returnable.toLocaleString()}\n\nContinue?`
     )) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db,'organizations',orgId,'members',memberId), {
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{
         approved:       false,
         memberStatus:   exitType,
         exitDate,
@@ -1011,16 +961,16 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
         exitType,
         returnableCapital: returnable,
         exitAccountingSummary: {
-          totalCapital:       c.total            || 0,
+          totalCapital:       c.total             || 0,
           memberExpenseShare: c.memberExpenseShare || 0,
-          feesTotal:          c.feesTotal         || 0,
-          loanOutstanding:    c.loanOutstanding   || 0,
-          profitTotal:        c.profitTotal        || 0,
+          feesTotal:          c.feesTotal          || 0,
+          loanOutstanding:    c.loanOutstanding    || 0,
+          profitTotal:        c.profitTotal         || 0,
           returnableCapital:  returnable,
           recordedAt:         new Date().toISOString(),
         },
       });
-      await addDoc(collection(db,'organizations',orgId,'notifications'), {
+      await addDoc(collection(db,'organizations',orgId,'notifications'),{
         userId:    memberId,
         message:   `Your membership has been ${exitType}. Exit date: ${exitDate}. Returnable capital: ৳${returnable.toLocaleString()}. Reason: ${reason.trim()}`,
         type:      'exit',
@@ -1033,36 +983,29 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
     setSaving(false);
   };
 
-  // ── Already exited: show summary ──────────────────────────────────────────
-  if (member.memberStatus === 'archived' || member.memberStatus === 'terminated') {
-    const isArchived = member.memberStatus === 'archived';
+  if (member.memberStatus==='archived'||member.memberStatus==='terminated') {
+    const isArchived = member.memberStatus==='archived';
     const ac = member.exitAccountingSummary || {};
     return (
-      <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
-        overflow:'hidden',marginTop:16}}>
+      <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginTop:16}}>
         <div style={{padding:'12px 16px',
-          background: isArchived ? '#f0fdf4' : '#fef2f2',
-          borderBottom:'1px solid #e2e8f0',
+          background:isArchived?'#f0fdf4':'#fef2f2',borderBottom:'1px solid #e2e8f0',
           display:'flex',alignItems:'center',gap:8}}>
-          <span style={{fontSize:18}}>{isArchived ? '📦' : '⛔'}</span>
+          <span style={{fontSize:18}}>{isArchived?'📦':'⛔'}</span>
           <div style={{flex:1}}>
-            <div style={{fontWeight:700,fontSize:13,
-              color: isArchived ? '#15803d' : '#dc2626'}}>
-              Member {isArchived ? 'Archived' : 'Terminated'}
+            <div style={{fontWeight:700,fontSize:13,color:isArchived?'#15803d':'#dc2626'}}>
+              Member {isArchived?'Archived':'Terminated'}
             </div>
             <div style={{fontSize:11,color:'#64748b'}}>
-              {member.exitDate && `Exit date: ${member.exitDate}`}
-              {member.exitReason && ` · ${member.exitReason}`}
+              {member.exitDate&&`Exit date: ${member.exitDate}`}
+              {member.exitReason&&` · ${member.exitReason}`}
             </div>
           </div>
         </div>
-        {Object.keys(ac).length > 0 && (
+        {Object.keys(ac).length>0 && (
           <div style={{padding:'14px 16px'}}>
-            <div style={{fontWeight:600,fontSize:13,color:'#0f172a',marginBottom:10}}>
-              Exit Accounting Summary
-            </div>
-            <div style={{display:'grid',
-              gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:8}}>
+            <div style={{fontWeight:600,fontSize:13,color:'#0f172a',marginBottom:10}}>Exit Accounting Summary</div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:8}}>
               {[
                 ['Contributions',   ac.totalCapital,        '#15803d','#f0fdf4'],
                 ['Expense Share',  -ac.memberExpenseShare,  '#d97706','#fffbeb'],
@@ -1072,11 +1015,8 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
                 ['Returned',        ac.returnableCapital,   '#0f172a','#f8fafc'],
               ].map(([l,v,c,bg])=>(
                 <div key={l} style={{background:bg,borderRadius:8,padding:'10px 12px'}}>
-                  <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
-                    textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{l}</div>
-                  <div style={{fontSize:15,fontWeight:700,color:c}}>
-                    {(v||0)>=0?'+':''}{fmt(v||0)}
-                  </div>
+                  <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{l}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:c}}>{(v||0)>=0?'+':''}{fmt(v||0)}</div>
                 </div>
               ))}
             </div>
@@ -1086,171 +1026,111 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
     );
   }
 
-  // ── Active member: show exit button ──────────────────────────────────────
   return (
     <>
-      <div style={{marginTop:16,padding:'14px 16px',borderRadius:12,
-        border:'1px solid #fca5a5',background:'#fff'}}>
-        <div style={{display:'flex',justifyContent:'space-between',
-          alignItems:'center',gap:12}}>
+      <div style={{marginTop:16,padding:'14px 16px',borderRadius:12,border:'1px solid #fca5a5',background:'#fff'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:12}}>
           <div>
-            <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>
-              Member Exit
-            </div>
+            <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>Member Exit</div>
             <div style={{fontSize:12,color:'#64748b',marginTop:2}}>
               Archive (voluntary) or terminate this member with full accounting.
             </div>
           </div>
           <button onClick={()=>setShowModal(true)}
-            style={{padding:'8px 18px',borderRadius:8,
-              border:'1.5px solid #fca5a5',background:'#fff',
-              color:'#dc2626',cursor:'pointer',fontSize:13,
-              fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}}>
+            style={{padding:'8px 18px',borderRadius:8,border:'1.5px solid #fca5a5',background:'#fff',
+              color:'#dc2626',cursor:'pointer',fontSize:13,fontWeight:600,flexShrink:0,whiteSpace:'nowrap'}}>
             Exit Member
           </button>
         </div>
       </div>
 
-      {showModal && typeof document !== 'undefined' && createPortal(
+      {showModal && typeof document!=='undefined' && createPortal(
         <div onClick={e=>{if(e.target===e.currentTarget)setShowModal(false);}}
           style={{position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.6)',
             display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
           <div style={{background:'#fff',borderRadius:14,width:'min(600px,100%)',
-            maxHeight:'calc(100dvh - 32px)',overflowY:'auto',
-            boxShadow:'0 32px 80px rgba(0,0,0,0.3)'}}>
-
+            maxHeight:'calc(100dvh - 32px)',overflowY:'auto',boxShadow:'0 32px 80px rgba(0,0,0,0.3)'}}>
             <div style={{padding:'16px 20px',borderBottom:'1px solid #e2e8f0',
               display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-              <div style={{fontWeight:700,fontSize:16,color:'#0f172a'}}>
-                Exit Member — {member.nameEnglish}
-              </div>
+              <div style={{fontWeight:700,fontSize:16,color:'#0f172a'}}>Exit Member — {member.nameEnglish}</div>
               <button onClick={()=>setShowModal(false)}
-                style={{width:32,height:32,borderRadius:8,border:'1px solid #e2e8f0',
-                  background:'#fff',cursor:'pointer',fontSize:16,color:'#64748b',
-                  display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
+                style={{width:32,height:32,borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',
+                  cursor:'pointer',fontSize:16,color:'#64748b',display:'flex',alignItems:'center',justifyContent:'center'}}>✕</button>
             </div>
-
             <div style={{padding:'20px'}}>
-              {/* Accounting breakdown */}
-              <div style={{background:'#f8fafc',borderRadius:10,
-                border:'1px solid #e2e8f0',padding:'16px',marginBottom:20}}>
-                <div style={{fontWeight:700,fontSize:14,color:'#0f172a',marginBottom:12}}>
-                  📊 Exit Accounting Breakdown
-                </div>
+              <div style={{background:'#f8fafc',borderRadius:10,border:'1px solid #e2e8f0',padding:'16px',marginBottom:20}}>
+                <div style={{fontWeight:700,fontSize:14,color:'#0f172a',marginBottom:12}}>📊 Exit Accounting Breakdown</div>
                 {[
-                  { label:'Total capital contributions',
-                    value: c.total||0, sign:'+', color:'#15803d' },
-                  { label:`Proportional expense share (${((c.expenseProportion||0)*100).toFixed(2)}% of org total)`,
-                    value:-(c.memberExpenseShare||0), sign:'−', color:'#d97706' },
-                  { label:'Entry & re-registration fees (non-refundable)',
-                    value:-(c.feesTotal||0), sign:'−', color:'#7c3aed' },
-                  { label:'Outstanding loan balance',
-                    value:-(c.loanOutstanding||0), sign:'−', color:'#dc2626' },
-                  { label:'Profit distributions received',
-                    value:+(c.profitTotal||0), sign:'+', color:'#0369a1' },
+                  {label:'Total capital contributions',value:c.total||0,sign:'+',color:'#15803d'},
+                  {label:`Proportional expense share (${((c.expenseProportion||0)*100).toFixed(2)}% of org total)`,value:-(c.memberExpenseShare||0),sign:'−',color:'#d97706'},
+                  {label:'Entry & re-registration fees (non-refundable)',value:-(c.feesTotal||0),sign:'−',color:'#7c3aed'},
+                  {label:'Outstanding loan balance',value:-(c.loanOutstanding||0),sign:'−',color:'#dc2626'},
+                  {label:'Profit distributions received',value:+(c.profitTotal||0),sign:'+',color:'#0369a1'},
                 ].map((item,i)=>(
-                  <div key={i} style={{display:'flex',justifyContent:'space-between',
-                    alignItems:'center',padding:'7px 0',
-                    borderBottom:'1px solid #f1f5f9'}}>
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                    padding:'7px 0',borderBottom:'1px solid #f1f5f9'}}>
                     <div style={{fontSize:12,color:'#475569'}}>{item.label}</div>
-                    <div style={{fontSize:13,fontWeight:600,color:item.color}}>
-                      {item.sign}{fmt(Math.abs(item.value))}
-                    </div>
+                    <div style={{fontSize:13,fontWeight:600,color:item.color}}>{item.sign}{fmt(Math.abs(item.value))}</div>
                   </div>
                 ))}
-                <div style={{display:'flex',justifyContent:'space-between',
-                  alignItems:'center',paddingTop:10,marginTop:6,
-                  borderTop:'2px solid #0f172a'}}>
-                  <div style={{fontSize:14,fontWeight:700,color:'#0f172a'}}>
-                    Returnable to Member
-                  </div>
-                  <div style={{fontSize:20,fontWeight:800,
-                    color:raw>=0?'#15803d':'#dc2626'}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  paddingTop:10,marginTop:6,borderTop:'2px solid #0f172a'}}>
+                  <div style={{fontSize:14,fontWeight:700,color:'#0f172a'}}>Returnable to Member</div>
+                  <div style={{fontSize:20,fontWeight:800,color:raw>=0?'#15803d':'#dc2626'}}>
                     {fmt(returnable)}
-                    {raw<0 && (
-                      <div style={{fontSize:11,color:'#dc2626',fontWeight:600}}>
-                        (capped at ৳0)
-                      </div>
-                    )}
+                    {raw<0&&<div style={{fontSize:11,color:'#dc2626',fontWeight:600}}>(capped at ৳0)</div>}
                   </div>
                 </div>
-                {raw<0 && (
-                  <div style={{marginTop:8,padding:'8px 12px',borderRadius:8,
-                    background:'#fef2f2',border:'1px solid #fca5a5',
-                    fontSize:12,color:'#b91c1c'}}>
+                {raw<0&&(
+                  <div style={{marginTop:8,padding:'8px 12px',borderRadius:8,background:'#fef2f2',
+                    border:'1px solid #fca5a5',fontSize:12,color:'#b91c1c'}}>
                     ⚠️ Obligations exceed capital. Resolve outstanding loans before exit.
                   </div>
                 )}
               </div>
-
-              {/* Exit type */}
               <div style={{marginBottom:16}}>
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
-                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:8}}>
-                  Exit Type
-                </label>
+                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:8}}>Exit Type</label>
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
                   {[
                     ['archived',  '📦 Archive',   'Voluntary exit. Member can rejoin later.'],
-                    ['terminated','⛔ Terminate', 'Removed by admin. Cannot rejoin without approval.'],
+                    ['terminated','⛔ Terminate','Removed by admin. Cannot rejoin without approval.'],
                   ].map(([val,label,desc])=>(
                     <button key={val} type="button" onClick={()=>setExitType(val)}
-                      style={{padding:'10px 12px',borderRadius:10,textAlign:'left',
-                        cursor:'pointer',
-                        border:`2px solid ${exitType===val
-                          ?(val==='archived'?'#16a34a':'#dc2626'):'#e2e8f0'}`,
-                        background:exitType===val
-                          ?(val==='archived'?'#f0fdf4':'#fef2f2'):'#fff'}}>
-                      <div style={{fontWeight:700,fontSize:13,
-                        color:exitType===val
-                          ?(val==='archived'?'#15803d':'#dc2626'):'#0f172a'}}>
-                        {label}
-                      </div>
+                      style={{padding:'10px 12px',borderRadius:10,textAlign:'left',cursor:'pointer',
+                        border:`2px solid ${exitType===val?(val==='archived'?'#16a34a':'#dc2626'):'#e2e8f0'}`,
+                        background:exitType===val?(val==='archived'?'#f0fdf4':'#fef2f2'):'#fff'}}>
+                      <div style={{fontWeight:700,fontSize:13,color:exitType===val?(val==='archived'?'#15803d':'#dc2626'):'#0f172a'}}>{label}</div>
                       <div style={{fontSize:11,color:'#64748b',marginTop:3}}>{desc}</div>
                     </button>
                   ))}
                 </div>
               </div>
-
               <div style={{marginBottom:16}}>
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
-                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>
-                  Exit Date
-                </label>
-                <input type="date" value={exitDate}
-                  onChange={e=>setExitDate(e.target.value)}
-                  style={{width:'100%',padding:'9px 12px',borderRadius:8,
-                    border:'1px solid #e2e8f0',fontSize:13}}/>
+                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>Exit Date</label>
+                <input type="date" value={exitDate} onChange={e=>setExitDate(e.target.value)}
+                  style={{width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
               </div>
-
               <div style={{marginBottom:20}}>
                 <label style={{display:'block',fontSize:11,fontWeight:700,color:'#64748b',
-                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>
-                  Reason *
-                </label>
-                <textarea value={reason} onChange={e=>setReason(e.target.value)}
-                  rows={3} placeholder="e.g. Personal reasons, relocation, loan default…"
+                  textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:6}}>Reason *</label>
+                <textarea value={reason} onChange={e=>setReason(e.target.value)} rows={3}
+                  placeholder="e.g. Personal reasons, relocation, loan default…"
                   style={{width:'100%',padding:'9px 12px',borderRadius:8,resize:'vertical',
                     border:'1px solid #e2e8f0',fontSize:13,boxSizing:'border-box'}}/>
               </div>
-
-              <div style={{display:'flex',gap:10,paddingTop:16,
-                borderTop:'1px solid #e2e8f0'}}>
+              <div style={{display:'flex',gap:10,paddingTop:16,borderTop:'1px solid #e2e8f0'}}>
                 <button onClick={handleExit} disabled={saving}
                   style={{padding:'11px 24px',borderRadius:8,border:'none',
-                    cursor:saving?'not-allowed':'pointer',
-                    fontSize:13,fontWeight:700,
+                    cursor:saving?'not-allowed':'pointer',fontSize:13,fontWeight:700,
                     background:exitType==='archived'?'#16a34a':'#dc2626',
                     color:'#fff',opacity:saving?0.7:1}}>
-                  {saving?'Processing…'
-                    :exitType==='archived'?'📦 Archive Member':'⛔ Terminate Member'}
+                  {saving?'Processing…':exitType==='archived'?'📦 Archive Member':'⛔ Terminate Member'}
                 </button>
                 <button onClick={()=>setShowModal(false)}
-                  style={{padding:'11px 20px',borderRadius:8,
-                    border:'1px solid #e2e8f0',background:'#fff',
-                    cursor:'pointer',fontSize:13,color:'#64748b'}}>
-                  Cancel
-                </button>
+                  style={{padding:'11px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                    background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
               </div>
             </div>
           </div>
@@ -1269,52 +1149,65 @@ export default function AdminMemberProfile() {
   const { userData, orgData, isOrgAdmin } = useAuth();
   const orgId    = userData?.activeOrgId;
 
-  const [member,   setMember]    = useState(null);
-  const [form,     setForm]      = useState(null);
-  const [capital,  setCapital]   = useState(null);
-  const [loading,  setLoading]   = useState(true);
-  const [saving,   setSaving]    = useState(false);
-  const [toast,    setToast]     = useState('');
-  const [showPrint,setShowPrint] = useState(false);
-  const [editMode, setEditMode]  = useState(false);
-  const [memberStatus, setMemberStatus] = useState(null); // track live exit state
+  const [member,       setMember]       = useState(null);
+  const [form,         setForm]         = useState(null);
+  const [capital,      setCapital]      = useState(null);
+  const [loading,      setLoading]      = useState(true);
+  const [saving,       setSaving]       = useState(false);
+  const [toast,        setToast]        = useState('');
+  const [showPrint,    setShowPrint]    = useState(false);
+  const [editMode,     setEditMode]     = useState(false);
+  const [memberStatus, setMemberStatus] = useState(null);
 
   const showToast = (msg,err=false) => { setToast({msg,err}); setTimeout(()=>setToast(''),3000); };
   const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const handleMemberUpdate = useCallback((patch) => {
-    setMember(prev => ({ ...prev, ...patch }));
-  }, []);
+    setMember(prev=>({...prev,...patch}));
+  },[]);
 
   const grantReregRebate = async () => {
-    if (!orgId || !memberId) return;
+    if (!orgId||!memberId) return;
     const newVal = !member.reregGranted;
     try {
-      await updateDoc(doc(db,'organizations',orgId,'members',memberId), { reregGranted: newVal });
-      setMember(prev => ({ ...prev, reregGranted: newVal }));
-      await addDoc(collection(db,'organizations',orgId,'notifications'), {
-        userId: memberId,
-        message: newVal
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{ reregGranted:newVal });
+      setMember(prev=>({...prev,reregGranted:newVal}));
+      await addDoc(collection(db,'organizations',orgId,'notifications'),{
+        userId:    memberId,
+        message:   newVal
           ? '✅ Your re-registration fee has been waived by the admin as a rebate.'
           : 'ℹ️ Your re-registration fee rebate has been revoked. Please pay the fee.',
-        read: false, createdAt: serverTimestamp(),
+        read:      false,
+        createdAt: serverTimestamp(),
       });
-      showToast(newVal ? '✅ Rebate granted — member notified.' : '✅ Rebate revoked.');
-    } catch(e) { showToast(e.message, true); }
+      showToast(newVal?'✅ Rebate granted — member notified.':'✅ Rebate revoked.');
+    } catch(e) { showToast(e.message,true); }
   };
 
   const markLatePayerFlag = async (flag) => {
-    if (!orgId || !memberId) return;
+    if (!orgId||!memberId) return;
     try {
-      await updateDoc(doc(db,'organizations',orgId,'members',memberId), { isLatePayer: flag });
-      setMember(prev => ({ ...prev, isLatePayer: flag }));
-      showToast(flag ? '⏱ Marked as late payer.' : '✅ Late payer flag removed.');
-    } catch(e) { showToast(e.message, true); }
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{ isLatePayer:flag });
+      setMember(prev=>({...prev,isLatePayer:flag}));
+      showToast(flag?'⏱ Marked as late payer.':'✅ Late payer flag removed.');
+    } catch(e) { showToast(e.message,true); }
   };
 
-  useEffect(() => {
+  // ── RESTORED: Allow Re-submit ──
+  const handleAllowResubmit = async () => {
+    if (!window.confirm('Allow this member to update their profile again? This will reset their submission status.')) return;
+    setSaving(true);
+    try {
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{ profileSubmitted:false });
+      setMember(prev=>({...prev,profileSubmitted:false}));
+      showToast('✅ Member can now re-submit their profile.');
+    } catch(e) { showToast(e.message,true); }
+    setSaving(false);
+  };
+
+  useEffect(()=>{
     if (!orgId||!memberId) return;
-    (async () => {
+    (async()=>{
       const [uSnap,mSnap,paySnap,feeSnap,distSnap,loanSnap,expSnap,allPaySnap] = await Promise.all([
         getDoc(doc(db,'users',memberId)),
         getDoc(doc(db,'organizations',orgId,'members',memberId)),
@@ -1323,89 +1216,75 @@ export default function AdminMemberProfile() {
         getDocs(collection(db,'organizations',orgId,'profitDistributions')),
         getDocs(query(collection(db,'organizations',orgId,'loans'),where('userId','==',memberId))),
         getDocs(collection(db,'organizations',orgId,'expenses')),
-        getDocs(collection(db,'organizations',orgId,'investments')),  // org-wide for expense ratio
+        getDocs(collection(db,'organizations',orgId,'investments')),
       ]);
       const u  = uSnap.exists() ? uSnap.data() : {};
       const m  = mSnap.exists() ? mSnap.data() : {};
       const merged = {id:memberId,...u,...m};
       setMember(merged);
       setForm({...merged});
-      const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
-      // Compute missed months for late payer status
+
+      const feeInAcct  = !!orgData?.settings?.gatewayFeeInAccounting;
       const settings2  = orgData?.settings || {};
-      const startDate2 = settings2.requireBackpayment ? settings2.startDate : (m.joiningDate || settings2.startDate || '');
+      const startDate2 = settings2.requireBackpayment ? settings2.startDate : (m.joiningDate||settings2.startDate||'');
       const allMonths2 = [];
       if (startDate2) {
         const d0 = new Date(startDate2); d0.setDate(1);
         const now2 = new Date();
-        while (d0 <= now2) {
+        while (d0<=now2) {
           allMonths2.push(`${d0.getFullYear()}-${String(d0.getMonth()+1).padStart(2,'0')}`);
           d0.setMonth(d0.getMonth()+1);
         }
       }
-      const paidSet2 = new Set(paySnap.docs.flatMap(d => {
+      const paidSet2 = new Set(paySnap.docs.flatMap(d=>{
         const pd = d.data();
-        return pd.status !== 'rejected' && pd.isContribution !== false ? (pd.paidMonths||[]) : [];
+        return pd.status!=='rejected' && pd.isContribution!==false ? (pd.paidMonths||[]) : [];
       }));
-      const missed2 = countMissedMonths(allMonths2, paidSet2);
-      const lateThresh2 = settings2.latePayerAfterMonths ?? 1;
-      const reregThresh2 = settings2.reregAfterMonths ?? 3;
+      const missed2     = countMissedMonths(allMonths2,paidSet2);
+      const lateThresh2 = settings2.latePayerAfterMonths??1;
+      const reregThresh2= settings2.reregAfterMonths??3;
 
-      // Capital: only contribution payments
-      const myPay = paySnap.docs.map(d=>d.data());
-      const ver   = myPay.filter(p=>p.status==='verified' && p.isContribution !== false);
+      const myPay       = paySnap.docs.map(d=>d.data());
+      const ver         = myPay.filter(p=>p.status==='verified'&&p.isContribution!==false);
       const memberCapital = ver.reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
-
-      // Org-wide capital (for expense proportion)
-      const orgCapital = allPaySnap.docs.map(d=>d.data())
-        .filter(p=>p.status==='verified' && p.isContribution !== false)
+      const orgCapital    = allPaySnap.docs.map(d=>d.data())
+        .filter(p=>p.status==='verified'&&p.isContribution!==false)
         .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
-
-      // Entry & re-reg fees paid (non-refundable)
-      const feesTotal = feeSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
-
-      // Profit distributions received
-      const profitTotal = distSnap.docs
+      const feesTotal     = feeSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+      const profitTotal   = distSnap.docs
         .filter(d=>d.data().status==='distributed')
         .reduce((s,d)=>{
           const share = (d.data().memberShares||[]).find(ms=>ms.userId===memberId);
-          return s + (share?.shareAmount||0);
+          return s+(share?.shareAmount||0);
         },0);
-
-      // Active loan outstanding
       const loanOutstanding = loanSnap.docs.map(d=>d.data())
         .filter(l=>l.status==='disbursed')
         .reduce((s,l)=>s+(l.outstandingBalance||0),0);
-
-      // Member's proportional share of org expenses
-      const orgExpenses = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
-      const expenseProportion = orgCapital > 0 ? memberCapital / orgCapital : 0;
-      const memberExpenseShare = Math.round(orgExpenses * expenseProportion);
-
-      // Returnable capital
-      const returnable = memberCapital - memberExpenseShare - feesTotal - loanOutstanding + profitTotal;
+      const orgExpenses       = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+      const expenseProportion = orgCapital>0 ? memberCapital/orgCapital : 0;
+      const memberExpenseShare= Math.round(orgExpenses*expenseProportion);
+      const returnable        = memberCapital-memberExpenseShare-feesTotal-loanOutstanding+profitTotal;
 
       setCapital({
-        missedMonths:    missed2,
-        isLatePayer:     !!(orgData?.settings?.latePayerEnabled && missed2 > lateThresh2),
-        reregRequired:   !!(orgData?.settings?.reregAutoAssign  && missed2 >= reregThresh2),
+        missedMonths:     missed2,
+        isLatePayer:      !!(orgData?.settings?.latePayerEnabled&&missed2>lateThresh2),
+        reregRequired:    !!(orgData?.settings?.reregAutoAssign&&missed2>=reregThresh2),
         latePayerEnabled: !!orgData?.settings?.latePayerEnabled,
-        total:           memberCapital,
-        verifiedCount:   ver.length,
-        pendingCount:    myPay.filter(p=>p.status==='pending').length,
-        // Exit accounting fields
+        total:            memberCapital,
+        verifiedCount:    ver.length,
+        pendingCount:     myPay.filter(p=>p.status==='pending').length,
         feesTotal,
         profitTotal,
         loanOutstanding,
         orgExpenses,
         memberExpenseShare,
         expenseProportion,
-        returnable:      Math.max(0, returnable),  // can't return negative
-        returnableRaw:   returnable,               // show actual even if negative
+        returnable:       Math.max(0,returnable),
+        returnableRaw:    returnable,
       });
       setLoading(false);
     })();
-  }, [orgId, memberId]);
+  },[orgId,memberId]);
 
   const handleSave = async () => {
     if (!form) return;
@@ -1414,7 +1293,7 @@ export default function AdminMemberProfile() {
       const now = serverTimestamp();
       await updateDoc(doc(db,'organizations',orgId,'members',memberId),{
         nameEnglish:        form.nameEnglish,
-        nameBengali:         form.nameBengali,
+        nameBengali:        form.nameBengali,
         fatherNameEn:       form.fatherNameEn,
         fatherNameBn:       form.fatherNameBn,
         motherNameEn:       form.motherNameEn,
@@ -1423,13 +1302,13 @@ export default function AdminMemberProfile() {
         nid:                form.nid,
         bloodGroup:         form.bloodGroup,
         maritalStatus:      form.maritalStatus,
-        spouseNameEn:       form.spouseNameEn,       // ← new
-        spouseNameBn:       form.spouseNameBn,       // ← new
+        spouseNameEn:       form.spouseNameEn,
+        spouseNameBn:       form.spouseNameBn,
         education:          form.education,
         occupation:         form.occupation,
-        monthlyIncome:      form.monthlyIncome,      // ← new
+        monthlyIncome:      form.monthlyIncome,
         phone:              form.phone,
-        alternativePhone:   form.alternativePhone,   // ← new
+        alternativePhone:   form.alternativePhone,
         presentAddressEn:   form.presentAddressEn,
         presentAddressBn:   form.presentAddressBn,
         permanentAddressEn: form.permanentAddressEn,
@@ -1454,7 +1333,7 @@ export default function AdminMemberProfile() {
       });
       await updateDoc(doc(db,'users',memberId),{
         nameEnglish: form.nameEnglish,
-        nameBengali:  form.nameBengali,
+        nameBengali: form.nameBengali,
         bloodGroup:  form.bloodGroup,
         occupation:  form.occupation,
         phone:       form.phone,
@@ -1475,18 +1354,17 @@ export default function AdminMemberProfile() {
     try {
       const fd = new FormData();
       fd.append('file',    file);
-      fd.append('orgId',   orgId   || '');
-      fd.append('orgName', orgData?.name || '');
-      fd.append('subfolder', 'members-papers');
-      if (member.memberDriveFolderId) fd.append('memberFolderId', member.memberDriveFolderId);
-      else if (orgData?.driveFolderId) fd.append('driveFolderId', orgData.driveFolderId);
-      const res  = await fetch('/api/upload', { method:'POST', body:fd });
+      fd.append('orgId',   orgId  || '');
+      fd.append('orgName', orgData?.name||'');
+      fd.append('subfolder','members-papers');
+      if (member.memberDriveFolderId) fd.append('memberFolderId',member.memberDriveFolderId);
+      else if (orgData?.driveFolderId) fd.append('driveFolderId',orgData.driveFolderId);
+      const res  = await fetch('/api/upload',{method:'POST',body:fd});
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      if (!res.ok) throw new Error(data.error||'Upload failed');
       await updateDoc(doc(db,'organizations',orgId,'members',memberId),
-        { photoURL: data.viewUrl,
-          ...(data.newMemberFolderId?{memberDriveFolderId:data.newMemberFolderId}:{}) });
-      await updateDoc(doc(db,'users',memberId), { photoURL: data.viewUrl });
+        {photoURL:data.viewUrl,...(data.newMemberFolderId?{memberDriveFolderId:data.newMemberFolderId}:{})});
+      await updateDoc(doc(db,'users',memberId),{photoURL:data.viewUrl});
       setMember(prev=>({...prev,photoURL:data.viewUrl}));
       setForm(prev=>({...prev,photoURL:data.viewUrl}));
       showToast('✅ Photo updated!');
@@ -1511,13 +1389,13 @@ export default function AdminMemberProfile() {
     ['NID',                    displayData.nid],
     ['Blood Group',            displayData.bloodGroup],
     ['Marital Status',         displayData.maritalStatus],
-    ['Spouse Name (English)',  displayData.spouseNameEn],   // ← new
-    ['Spouse Name (বাংলা)',    displayData.spouseNameBn],   // ← new
+    ['Spouse Name (English)',  displayData.spouseNameEn],
+    ['Spouse Name (বাংলা)',    displayData.spouseNameBn],
     ['Education',              displayData.education],
     ['Occupation',             displayData.occupation],
-    ['Monthly Income',         displayData.monthlyIncome],  // ← new
+    ['Monthly Income',         displayData.monthlyIncome],
     ['Phone',                  displayData.phone],
-    ['Alternative Phone',      displayData.alternativePhone], // ← new
+    ['Alternative Phone',      displayData.alternativePhone],
     ['Email',                  displayData.email],
     ['Joining Date',           fmtDate(displayData.joiningDate||displayData.createdAt)],
   ];
@@ -1557,13 +1435,13 @@ export default function AdminMemberProfile() {
     ['nid','NID','text'],
     ['bloodGroup','Blood Group','select',BLOOD_GROUPS],
     ['maritalStatus','Marital Status','select',MARITAL_STATUS],
-    ['spouseNameEn','Spouse Name (English)','text'],   // ← new
-    ['spouseNameBn','Spouse Name (বাংলা)','text'],     // ← new
+    ['spouseNameEn','Spouse Name (English)','text'],
+    ['spouseNameBn','Spouse Name (বাংলা)','text'],
     ['education','Education','select',EDUCATION],
     ['occupation','Occupation','text'],
-    ['monthlyIncome','Monthly Income','text'],          // ← new
+    ['monthlyIncome','Monthly Income','text'],
     ['phone','Phone','text'],
-    ['alternativePhone','Alternative Phone','text'],    // ← new
+    ['alternativePhone','Alternative Phone','text'],
     ['joiningDate','Joining Date','date'],
   ];
   const EDIT_ADDR = [
@@ -1590,6 +1468,19 @@ export default function AdminMemberProfile() {
     ['agreementDate','Agreement Date','date'],
     ['legalPapersLink','Google Drive Link (Legal Papers)','text'],
   ];
+
+  // ── Capital card color logic ──────────────────────────────────────────────
+  // Green if capital is healthy (no missed months, no loans), amber if
+  // minor issues, red if late payer or loan outstanding or negative returnable
+  const capColor = (() => {
+    if (!capital) return { bg:'#f8fafc', border:'#e2e8f0', label:'#94a3b8' };
+    const hasLoan   = (capital.loanOutstanding||0) > 0;
+    const isLate    = capital.isLatePayer || capital.missedMonths > 0;
+    const isNeg     = capital.returnableRaw < 0;
+    if (isNeg || (hasLoan && isLate)) return { bg:'#fef2f2', border:'#fca5a5', label:'#b91c1c', accent:'#dc2626' };
+    if (isLate || hasLoan)            return { bg:'#fffbeb', border:'#fde68a', label:'#92400e', accent:'#d97706' };
+    return                                   { bg:'#f0fdf4', border:'#86efac', label:'#166534', accent:'#16a34a' };
+  })();
 
   return (
     <div className="page-wrap animate-fade">
@@ -1619,8 +1510,7 @@ export default function AdminMemberProfile() {
                   : member.approved
                   ? <span style={{color:'#15803d',fontWeight:700}}>✅ Active</span>
                   : <span style={{color:'#d97706',fontWeight:700}}>⏳ Pending</span>}
-                {member.profileUpdatedAt &&
-                  ` · Updated: ${fmtTS(member.profileUpdatedAt)}`}
+                {member.profileUpdatedAt && ` · Updated: ${fmtTS(member.profileUpdatedAt)}`}
               </div>
             </div>
           </div>
@@ -1648,25 +1538,35 @@ export default function AdminMemberProfile() {
                 </button>
               </>
             ) : (
-              <button onClick={()=>setEditMode(true)}
-                className="btn-primary" style={{padding:'8px 18px'}}>
-                ✏️ Edit
-              </button>
+              <>
+                <button onClick={()=>setEditMode(true)}
+                  className="btn-primary" style={{padding:'8px 18px'}}>
+                  ✏️ Edit
+                </button>
+                {/* ── RESTORED: Allow Re-submit button ── */}
+                <button onClick={handleAllowResubmit} disabled={!member.profileSubmitted||saving}
+                  title={member.profileSubmitted?'Allow member to update their profile again':'Profile not yet submitted'}
+                  style={{padding:'8px 16px',borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',
+                    border:`1px solid ${member.profileSubmitted?'#f59e0b':'#e2e8f0'}`,
+                    background:member.profileSubmitted?'#fffbeb':'#f8fafc',
+                    color:member.profileSubmitted?'#92400e':'#94a3b8',
+                    opacity:member.profileSubmitted?1:0.5}}>
+                  🔓 Allow Re-submit
+                </button>
+              </>
             )}
           </div>
         </div>
       </div>
 
       {toast && (
-        <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,
-          fontSize:13,fontWeight:600,
-          background:toast.err?'#fee2e2':'#dcfce7',
-          color:toast.err?'#b91c1c':'#15803d'}}>
+        <div style={{padding:'10px 16px',borderRadius:8,marginBottom:16,fontSize:13,fontWeight:600,
+          background:toast.err?'#fee2e2':'#dcfce7',color:toast.err?'#b91c1c':'#15803d'}}>
           {toast.msg}
         </div>
       )}
 
-      {/* Photo strip */}
+      {/* ── Photo strip + Capital cards ──────────────────────────────────── */}
       <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
         padding:'16px 20px',marginBottom:14,
         display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap'}}>
@@ -1681,10 +1581,9 @@ export default function AdminMemberProfile() {
               : (member.nameEnglish?.[0]||'?')}
           </div>
           <button onClick={()=>photoRef.current?.click()} disabled={photoUploading}
-            style={{position:'absolute',bottom:0,right:0,width:24,height:24,
-              borderRadius:'50%',background:'#0f172a',border:'2px solid #fff',
-              cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',
-              fontSize:11,color:'#fff'}}>
+            style={{position:'absolute',bottom:0,right:0,width:24,height:24,borderRadius:'50%',
+              background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff'}}>
             {photoUploading?'…':'📷'}
           </button>
           <input ref={photoRef} type="file" accept="image/*" style={{display:'none'}}
@@ -1699,143 +1598,160 @@ export default function AdminMemberProfile() {
             <span style={{fontSize:9,color:'#94a3b8',fontWeight:600}}>NOMINEE</span>
           </div>
         )}
-        <div style={{flex:1,display:'grid',
-          gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
+        <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
+          {/* ── Member ID — neutral ── */}
           {[
-            {label:'Member ID',    value:member.idNo},
-            {label:'Capital',      value:capital?fmt(capital.total):'…'},
-            {label:'Blood Group',  value:member.bloodGroup},
+            {label:'Member ID',   value:member.idNo,                      bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+            {label:'Blood Group', value:member.bloodGroup,                 bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
             {label:'Status',
-              value: (member.memberStatus==='archived'||memberStatus==='archived') ? '📦 Archived'
-                   : (member.memberStatus==='terminated'||memberStatus==='terminated') ? '⛔ Terminated'
-                   : member.approved ? '✅ Active' : '⏳ Pending'},
-            {label:'Profile',      value:member.profileSubmitted?'Submitted':'Not submitted'},
-            {label:'Last Updated', value:fmtTS(member.profileUpdatedAt)},
-          ].map(({label,value})=>(
-            <div key={label} style={{background:'#f8fafc',borderRadius:7,padding:'8px 10px'}}>
+              value:(member.memberStatus==='archived'||memberStatus==='archived')?'📦 Archived'
+                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'⛔ Terminated'
+                   :member.approved?'✅ Active':'⏳ Pending',
+              bg: (member.memberStatus==='archived'||memberStatus==='archived')?'#fffbeb'
+                 :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fef2f2'
+                 :member.approved?'#f0fdf4':'#fffbeb',
+              border:(member.memberStatus==='archived'||memberStatus==='archived')?'#fde68a'
+                    :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fca5a5'
+                    :member.approved?'#86efac':'#fde68a',
+              color:(member.memberStatus==='archived'||memberStatus==='archived')?'#92400e'
+                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#dc2626'
+                   :member.approved?'#15803d':'#92400e'},
+            {label:'Profile',     value:member.profileSubmitted?'Submitted':'Not submitted',
+              bg:member.profileSubmitted?'#f0fdf4':'#f8fafc',
+              border:member.profileSubmitted?'#86efac':'#e2e8f0',
+              color:member.profileSubmitted?'#15803d':'#64748b'},
+            {label:'Last Updated',value:fmtTS(member.profileUpdatedAt),   bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+          ].map(({label,value,bg,border,color})=>(
+            <div key={label} style={{background:bg,borderRadius:7,padding:'8px 10px',
+              border:`1px solid ${border}`}}>
               <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
                 textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{label}</div>
-              <div style={{fontSize:12,fontWeight:600,color:'#0f172a'}}>{value||'—'}</div>
+              <div style={{fontSize:12,fontWeight:600,color}}>{value||'—'}</div>
             </div>
           ))}
+
+          {/* ── Capital card — dynamic color ── */}
+          <div style={{background:capColor.bg,borderRadius:7,padding:'8px 10px',
+            border:`1px solid ${capColor.border}`}}>
+            <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
+              textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>Capital</div>
+            <div style={{fontSize:14,fontWeight:800,color:capColor.accent||capColor.label}}>
+              {capital ? fmt(capital.total) : '…'}
+            </div>
+            {capital && capital.loanOutstanding>0 && (
+              <div style={{fontSize:9,color:capColor.label,marginTop:2,fontWeight:600}}>
+                Loan: {fmt(capital.loanOutstanding)}
+              </div>
+            )}
+            {capital && capital.missedMonths>0 && (
+              <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
+                {capital.missedMonths} missed mo.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {editMode ? (
         <>
-          <div style={{ background:'#fff', borderRadius:12, border:'1px solid #e2e8f0',
-            padding:'16px 20px', marginBottom:12 }}>
-            <div style={{ fontWeight:700, fontSize:13, color:'#0f172a', marginBottom:12 }}>📷 Photos</div>
-            <div style={{ display:'flex', gap:24, flexWrap:'wrap' }}>
-              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:8 }}>
-                <div style={{ width:80, height:80, borderRadius:'50%', overflow:'hidden',
-                  border:'3px solid #bfdbfe', background:'#dbeafe',
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  fontSize:28, fontWeight:700, color:'#1d4ed8' }}>
+          <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',padding:'16px 20px',marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0f172a',marginBottom:12}}>📷 Photos</div>
+            <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+                <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
+                  border:'3px solid #bfdbfe',background:'#dbeafe',
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:28,fontWeight:700,color:'#1d4ed8'}}>
                   {form.photoURL
-                    ? <img src={form.photoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt=""/>
+                    ? <img src={form.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
                     : (form.nameEnglish?.[0]||'?')}
                 </div>
-                <AdminPhotoUpload
-                  label="Member Photo"
-                  currentUrl={form.photoURL}
-                  orgId={orgId} orgData={orgData}
-                  memberId={memberId} memberFolderId={form.memberDriveFolderId}
-                  onUploaded={url => set('photoURL', url)}
-                />
+                <AdminPhotoUpload label="Member Photo" currentUrl={form.photoURL}
+                  orgId={orgId} orgData={orgData} memberId={memberId}
+                  memberFolderId={form.memberDriveFolderId}
+                  onUploaded={url=>set('photoURL',url)}/>
               </div>
-              <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:8 }}>
-                <div style={{ width:60, height:75, borderRadius:8, overflow:'hidden',
-                  border:'2px solid #e2e8f0', background:'#f1f5f9',
-                  display:'flex', alignItems:'center', justifyContent:'center', fontSize:24 }}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+                <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
+                  border:'2px solid #e2e8f0',background:'#f1f5f9',
+                  display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>
                   {form.nomineePhotoURL
-                    ? <img src={form.nomineePhotoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt=""/>
+                    ? <img src={form.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
                     : '👤'}
                 </div>
-                <AdminPhotoUpload
-                  label="Nominee Photo"
-                  currentUrl={form.nomineePhotoURL}
-                  orgId={orgId} orgData={orgData}
-                  memberId={memberId} memberFolderId={form.memberDriveFolderId}
-                  onUploaded={url => set('nomineePhotoURL', url)}
-                />
+                <AdminPhotoUpload label="Nominee Photo" currentUrl={form.nomineePhotoURL}
+                  orgId={orgId} orgData={orgData} memberId={memberId}
+                  memberFolderId={form.memberDriveFolderId}
+                  onUploaded={url=>set('nomineePhotoURL',url)}/>
               </div>
             </div>
           </div>
-          <EditSection title="👤 Personal" fields={EDIT_PERSONAL} form={form} set={set}/>
-          <EditSection title="📍 Address" fields={EDIT_ADDR}     form={form} set={set}/>
-          <EditSection title="👨‍👩‍👧 Nominee" fields={EDIT_HEIR}     form={form} set={set}/>
-          <EditSection title="📋 Legal & Agreement" fields={EDIT_LEGAL} form={form} set={set}/>
+          <EditSection title="👤 Personal"           fields={EDIT_PERSONAL} form={form} set={set}/>
+          <EditSection title="📍 Address"            fields={EDIT_ADDR}     form={form} set={set}/>
+          <EditSection title="👨‍👩‍👧 Nominee"            fields={EDIT_HEIR}     form={form} set={set}/>
+          <EditSection title="📋 Legal & Agreement"  fields={EDIT_LEGAL}    form={form} set={set}/>
         </>
       ) : (
         <>
-          {/* Late Payer + Re-registration Status Card */}
-          {capital && (capital.isLatePayer || capital.reregRequired || capital.missedMonths > 0) && (
-            <div style={{ background:'#fff', borderRadius:12, border:'1px solid #e2e8f0',
-              overflow:'hidden', marginBottom:12 }}>
-              <div style={{ padding:'10px 16px', background:'#f8fafc',
-                borderBottom:'1px solid #e2e8f0', fontWeight:700, fontSize:13, color:'#0f172a' }}>
+          {capital && (capital.isLatePayer||capital.reregRequired||capital.missedMonths>0) && (
+            <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
+              <div style={{padding:'10px 16px',background:'#f8fafc',
+                borderBottom:'1px solid #e2e8f0',fontWeight:700,fontSize:13,color:'#0f172a'}}>
                 ⏱ Payment Status
               </div>
-              <div style={{ padding:'14px 16px', display:'flex', flexDirection:'column', gap:12 }}>
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:10 }}>
-                  <div style={{ background:'#f8fafc', borderRadius:8, padding:'10px 12px' }}>
-                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
-                      Missed Months
-                    </div>
-                    <div style={{ fontSize:20, fontWeight:800, color: capital.missedMonths > 0 ? '#dc2626' : '#15803d' }}>
+              <div style={{padding:'14px 16px',display:'flex',flexDirection:'column',gap:12}}>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))',gap:10}}>
+                  <div style={{background:'#f8fafc',borderRadius:8,padding:'10px 12px'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>Missed Months</div>
+                    <div style={{fontSize:20,fontWeight:800,color:capital.missedMonths>0?'#dc2626':'#15803d'}}>
                       {capital.missedMonths}
                     </div>
                   </div>
-                  <div style={{ background: capital.isLatePayer ? '#fef2f2' : '#f0fdf4',
-                    borderRadius:8, padding:'10px 12px', border:`1px solid ${capital.isLatePayer?'#fca5a5':'#86efac'}` }}>
-                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
-                      Late Payer
-                    </div>
-                    <div style={{ fontSize:13, fontWeight:800, color: capital.isLatePayer ? '#b91c1c' : '#15803d' }}>
-                      {capital.isLatePayer ? '⏱ Yes' : '✅ No'}
+                  <div style={{background:capital.isLatePayer?'#fef2f2':'#f0fdf4',borderRadius:8,padding:'10px 12px',
+                    border:`1px solid ${capital.isLatePayer?'#fca5a5':'#86efac'}`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>Late Payer</div>
+                    <div style={{fontSize:13,fontWeight:800,color:capital.isLatePayer?'#b91c1c':'#15803d'}}>
+                      {capital.isLatePayer?'⏱ Yes':'✅ No'}
                     </div>
                   </div>
-                  <div style={{ background: capital.reregRequired && !member.reregGranted ? '#fef3c7' : '#f0fdf4',
-                    borderRadius:8, padding:'10px 12px',
-                    border:`1px solid ${capital.reregRequired && !member.reregGranted ? '#fde68a' : '#86efac'}` }}>
-                    <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>
-                      Re-Reg Fee
-                    </div>
-                    <div style={{ fontSize:13, fontWeight:800,
-                      color: member.reregGranted ? '#15803d' : capital.reregRequired ? '#92400e' : '#15803d' }}>
-                      {member.reregGranted ? '✅ Waived (rebate)' : capital.reregRequired ? '🔄 Required' : '—'}
+                  <div style={{background:capital.reregRequired&&!member.reregGranted?'#fef3c7':'#f0fdf4',
+                    borderRadius:8,padding:'10px 12px',
+                    border:`1px solid ${capital.reregRequired&&!member.reregGranted?'#fde68a':'#86efac'}`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:4}}>Re-Reg Fee</div>
+                    <div style={{fontSize:13,fontWeight:800,
+                      color:member.reregGranted?'#15803d':capital.reregRequired?'#92400e':'#15803d'}}>
+                      {member.reregGranted?'✅ Waived (rebate)':capital.reregRequired?'🔄 Required':'—'}
                     </div>
                   </div>
                 </div>
-                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
                   {capital.isLatePayer ? (
-                    <button onClick={() => markLatePayerFlag(false)}
-                      style={{ padding:'7px 14px', borderRadius:7, border:'1px solid #e2e8f0',
-                        background:'#fff', cursor:'pointer', fontSize:12, fontWeight:600, color:'#475569' }}>
+                    <button onClick={()=>markLatePayerFlag(false)}
+                      style={{padding:'7px 14px',borderRadius:7,border:'1px solid #e2e8f0',
+                        background:'#fff',cursor:'pointer',fontSize:12,fontWeight:600,color:'#475569'}}>
                       ✅ Clear Late Payer Flag
                     </button>
                   ) : (
-                    <button onClick={() => markLatePayerFlag(true)}
-                      style={{ padding:'7px 14px', borderRadius:7, border:'1px solid #fca5a5',
-                        background:'#fef2f2', cursor:'pointer', fontSize:12, fontWeight:600, color:'#b91c1c' }}>
+                    <button onClick={()=>markLatePayerFlag(true)}
+                      style={{padding:'7px 14px',borderRadius:7,border:'1px solid #fca5a5',
+                        background:'#fef2f2',cursor:'pointer',fontSize:12,fontWeight:600,color:'#b91c1c'}}>
                       ⏱ Mark as Late Payer
                     </button>
                   )}
                   {capital.reregRequired && (
                     <button onClick={grantReregRebate}
-                      style={{ padding:'7px 14px', borderRadius:7, border:`1px solid ${member.reregGranted?'#fca5a5':'#86efac'}`,
-                        background: member.reregGranted ? '#fef2f2' : '#f0fdf4',
-                        cursor:'pointer', fontSize:12, fontWeight:600,
-                        color: member.reregGranted ? '#b91c1c' : '#15803d' }}>
-                      {member.reregGranted ? '↩ Revoke Rebate' : '🎁 Grant Rebate (Waive Re-Reg Fee)'}
+                      style={{padding:'7px 14px',borderRadius:7,
+                        border:`1px solid ${member.reregGranted?'#fca5a5':'#86efac'}`,
+                        background:member.reregGranted?'#fef2f2':'#f0fdf4',
+                        cursor:'pointer',fontSize:12,fontWeight:600,
+                        color:member.reregGranted?'#b91c1c':'#15803d'}}>
+                      {member.reregGranted?'↩ Revoke Rebate':'🎁 Grant Rebate (Waive Re-Reg Fee)'}
                     </button>
                   )}
                 </div>
               </div>
             </div>
           )}
-
           <ViewSection title="👤 Personal Information" rows={VIEW_PERSONAL}/>
           <ViewSection title="📍 Address Information"  rows={VIEW_ADDR}/>
           <ViewSection title="👨‍👩‍👧 Nominee / Heir"       rows={VIEW_HEIR}/>
@@ -1843,26 +1759,15 @@ export default function AdminMemberProfile() {
         </>
       )}
 
-      {/* Documents section — always visible */}
-      <AdminMemberFiles
-        member={member}
-        orgId={orgId}
-        onMemberUpdate={handleMemberUpdate}
-      />
+      <AdminMemberFiles member={member} orgId={orgId} onMemberUpdate={handleMemberUpdate}/>
 
-      {/* Exit Workflow — always shown at bottom for admin */}
       <ExitWorkflow
-        member={member}
-        capital={capital}
-        orgId={orgId}
-        orgData={orgData}
-        memberId={memberId}
-        onExited={(type) => {
+        member={member} capital={capital}
+        orgId={orgId} orgData={orgData} memberId={memberId}
+        onExited={(type)=>{
           setMemberStatus(type);
-          setMember(prev => ({...prev, memberStatus:type, approved:false}));
-          showToast(type==='archived'
-            ? '📦 Member archived successfully.'
-            : '⛔ Member terminated.');
+          setMember(prev=>({...prev,memberStatus:type,approved:false}));
+          showToast(type==='archived'?'📦 Member archived successfully.':'⛔ Member terminated.');
         }}
       />
     </div>
