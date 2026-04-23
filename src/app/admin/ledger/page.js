@@ -17,7 +17,6 @@ function tsDate(ts) {
 }
 const initials = n => (n||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 
-// Format paidMonths entry → "Apr 2026"
 function fmtPaidMonth(val) {
   if (!val) return '';
   if (typeof val === 'string' && /^\d{4}-\d{2}$/.test(val)) {
@@ -95,20 +94,16 @@ async function buildMemberLedger(orgId, memberId, settings) {
 
   const rows = [];
 
-  // Investments
   invSnap.docs.forEach(d => {
     const r = {id:d.id,...d.data()};
     const type = r.paymentType ||
       (r.paidMonths?.length > 0 ? 'monthly' : r.specialSubType || 'general');
     const isContrib = r.isContribution !== false;
-
-    // Build installment month string from paidMonths
     const paidMonthsLabel = (r.paidMonths||[]).map(fmtPaidMonth).filter(Boolean).join(', ');
 
     rows.push({
       id:'inv_'+r.id, _rawId:r.id, _collection:'investments',
       date:r.createdAt, type,
-      // Show installment months in description if present
       label: paidMonthsLabel || r.specialSubTitle || '—',
       paidMonthsLabel,
       method:r.method||'—', txId:r.txId||'',
@@ -119,11 +114,10 @@ async function buildMemberLedger(orgId, memberId, settings) {
       penalty:r.penaltyPaid||0, gatewayFee:r.gatewayFee||0,
       status:r.status||'pending', isContrib,
       countAsContribution:r.countAsContribution,
-      _raw: r, // full raw doc for modal
+      _raw: r,
     });
   });
 
-  // Entry fees
   feeSnap.docs.forEach(d => {
     const r = {id:d.id,...d.data()};
     rows.push({
@@ -139,7 +133,6 @@ async function buildMemberLedger(orgId, memberId, settings) {
     });
   });
 
-  // Profit distributions
   distSnap.docs.forEach(d => {
     const dist = {id:d.id,...d.data()};
     if (dist.status !== 'distributed') return;
@@ -158,7 +151,6 @@ async function buildMemberLedger(orgId, memberId, settings) {
     });
   });
 
-  // Loans
   loanSnap.docs.forEach(d => {
     const l = {id:d.id,...d.data()};
     if (l.status==='disbursed'||l.status==='repaid') {
@@ -189,7 +181,7 @@ async function buildMemberLedger(orgId, memberId, settings) {
   return rows;
 }
 
-// ── Excel export for one member ───────────────────────────────────────────────
+// ── Excel export ──────────────────────────────────────────────────────────────
 async function exportMemberExcel(member, ledger, orgData) {
   if (!window.XLSX) {
     await new Promise((resolve, reject) => {
@@ -210,11 +202,10 @@ async function exportMemberExcel(member, ledger, orgData) {
     [`Member: ${name}  |  ID: ${member.idNo||'—'}`],
     [`Generated: ${gen}`],
     [],
-    ['Date','Type','Description','Inst. Month','Method','Amount','Gateway Fee','Capital Credit','Penalty','Status'],
+    ['Date','Type','Installment','Method','Amount','Gateway Fee','Capital Credit','Penalty','Status'],
     ...ledger.map(r => [
       tsDate(r.date),
       TYPE_CFG[r.type]?.label || r.type,
-      r.label,
       r.paidMonthsLabel || '—',
       r.method,
       r.amount,
@@ -224,7 +215,7 @@ async function exportMemberExcel(member, ledger, orgData) {
       r.status,
     ]),
     [],
-    ['','','','','Total',
+    ['','','','Total',
       ledger.reduce((s,r)=>s+r.amount,0), '',
       ledger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0),
       '', '',
@@ -232,7 +223,7 @@ async function exportMemberExcel(member, ledger, orgData) {
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(data);
-  ws['!cols'] = [{wch:14},{wch:14},{wch:28},{wch:16},{wch:12},{wch:12},{wch:12},{wch:14},{wch:10},{wch:10}];
+  ws['!cols'] = [{wch:14},{wch:14},{wch:20},{wch:12},{wch:12},{wch:12},{wch:14},{wch:10},{wch:10}];
   XLSX.utils.book_append_sheet(wb, ws, name.slice(0,28));
   XLSX.writeFile(wb, `ledger-${name.replace(/\s+/g,'-')}-${new Date().toISOString().slice(0,10)}.xlsx`);
 }
@@ -244,7 +235,6 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
   const [saving,  setSaving]    = useState(false);
   const [error,   setError]     = useState('');
 
-  // Editable fields — only for investment records
   const canEdit   = row._collection === 'investments';
   const canDelete = row._collection === 'investments';
 
@@ -291,8 +281,7 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
     ['Member ID',    member?.idNo || '—'],
     ['Date',         tsDate(row.date)],
     ['Type',         TYPE_CFG[row.type]?.label || row.type],
-    ['Description',  row.label],
-    row.paidMonthsLabel && ['Installment Month', row.paidMonthsLabel],
+    row.paidMonthsLabel && ['Installment', row.paidMonthsLabel],
     raw.txId && ['Transaction ID', raw.txId],
     raw.notes && ['Notes', raw.notes],
     raw.purpose && ['Purpose', raw.purpose],
@@ -307,30 +296,38 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
   return (
     <div style={{
       position:'fixed', inset:0, background:'rgba(0,0,0,0.55)',
-      zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center',
-      padding:16, overflowY:'auto',
+      zIndex:2000, display:'flex', alignItems:'flex-end', justifyContent:'center',
+      padding:0,
     }} onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
       <div style={{
-        background:'#fff', borderRadius:14, width:'100%', maxWidth:520,
-        boxShadow:'0 8px 40px rgba(0,0,0,0.2)', overflow:'hidden',
+        background:'#fff', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:560,
+        boxShadow:'0 -4px 40px rgba(0,0,0,0.18)', overflow:'hidden',
+        maxHeight:'92vh', display:'flex', flexDirection:'column',
       }}>
+        {/* Drag handle */}
+        <div style={{ display:'flex', justifyContent:'center', padding:'10px 0 4px' }}>
+          <div style={{ width:36, height:4, borderRadius:99, background:'#e2e8f0' }}/>
+        </div>
+
         {/* Header */}
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center',
-          padding:'14px 18px', background:'#0f172a' }}>
+          padding:'8px 18px 12px', borderBottom:'1px solid #f1f5f9' }}>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
             <TypeBadge type={row.type}/>
-            <span style={{ color:'#e2e8f0', fontWeight:700, fontSize:14 }}>
+            <span style={{ color:'#0f172a', fontWeight:700, fontSize:14 }}>
               {editing ? 'Edit Record' : 'Record Details'}
             </span>
           </div>
           <button onClick={onClose}
-            style={{ background:'none', border:'none', color:'#94a3b8',
-              fontSize:18, cursor:'pointer', lineHeight:1 }}>✕</button>
+            style={{ background:'#f1f5f9', border:'none', color:'#64748b',
+              fontSize:14, cursor:'pointer', lineHeight:1, borderRadius:99,
+              width:28, height:28, display:'flex', alignItems:'center', justifyContent:'center' }}>✕</button>
         </div>
 
-        <div style={{ padding:'18px 20px', display:'flex', flexDirection:'column', gap:14 }}>
+        {/* Scrollable body */}
+        <div style={{ overflowY:'auto', flex:1, padding:'16px 18px',
+          display:'flex', flexDirection:'column', gap:14 }}>
 
-          {/* Info section (always visible) */}
           {!editing && (
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px 16px' }}>
               {infoFields.map(([k,v]) => (
@@ -344,20 +341,19 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
             </div>
           )}
 
-          {/* Amounts (read mode) */}
           {!editing && (
-            <div style={{ display:'flex', gap:12, flexWrap:'wrap',
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10,
               padding:'12px 14px', borderRadius:10, background:'#f8fafc',
               border:'1px solid #e2e8f0' }}>
               {[
-                ['Amount',       fmt(row.amount),       '#0f172a'],
-                ['Gateway Fee',  row.gatewayFee>0?fmt(row.gatewayFee):'—', '#dc2626'],
-                ['Capital Net',  row.capitalCredit>0?fmt(row.capitalCredit):'—', '#15803d'],
-                ['Penalty',      row.penalty>0?fmt(row.penalty):'—',      '#d97706'],
-                ['Status',       row.status,             row.status==='verified'?'#15803d':row.status==='pending'?'#92400e':'#dc2626'],
-                ['Method',       row.method||'—',        '#475569'],
+                ['Amount',      fmt(row.amount),                            '#0f172a'],
+                ['Gateway Fee', row.gatewayFee>0?fmt(row.gatewayFee):'—',  '#dc2626'],
+                ['Capital Net', row.capitalCredit>0?fmt(row.capitalCredit):'—', '#15803d'],
+                ['Penalty',     row.penalty>0?fmt(row.penalty):'—',        '#d97706'],
+                ['Status',      row.status,                                 row.status==='verified'?'#15803d':row.status==='pending'?'#92400e':'#dc2626'],
+                ['Method',      row.method||'—',                           '#475569'],
               ].map(([k,v,c]) => (
-                <div key={k} style={{ minWidth:80 }}>
+                <div key={k}>
                   <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
                     letterSpacing:'0.05em' }}>{k}</div>
                   <div style={{ fontSize:13, fontWeight:700, color:c }}>{v}</div>
@@ -366,7 +362,6 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
             </div>
           )}
 
-          {/* Edit form */}
           {editing && canEdit && (
             <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
@@ -410,7 +405,6 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
                     onChange={e=>set('txId',e.target.value)} style={inputStyle}/>
                 </div>
               </div>
-              {/* Live capital preview */}
               <div style={{ padding:'8px 12px', borderRadius:8, background:'#f0fdf4',
                 border:'1px solid #bbf7d0', fontSize:12, color:'#15803d', fontWeight:600 }}>
                 Capital net preview: {fmt(Number(fields.amount)-Number(fields.gatewayFee)-Number(fields.penalty))}
@@ -418,7 +412,6 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
             </div>
           )}
 
-          {/* Error */}
           {error && (
             <div style={{ padding:'8px 12px', borderRadius:8, background:'#fef2f2',
               border:'1px solid #fca5a5', fontSize:12, color:'#dc2626' }}>
@@ -426,7 +419,6 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
             </div>
           )}
 
-          {/* Delete confirmation */}
           {delConf && (
             <div style={{ padding:'12px 14px', borderRadius:10, background:'#fef2f2',
               border:'1px solid #fca5a5' }}>
@@ -438,66 +430,66 @@ function RowModal({ row, orgId, member, onClose, onSaved, onDeleted }) {
               </div>
               <div style={{ display:'flex', gap:8 }}>
                 <button onClick={handleDelete} disabled={saving}
-                  style={{ padding:'7px 16px', borderRadius:7, background:'#dc2626', color:'#fff',
-                    border:'none', cursor:'pointer', fontWeight:700, fontSize:12 }}>
+                  style={{ padding:'8px 18px', borderRadius:8, background:'#dc2626', color:'#fff',
+                    border:'none', cursor:'pointer', fontWeight:700, fontSize:13, flex:1 }}>
                   {saving ? 'Deleting…' : 'Yes, Delete'}
                 </button>
                 <button onClick={()=>setDelConf(false)} disabled={saving}
-                  style={{ padding:'7px 16px', borderRadius:7, background:'#f1f5f9', color:'#475569',
-                    border:'none', cursor:'pointer', fontWeight:600, fontSize:12 }}>
+                  style={{ padding:'8px 18px', borderRadius:8, background:'#f1f5f9', color:'#475569',
+                    border:'none', cursor:'pointer', fontWeight:600, fontSize:13, flex:1 }}>
                   Cancel
                 </button>
               </div>
             </div>
           )}
+        </div>
 
-          {/* Action buttons */}
-          <div style={{ display:'flex', gap:8, paddingTop:4, borderTop:'1px solid #f1f5f9',
-            flexWrap:'wrap' }}>
-            {!editing && !delConf && (
-              <>
-                {canEdit && (
-                  <button onClick={()=>setEditing(true)}
-                    style={{ padding:'8px 18px', borderRadius:8, background:'#2563eb', color:'#fff',
-                      border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                    ✏️ Edit
-                  </button>
-                )}
-                {canDelete && (
-                  <button onClick={()=>setDelConf(true)}
-                    style={{ padding:'8px 18px', borderRadius:8, background:'#fef2f2', color:'#dc2626',
-                      border:'1px solid #fca5a5', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                    🗑 Delete
-                  </button>
-                )}
-                {!canEdit && (
-                  <div style={{ fontSize:12, color:'#94a3b8', alignSelf:'center' }}>
-                    Read-only — {row.type === 'profit' ? 'distributions' : row._collection} cannot be edited here.
-                  </div>
-                )}
-                <button onClick={onClose}
-                  style={{ marginLeft:'auto', padding:'8px 18px', borderRadius:8,
-                    background:'#f1f5f9', color:'#475569', border:'none',
-                    cursor:'pointer', fontWeight:600, fontSize:13 }}>
-                  Close
-                </button>
-              </>
-            )}
-            {editing && (
-              <>
-                <button onClick={handleSave} disabled={saving}
-                  style={{ padding:'8px 20px', borderRadius:8, background:'#15803d', color:'#fff',
+        {/* Sticky footer buttons */}
+        <div style={{ padding:'12px 18px', borderTop:'1px solid #f1f5f9',
+          display:'flex', gap:8, background:'#fff' }}>
+          {!editing && !delConf && (
+            <>
+              {canEdit && (
+                <button onClick={()=>setEditing(true)}
+                  style={{ flex:1, padding:'10px', borderRadius:10, background:'#2563eb', color:'#fff',
                     border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
-                  {saving ? 'Saving…' : '✓ Save Changes'}
+                  ✏️ Edit
                 </button>
-                <button onClick={()=>{ setEditing(false); setError(''); }}
-                  style={{ padding:'8px 18px', borderRadius:8, background:'#f1f5f9', color:'#475569',
-                    border:'none', cursor:'pointer', fontWeight:600, fontSize:13 }}>
-                  Cancel
+              )}
+              {canDelete && (
+                <button onClick={()=>setDelConf(true)}
+                  style={{ flex:1, padding:'10px', borderRadius:10, background:'#fef2f2', color:'#dc2626',
+                    border:'1px solid #fca5a5', cursor:'pointer', fontWeight:700, fontSize:13 }}>
+                  🗑 Delete
                 </button>
-              </>
-            )}
-          </div>
+              )}
+              {!canEdit && (
+                <div style={{ fontSize:12, color:'#94a3b8', alignSelf:'center', flex:1 }}>
+                  Read-only — {row.type==='profit'?'distributions':row._collection} cannot be edited here.
+                </div>
+              )}
+              <button onClick={onClose}
+                style={{ flex:1, padding:'10px', borderRadius:10,
+                  background:'#f1f5f9', color:'#475569', border:'none',
+                  cursor:'pointer', fontWeight:600, fontSize:13 }}>
+                Close
+              </button>
+            </>
+          )}
+          {editing && (
+            <>
+              <button onClick={handleSave} disabled={saving}
+                style={{ flex:2, padding:'10px', borderRadius:10, background:'#15803d', color:'#fff',
+                  border:'none', cursor:'pointer', fontWeight:700, fontSize:13 }}>
+                {saving ? 'Saving…' : '✓ Save Changes'}
+              </button>
+              <button onClick={()=>{ setEditing(false); setError(''); }}
+                style={{ flex:1, padding:'10px', borderRadius:10, background:'#f1f5f9', color:'#475569',
+                  border:'none', cursor:'pointer', fontWeight:600, fontSize:13 }}>
+                Cancel
+              </button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -519,9 +511,8 @@ export default function AdminLedger() {
   const [showFundBreakdown, setShowFundBreakdown] = useState(false);
   const [mobileView, setMobileView] = useState('list');
   const [exporting,  setExporting]  = useState(false);
-  const [modalRow,   setModalRow]   = useState(null); // row for detail/CRUD modal
+  const [modalRow,   setModalRow]   = useState(null);
 
-  // Org-wide fund data
   const [orgTotalCapital, setOrgTotalCapital] = useState(0);
   const [orgExpenses,     setOrgExpenses]     = useState(0);
   const [orgInvestments,  setOrgInvestments]  = useState(0);
@@ -537,7 +528,6 @@ export default function AdminLedger() {
         try { const u = await getDoc(doc(db,'users',m.id)); return u.exists()?{...m,...u.data(),id:m.id}:m; }
         catch { return m; }
       }));
-      // Sort by member ID (numeric-aware)
       merged.sort((a,b) => (a.idNo||'').localeCompare(b.idNo||'',undefined,{numeric:true}));
       setMembers(merged);
     })();
@@ -575,7 +565,6 @@ export default function AdminLedger() {
     setLoading(false);
   };
 
-  // ── Modal handlers ────────────────────────────────────────────────────────
   const handleSaved = updatedRow => {
     setLedger(prev => prev.map(r => r.id === updatedRow.id ? {...r,...updatedRow} : r));
     setModalRow(null);
@@ -585,7 +574,6 @@ export default function AdminLedger() {
     setModalRow(null);
   };
 
-  // ── Per-member stats ──────────────────────────────────────────────────────
   const memberCapital = ledger
     .filter(r=>r.isContrib && r.status==='verified')
     .reduce((s,r)=>s+r.capitalCredit,0);
@@ -604,8 +592,7 @@ export default function AdminLedger() {
   ];
   const hasFundBudgets = FUNDS.some(f => f.orgAlloc > 0);
 
-  // ── Filtered ledger ───────────────────────────────────────────────────────
-  const filteredLedger = typeFilter==='all'           ? ledger
+  const filteredLedger = typeFilter==='all'            ? ledger
     : typeFilter==='contributions' ? ledger.filter(r=>r.isContrib)
     : typeFilter==='fees'          ? ledger.filter(r=>r.type==='entry_fee'||r.type==='reregistration_fee')
     : typeFilter==='profit'        ? ledger.filter(r=>r.type==='profit')
@@ -627,7 +614,7 @@ export default function AdminLedger() {
         <input value={search} onChange={e=>setSearch(e.target.value)}
           placeholder="Search by name or ID…"
           style={{ width:'100%', padding:'8px 12px', borderRadius:8,
-            border:'1px solid #e2e8f0', fontSize:13 }}/>
+            border:'1px solid #e2e8f0', fontSize:13, boxSizing:'border-box' }}/>
       </div>
       <div style={{ overflowY:'auto', maxHeight:'calc(100vh - 260px)' }}>
         {searchedMembers.map(m => {
@@ -673,36 +660,35 @@ export default function AdminLedger() {
     return (
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
         {/* Member header */}
-        <div className="card" style={{ padding:'16px 18px' }}>
-          <div style={{ display:'flex', alignItems:'center', gap:14, flexWrap:'wrap' }}>
-            <MemberAvatar m={selMember} size={48}/>
+        <div className="card" style={{ padding:'14px 16px' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+            <MemberAvatar m={selMember} size={44}/>
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontWeight:700, fontSize:16, color:'#0f172a' }}>
+              <div style={{ fontWeight:700, fontSize:15, color:'#0f172a' }}>
                 {selMember.nameEnglish}
               </div>
-              <div style={{ fontSize:12, color:'#64748b', marginTop:2 }}>
+              <div style={{ fontSize:12, color:'#64748b', marginTop:1 }}>
                 ID: {selMember.idNo||'—'}{selMember.phone&&` · ${selMember.phone}`}
               </div>
             </div>
-            <div style={{ display:'flex', gap:16, flexWrap:'wrap', flexShrink:0 }}>
+            <div style={{ display:'flex', gap:14, flexShrink:0 }}>
               {[
                 ['Capital', fmt(memberCapital), '#15803d'],
                 ['Records', ledger.length,      '#0f172a'],
                 ['Pending', memberPending,       memberPending>0?'#d97706':'#94a3b8'],
               ].map(([l,v,c]) => (
                 <div key={l} style={{ textAlign:'center' }}>
-                  <div style={{ fontSize:18, fontWeight:800, color:c }}>{v}</div>
-                  <div style={{ fontSize:10, color:'#94a3b8', textTransform:'uppercase',
+                  <div style={{ fontSize:16, fontWeight:800, color:c }}>{v}</div>
+                  <div style={{ fontSize:9, color:'#94a3b8', textTransform:'uppercase',
                     letterSpacing:'.05em' }}>{l}</div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Action buttons row */}
-          <div style={{ marginTop:12, paddingTop:12, borderTop:'1px solid #f1f5f9',
+          {/* Action buttons */}
+          <div style={{ marginTop:12, paddingTop:10, borderTop:'1px solid #f1f5f9',
             display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-            {/* Export button */}
             <button
               onClick={async () => {
                 setExporting(true);
@@ -711,19 +697,18 @@ export default function AdminLedger() {
                 setExporting(false);
               }}
               disabled={exporting || ledger.length===0}
-              style={{ padding:'7px 16px', borderRadius:8, background:exporting?'#94a3b8':'#15803d',
+              style={{ padding:'7px 14px', borderRadius:8, background:exporting?'#94a3b8':'#15803d',
                 color:'#fff', border:'none', cursor:exporting?'not-allowed':'pointer',
                 fontSize:12, fontWeight:700 }}>
               {exporting ? '⏳ Exporting…' : '⬇ Export Excel'}
             </button>
-            {/* Fund breakdown toggle */}
             {hasFundBudgets && (
               <button onClick={()=>setShowFundBreakdown(v=>!v)}
-                style={{ padding:'7px 16px', borderRadius:8, border:'1px solid #e2e8f0',
+                style={{ padding:'7px 14px', borderRadius:8, border:'1px solid #e2e8f0',
                   background:showFundBreakdown?'#eff6ff':'#fff',
                   color:showFundBreakdown?'#1d4ed8':'#475569',
                   cursor:'pointer', fontSize:12, fontWeight:600 }}>
-                {showFundBreakdown?'▲ Hide':'▼ Show'} Fund Breakdown
+                {showFundBreakdown?'▲ Hide':'▼'} Funds
               </button>
             )}
           </div>
@@ -731,12 +716,12 @@ export default function AdminLedger() {
 
         {/* Fund breakdown */}
         {showFundBreakdown && hasFundBudgets && (
-          <div className="card" style={{ padding:'16px 18px' }}>
-            <div style={{ fontWeight:700, fontSize:14, color:'#0f172a', marginBottom:4 }}>
+          <div className="card" style={{ padding:'14px 16px' }}>
+            <div style={{ fontWeight:700, fontSize:13, color:'#0f172a', marginBottom:3 }}>
               🏦 Fund Breakdown — {selMember.nameEnglish}
             </div>
-            <div style={{ fontSize:12, color:'#64748b', marginBottom:14 }}>
-              Based on {(memberPct*100).toFixed(2)}% capital share of the organisation.
+            <div style={{ fontSize:11, color:'#64748b', marginBottom:12 }}>
+              {(memberPct*100).toFixed(2)}% capital share
             </div>
             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
               {FUNDS.map(fund => {
@@ -747,29 +732,29 @@ export default function AdminLedger() {
                 const up     = mAlloc>0 ? Math.min(100,(mUsed/mAlloc)*100) : 0;
                 const over   = rem < 0;
                 return (
-                  <div key={fund.key} style={{ padding:'12px 14px', borderRadius:10,
+                  <div key={fund.key} style={{ padding:'10px 12px', borderRadius:10,
                     border:`1px solid ${fund.color}33`, background:`${fund.color}08` }}>
                     <div style={{ display:'flex', justifyContent:'space-between',
                       alignItems:'center', marginBottom:6 }}>
-                      <span style={{ fontWeight:700, fontSize:13, color:'#0f172a' }}>
+                      <span style={{ fontWeight:700, fontSize:12, color:'#0f172a' }}>
                         {fund.icon} {fund.label}
                       </span>
                       <div style={{ textAlign:'right' }}>
-                        <div style={{ fontSize:13, fontWeight:700,
+                        <div style={{ fontSize:12, fontWeight:700,
                           color:over?'#dc2626':fund.color }}>
-                          {fmt(rem)} remaining
+                          {fmt(rem)} left
                         </div>
                         <div style={{ fontSize:10, color:'#94a3b8' }}>of {fmt(mAlloc)}</div>
                       </div>
                     </div>
-                    <div style={{ height:6, borderRadius:99, background:'#e2e8f0', overflow:'hidden' }}>
+                    <div style={{ height:5, borderRadius:99, background:'#e2e8f0', overflow:'hidden' }}>
                       <div style={{ height:'100%', borderRadius:99, transition:'width .6s',
                         background:over?'#dc2626':fund.color, width:`${up}%` }}/>
                     </div>
                     <div style={{ display:'flex', justifyContent:'space-between',
                       fontSize:10, color:'#94a3b8', marginTop:3 }}>
                       <span>Used: {fmt(mUsed)} ({up.toFixed(1)}%)</span>
-                      <span>Org total: {fmt(fund.orgAlloc)}</span>
+                      <span>Org: {fmt(fund.orgAlloc)}</span>
                     </div>
                   </div>
                 );
@@ -778,14 +763,15 @@ export default function AdminLedger() {
           </div>
         )}
 
-        {/* Filter bar */}
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+        {/* Filter bar — horizontally scrollable on mobile */}
+        <div style={{ display:'flex', gap:6, overflowX:'auto', paddingBottom:2,
+          WebkitOverflowScrolling:'touch', scrollbarWidth:'none' }}>
           {[
             ['all','All'],['contributions','Contributions'],
             ['fees','Fees'],['profit','Profit'],['loans','Loans'],
           ].map(([k,l]) => (
             <button key={k} onClick={()=>setTypeFilter(k)}
-              style={{ padding:'5px 12px', fontSize:11, borderRadius:7, cursor:'pointer',
+              style={{ padding:'5px 12px', fontSize:11, borderRadius:7, cursor:'pointer', flexShrink:0,
                 border:typeFilter===k?'2px solid #2563eb':'1px solid #e2e8f0',
                 background:typeFilter===k?'#eff6ff':'#fff',
                 color:typeFilter===k?'#1d4ed8':'#475569', fontWeight:500 }}>
@@ -794,111 +780,111 @@ export default function AdminLedger() {
           ))}
         </div>
 
-        {/* Click-to-open tip */}
         {filteredLedger.length > 0 && (
-          <div style={{ fontSize:11, color:'#94a3b8', display:'flex', alignItems:'center', gap:4 }}>
-            💡 Click any row to view details or edit
+          <div style={{ fontSize:11, color:'#94a3b8' }}>
+            💡 Tap any row to view details or edit
           </div>
         )}
 
-        {/* Ledger table */}
+        {/* ── Ledger table — horizontally scrollable on mobile ── */}
         {filteredLedger.length === 0 ? (
           <div className="card" style={{ textAlign:'center', padding:32, color:'#94a3b8', fontSize:13 }}>
             No records in this category.
           </div>
         ) : (
           <div style={{ borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
-            {/* Header */}
-            <div style={{ display:'grid',
-              gridTemplateColumns:'90px 110px 1fr 100px 90px 80px',
-              gap:8, padding:'8px 14px', background:'#f8fafc',
-              borderBottom:'1px solid #e2e8f0' }}>
-              {['Date','Type','Description / Month','Amount','Capital','Status'].map((h,i)=>(
-                <div key={i} style={{ fontSize:10, fontWeight:700, color:'#64748b',
-                  textTransform:'uppercase', letterSpacing:'0.05em' }}>{h}</div>
-              ))}
-            </div>
-
-            {/* Rows */}
-            {filteredLedger.map((r,i) => (
-              <div key={r.id}
-                onClick={()=>setModalRow(r)}
-                style={{
-                  display:'grid',
-                  gridTemplateColumns:'90px 110px 1fr 100px 90px 80px',
-                  gap:8, padding:'9px 14px', alignItems:'center',
-                  borderBottom:'1px solid #f1f5f9',
-                  background: r.isContrib && r.status==='verified'
-                    ? '#f0fdf4' : i%2===0 ? '#fff' : '#fafafa',
-                  borderLeft:`3px solid ${
-                    r.isContrib && r.status==='verified' ? '#86efac' :
-                    r.status==='pending' ? '#fde68a' :
-                    r.status==='rejected' ? '#fca5a5' : 'transparent'}`,
-                  cursor:'pointer',
-                  transition:'background 0.1s',
-                }}
-                onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
-                onMouseLeave={e=>e.currentTarget.style.background=
-                  r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'
-                }
-              >
-                <div style={{ fontSize:11, color:'#64748b', whiteSpace:'nowrap' }}>
-                  {tsDate(r.date)}
+            {/* Outer scroll wrapper */}
+            <div style={{ overflowX:'auto', WebkitOverflowScrolling:'touch' }}>
+              <div style={{ minWidth:520 }}>
+                {/* Header */}
+                <div style={{ display:'grid',
+                  gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
+                  gap:6, padding:'8px 12px', background:'#f8fafc',
+                  borderBottom:'1px solid #e2e8f0' }}>
+                  {['Date','Type','Installment','Amount','Capital','Status'].map((h,i)=>(
+                    <div key={i} style={{ fontSize:10, fontWeight:700, color:'#64748b',
+                      textTransform:'uppercase', letterSpacing:'0.05em' }}>{h}</div>
+                  ))}
                 </div>
-                <TypeBadge type={r.type}/>
-                {/* Description + installment month */}
-                <div style={{ minWidth:0 }}>
-                  <div style={{ fontSize:12, fontWeight:500, color:'#0f172a',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {r.label}
+
+                {/* Rows */}
+                {filteredLedger.map((r,i) => (
+                  <div key={r.id}
+                    onClick={()=>setModalRow(r)}
+                    style={{
+                      display:'grid',
+                      gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
+                      gap:6, padding:'9px 12px', alignItems:'center',
+                      borderBottom:'1px solid #f1f5f9',
+                      background: r.isContrib && r.status==='verified'
+                        ? '#f0fdf4' : i%2===0 ? '#fff' : '#fafafa',
+                      borderLeft:`3px solid ${
+                        r.isContrib && r.status==='verified' ? '#86efac' :
+                        r.status==='pending' ? '#fde68a' :
+                        r.status==='rejected' ? '#fca5a5' : 'transparent'}`,
+                      cursor:'pointer',
+                    }}
+                    onMouseEnter={e=>e.currentTarget.style.background='#f0f9ff'}
+                    onMouseLeave={e=>e.currentTarget.style.background=
+                      r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'
+                    }
+                  >
+                    <div style={{ fontSize:11, color:'#64748b', whiteSpace:'nowrap' }}>
+                      {tsDate(r.date)}
+                    </div>
+                    <TypeBadge type={r.type}/>
+
+                    {/* Installment column — paidMonthsLabel if present, else type label */}
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:12, fontWeight:600, color:'#1d4ed8',
+                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                        {r.paidMonthsLabel || '—'}
+                      </div>
+                      {r.txId && (
+                        <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'monospace',
+                          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {r.txId.slice(0,14)}…
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ fontWeight:700, fontSize:12, color:'#0f172a' }}>
+                      {fmt(r.amount)}
+                      {r.penalty>0 && (
+                        <div style={{ fontSize:9, color:'#d97706' }}>+{fmt(r.penalty)} pen.</div>
+                      )}
+                    </div>
+                    <div style={{ fontSize:12, fontWeight:600,
+                      color:r.capitalCredit>0?'#15803d':'#94a3b8' }}>
+                      {r.capitalCredit>0 ? fmt(r.capitalCredit) : '—'}
+                    </div>
+                    <span className={`badge ${
+                      r.status==='verified'?'badge-green':
+                      r.status==='pending'?'badge-yellow':'badge-red'}`}
+                      style={{ fontSize:9, textTransform:'capitalize' }}>
+                      {r.status}
+                    </span>
                   </div>
-                  {r.paidMonthsLabel && (
-                    <div style={{ fontSize:10, color:'#1d4ed8', fontWeight:600,
-                      marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
-                      📅 {r.paidMonthsLabel}
-                    </div>
-                  )}
-                  {r.txId && (
-                    <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'monospace' }}>
-                      {r.txId.slice(0,16)}…
-                    </div>
-                  )}
-                </div>
-                <div style={{ fontWeight:700, fontSize:12, color:'#0f172a' }}>
-                  {fmt(r.amount)}
-                  {r.penalty>0 && (
-                    <div style={{ fontSize:9, color:'#d97706' }}>+{fmt(r.penalty)} penalty</div>
-                  )}
-                </div>
-                <div style={{ fontSize:12, fontWeight:600,
-                  color:r.capitalCredit>0?'#15803d':'#94a3b8' }}>
-                  {r.capitalCredit>0 ? fmt(r.capitalCredit) : '—'}
-                </div>
-                <span className={`badge ${
-                  r.status==='verified'?'badge-green':
-                  r.status==='pending'?'badge-yellow':'badge-red'}`}
-                  style={{ fontSize:9, textTransform:'capitalize' }}>
-                  {r.status}
-                </span>
-              </div>
-            ))}
+                ))}
 
-            {/* Footer */}
-            <div style={{ display:'grid',
-              gridTemplateColumns:'90px 110px 1fr 100px 90px 80px',
-              gap:8, padding:'8px 14px', background:'#f8fafc',
-              borderTop:'2px solid #e2e8f0' }}>
-              <div/><div/>
-              <div style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>
-                {filteredLedger.length} records
+                {/* Footer */}
+                <div style={{ display:'grid',
+                  gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
+                  gap:6, padding:'8px 12px', background:'#f8fafc',
+                  borderTop:'2px solid #e2e8f0' }}>
+                  <div/><div/>
+                  <div style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>
+                    {filteredLedger.length} records
+                  </div>
+                  <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>
+                    {fmt(filteredLedger.reduce((s,r)=>s+r.amount,0))}
+                  </div>
+                  <div style={{ fontSize:12, fontWeight:800, color:'#15803d' }}>
+                    {fmt(filteredLedger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0))}
+                  </div>
+                  <div/>
+                </div>
               </div>
-              <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>
-                {fmt(filteredLedger.reduce((s,r)=>s+r.amount,0))}
-              </div>
-              <div style={{ fontSize:12, fontWeight:800, color:'#15803d' }}>
-                {fmt(filteredLedger.filter(r=>r.capitalCredit>0).reduce((s,r)=>s+r.capitalCredit,0))}
-              </div>
-              <div/>
             </div>
           </div>
         )}
@@ -908,7 +894,6 @@ export default function AdminLedger() {
 
   return (
     <div className="page-wrap animate-fade">
-      {/* Row detail / CRUD modal */}
       {modalRow && (
         <RowModal
           row={modalRow}
@@ -933,24 +918,26 @@ export default function AdminLedger() {
           .adm-list.hide   { display: none; }
           .adm-detail.hide { display: none; }
         }
+        /* hide scrollbar on filter row */
+        div::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <div className="page-header" style={{ display:'flex', alignItems:'center', gap:14 }}>
+      <div className="page-header" style={{ display:'flex', alignItems:'center', gap:12 }}>
         {orgData?.logoURL && (
-          <div style={{ width:40, height:40, borderRadius:10, overflow:'hidden', flexShrink:0 }}>
+          <div style={{ width:38, height:38, borderRadius:9, overflow:'hidden', flexShrink:0 }}>
             <img src={orgData.logoURL} style={{ width:'100%', height:'100%', objectFit:'cover' }} alt="" />
           </div>
         )}
         <div>
           <div className="page-title">Member Ledger</div>
           <div className="page-subtitle">
-            {members.length} members · Sorted by Member ID · Click any row to view/edit
+            {members.length} members · Tap row to view/edit
           </div>
         </div>
       </div>
 
       {mobileView==='detail' && (
-        <div className="adm-back" style={{ marginBottom:14 }}>
+        <div className="adm-back" style={{ marginBottom:12 }}>
           <button onClick={()=>setMobileView('list')}
             style={{ background:'none', border:'none', cursor:'pointer',
               color:'#2563eb', fontWeight:600, fontSize:14, padding:0,
