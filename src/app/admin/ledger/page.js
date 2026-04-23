@@ -41,13 +41,13 @@ function getFundAlloc(key, totalCapital, settings) {
 
 // ── Type config ───────────────────────────────────────────────────────────────
 const TYPE_CFG = {
-  monthly:            { label:'Monthly',     short:'Mo',  color:'#15803d', bg:'#dcfce7' },
-  general:            { label:'Special Sub', short:'Sp',  color:'#1d4ed8', bg:'#dbeafe' },
-  entry_fee:          { label:'Entry Fee',   short:'En',  color:'#0d9488', bg:'#ccfbf1' },
-  reregistration_fee: { label:'Re-Reg Fee',  short:'RR',  color:'#7c3aed', bg:'#ede9fe' },
-  profit:             { label:'Profit',      short:'Pr',  color:'#059669', bg:'#d1fae5' },
-  loan_disbursed:     { label:'Loan Out',    short:'LoO', color:'#dc2626', bg:'#fee2e2' },
-  loan_repayment:     { label:'Loan In',     short:'LoI', color:'#92400e', bg:'#fef3c7' },
+  monthly:            { label:'Installment',  short:'In',  color:'#15803d', bg:'#dcfce7' },
+  general:            { label:'Special Sub',  short:'Sp',  color:'#1d4ed8', bg:'#dbeafe' },
+  entry_fee:          { label:'Entry Fee',    short:'En',  color:'#0d9488', bg:'#ccfbf1' },
+  reregistration_fee: { label:'Re-Reg Fee',   short:'RR',  color:'#7c3aed', bg:'#ede9fe' },
+  profit:             { label:'Profit',       short:'Pr',  color:'#059669', bg:'#d1fae5' },
+  loan_disbursed:     { label:'Loan Out',     short:'LoO', color:'#dc2626', bg:'#fee2e2' },
+  loan_repayment:     { label:'Loan In',      short:'LoI', color:'#92400e', bg:'#fef3c7' },
 };
 
 function TypeBadge({ type, short = false }) {
@@ -642,7 +642,8 @@ export default function AdminLedger() {
     );
 
     // Shared grid template used in header, rows, and footer
-    const GRID = '82px 40px minmax(0,1fr) 76px 72px 58px';
+    // Type shrunk to badge-only width; Installment/Amount get more room; Status abbreviated
+    const GRID = '80px 36px minmax(80px,1.6fr) minmax(64px,1fr) minmax(64px,1fr) 52px';
 
     return (
       <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
@@ -783,7 +784,7 @@ export default function AdminLedger() {
         ) : (
           <div style={{ borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
             <div style={{ overflowX:'auto', WebkitOverflowScrolling:'touch' }}>
-              <div style={{ minWidth:420 }}>
+              <div style={{ minWidth:460 }}>
 
                 {/* Header */}
                 <div style={{ display:'grid', gridTemplateColumns:GRID,
@@ -851,12 +852,12 @@ export default function AdminLedger() {
                       {r.capitalCredit > 0 ? fmt(r.capitalCredit) : '—'}
                     </div>
 
-                    {/* Status badge */}
+                    {/* Status badge — abbreviated to fit narrow column */}
                     <span className={`badge ${
                       r.status==='verified' ? 'badge-green' :
                       r.status==='pending'  ? 'badge-yellow' : 'badge-red'}`}
-                      style={{ fontSize:10, textTransform:'capitalize' }}>
-                      {r.status}
+                      style={{ fontSize:10 }}>
+                      {r.status==='verified' ? '✓ Ok' : r.status==='pending' ? '…Wait' : '✕ Rej'}
                     </span>
                   </div>
                 ))}
