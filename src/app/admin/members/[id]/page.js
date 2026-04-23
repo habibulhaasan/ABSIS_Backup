@@ -1645,7 +1645,7 @@ export default function AdminMemberProfile() {
             )}
             {capital && capital.missedMonths>0 && (
               <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
-                {capital.missedMonths} missed mo.
+                {capital.missedMonths} missed Installments
               </div>
             )}
           </div>
