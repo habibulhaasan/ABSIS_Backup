@@ -40,15 +40,30 @@ function getFundAlloc(key, totalCapital, settings) {
 
 // ── Type badge config ─────────────────────────────────────────────────────────
 const TYPE_CFG = {
-  monthly:            { label:'Monthly',     color:'#15803d', bg:'#dcfce7' },
-  general:            { label:'Special Sub', color:'#1d4ed8', bg:'#dbeafe' },
-  entry_fee:          { label:'Entry Fee',   color:'#0369a1', bg:'#e0f2fe' },
-  reregistration_fee: { label:'Re-Reg Fee',  color:'#7c3aed', bg:'#ede9fe' },
-  profit:             { label:'Profit',      color:'#059669', bg:'#d1fae5' },
-  loan_disbursed:     { label:'Loan Out',    color:'#dc2626', bg:'#fee2e2' },
-  loan_repayment:     { label:'Loan In',     color:'#92400e', bg:'#fef3c7' },
+  monthly:            { label:'Monthly',     short:'Mo',  color:'#15803d', bg:'#dcfce7' },
+  general:            { label:'Special Sub', short:'Sp',  color:'#1d4ed8', bg:'#dbeafe' },
+  entry_fee:          { label:'Entry Fee',   short:'En',  color:'#0d9488', bg:'#ccfbf1' },
+  reregistration_fee: { label:'Re-Reg Fee',  short:'RR',  color:'#7c3aed', bg:'#ede9fe' },
+  profit:             { label:'Profit',      short:'Pr',  color:'#059669', bg:'#d1fae5' },
+  loan_disbursed:     { label:'Loan Out',    short:'LoO', color:'#dc2626', bg:'#fee2e2' },
+  loan_repayment:     { label:'Loan In',     short:'LoI', color:'#92400e', bg:'#fef3c7' },
 };
 
+// Short pill for use inside the compact table
+function TypePill({ type }) {
+  const c = TYPE_CFG[type] || { short: '?', color:'#475569', bg:'#f1f5f9', label: type||'Payment' };
+  return (
+    <span title={c.label} style={{
+      display:'inline-flex', alignItems:'center', justifyContent:'center',
+      padding:'2px 7px', borderRadius:99, fontSize:11, fontWeight:800,
+      background:c.bg, color:c.color, whiteSpace:'nowrap', letterSpacing:'0.03em',
+    }}>
+      {c.short}
+    </span>
+  );
+}
+
+// Full badge — kept for modal use
 function TypeBadge({ type }) {
   const c = TYPE_CFG[type] || { label:type||'Payment', color:'#475569', bg:'#f1f5f9' };
   return (
@@ -795,13 +810,14 @@ export default function AdminLedger() {
           <div style={{ borderRadius:12, border:'1px solid #e2e8f0', overflow:'hidden' }}>
             {/* Outer scroll wrapper */}
             <div style={{ overflowX:'auto', WebkitOverflowScrolling:'touch' }}>
-              <div style={{ minWidth:520 }}>
+              {/* cols: Date | T | Installment | Amount | Capital | St */}
+              <div style={{ minWidth:420 }}>
                 {/* Header */}
                 <div style={{ display:'grid',
-                  gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
-                  gap:6, padding:'8px 12px', background:'#f8fafc',
+                  gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
+                  gap:4, padding:'7px 10px', background:'#f8fafc',
                   borderBottom:'1px solid #e2e8f0' }}>
-                  {['Date','Type','Installment','Amount','Capital','Status'].map((h,i)=>(
+                  {['Date','T','Installment','Amount','Capital','St'].map((h,i)=>(
                     <div key={i} style={{ fontSize:10, fontWeight:700, color:'#64748b',
                       textTransform:'uppercase', letterSpacing:'0.05em' }}>{h}</div>
                   ))}
@@ -813,8 +829,8 @@ export default function AdminLedger() {
                     onClick={()=>setModalRow(r)}
                     style={{
                       display:'grid',
-                      gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
-                      gap:6, padding:'9px 12px', alignItems:'center',
+                      gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
+                      gap:4, padding:'8px 10px', alignItems:'center',
                       borderBottom:'1px solid #f1f5f9',
                       background: r.isContrib && r.status==='verified'
                         ? '#f0fdf4' : i%2===0 ? '#fff' : '#fafafa',
@@ -829,52 +845,56 @@ export default function AdminLedger() {
                       r.isContrib&&r.status==='verified'?'#f0fdf4':i%2===0?'#fff':'#fafafa'
                     }
                   >
+                    {/* Date — dd Mon yy to save width */}
                     <div style={{ fontSize:11, color:'#64748b', whiteSpace:'nowrap' }}>
                       {tsDate(r.date)}
                     </div>
-                    <TypeBadge type={r.type}/>
 
-                    {/* Installment column — paidMonthsLabel if present, else type label */}
+                    {/* Short type pill */}
+                    <TypePill type={r.type}/>
+
+                    {/* Installment */}
                     <div style={{ minWidth:0 }}>
                       <div style={{ fontSize:12, fontWeight:600, color:'#1d4ed8',
                         overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                         {r.paidMonthsLabel || '—'}
                       </div>
                       {r.txId && (
-                        <div style={{ fontSize:10, color:'#94a3b8', fontFamily:'monospace',
+                        <div style={{ fontSize:9, color:'#94a3b8', fontFamily:'monospace',
                           overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {r.txId.slice(0,14)}…
+                          {r.txId.slice(0,12)}…
                         </div>
                       )}
                     </div>
 
-                    <div style={{ fontWeight:700, fontSize:12, color:'#0f172a' }}>
+                    <div style={{ fontWeight:700, fontSize:12, color:'#0f172a', minWidth:0 }}>
                       {fmt(r.amount)}
                       {r.penalty>0 && (
-                        <div style={{ fontSize:9, color:'#d97706' }}>+{fmt(r.penalty)} pen.</div>
+                        <div style={{ fontSize:9, color:'#d97706' }}>+pen.</div>
                       )}
                     </div>
                     <div style={{ fontSize:12, fontWeight:600,
                       color:r.capitalCredit>0?'#15803d':'#94a3b8' }}>
                       {r.capitalCredit>0 ? fmt(r.capitalCredit) : '—'}
                     </div>
-                    <span className={`badge ${
-                      r.status==='verified'?'badge-green':
-                      r.status==='pending'?'badge-yellow':'badge-red'}`}
-                      style={{ fontSize:9, textTransform:'capitalize' }}>
-                      {r.status}
+                    {/* Status — single letter to save space */}
+                    <span style={{
+                      fontSize:10, fontWeight:700, textTransform:'capitalize',
+                      color: r.status==='verified'?'#15803d':r.status==='pending'?'#92400e':'#dc2626',
+                    }}>
+                      {r.status==='verified'?'✓':r.status==='pending'?'…':'✕'}
                     </span>
                   </div>
                 ))}
 
                 {/* Footer */}
                 <div style={{ display:'grid',
-                  gridTemplateColumns:'84px 100px 1fr 90px 80px 72px',
-                  gap:6, padding:'8px 12px', background:'#f8fafc',
+                  gridTemplateColumns:'80px 36px 1fr 82px 76px 58px',
+                  gap:4, padding:'7px 10px', background:'#f8fafc',
                   borderTop:'2px solid #e2e8f0' }}>
                   <div/><div/>
                   <div style={{ fontSize:11, fontWeight:700, color:'#64748b' }}>
-                    {filteredLedger.length} records
+                    {filteredLedger.length} rows
                   </div>
                   <div style={{ fontSize:12, fontWeight:800, color:'#0f172a' }}>
                     {fmt(filteredLedger.reduce((s,r)=>s+r.amount,0))}
