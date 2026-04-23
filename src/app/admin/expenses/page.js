@@ -33,7 +33,7 @@ function getDateRange(preset, custom) {
   if (preset === 'this_month')  return { from:`${y}-${pad(m+1)}-01`, to: today };
   if (preset === 'last_month') {
     const fm = new Date(y, m-1, 1);
-    const lm = new Date(y, m,   0);   // last day of prev month
+    const lm = new Date(y, m,   0);
     return { from: iso(fm), to: iso(lm) };
   }
   if (preset === '3m') return { from: iso(new Date(y, m-3, now.getDate())), to: today };
@@ -360,12 +360,26 @@ export default function AdminExpenses() {
         </tfoot>
       </table>
 
-      <script>window.onload=()=>{window.print();}<\/script>
+      <script>
+        window.addEventListener('load', function() {
+          setTimeout(function() { window.print(); }, 250);
+        });
+      <\/script>
     </body></html>`;
 
-    const w = window.open('','_blank','width=900,height=700');
-    w.document.write(html);
-    w.document.close();
+    // Use Blob URL — avoids popup blockers and document.write issues
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    const w    = window.open(url, '_blank');
+
+    // Fallback if popup was blocked
+    if (!w) {
+      const a = Object.assign(document.createElement('a'), { href: url, target: '_blank' });
+      a.click();
+    }
+
+    // Clean up blob URL after enough time for print dialog
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
   if (!isOrgAdmin) return null;
