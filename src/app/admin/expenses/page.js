@@ -1,6 +1,6 @@
 // src/app/admin/expenses/page.js
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
 import {
   collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc,
@@ -21,29 +21,38 @@ const EMPTY_FORM  = { title:'', amount:'', category:'Office', date:new Date().to
 
 // ── Date range helpers ────────────────────────────────────────────────────────
 function getDateRange(preset, custom) {
-  const now = new Date();
+  if (preset === 'all')    return { from:'', to:'' };
   if (preset === 'custom') return custom;
-  if (preset === 'all') return { from: '', to: '' };
-  const from = new Date();
-  if (preset === 'this_month') { from.setDate(1); }
-  else if (preset === 'last_month') { from.setMonth(from.getMonth()-1,1); now.setDate(0); }
-  else if (preset === '3m')  { from.setMonth(from.getMonth()-3); }
-  else if (preset === '6m')  { from.setMonth(from.getMonth()-6); }
-  else if (preset === 'this_year') { from.setMonth(0,1); }
-  else if (preset === 'last_year') { from.setFullYear(from.getFullYear()-1,0,1); now.setFullYear(now.getFullYear()-1,11,31); }
-  return {
-    from: from.toISOString().split('T')[0],
-    to:   now.toISOString().split('T')[0],
-  };
+
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  const pad = v => String(v).padStart(2,'0');
+  const iso = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const today = iso(now);
+
+  if (preset === 'this_month')  return { from:`${y}-${pad(m+1)}-01`, to: today };
+  if (preset === 'last_month') {
+    const fm = new Date(y, m-1, 1);
+    const lm = new Date(y, m,   0);   // last day of prev month
+    return { from: iso(fm), to: iso(lm) };
+  }
+  if (preset === '3m') return { from: iso(new Date(y, m-3, now.getDate())), to: today };
+  if (preset === '6m') return { from: iso(new Date(y, m-6, now.getDate())), to: today };
+  if (preset === 'this_year')  return { from:`${y}-01-01`, to: today };
+  if (preset === 'last_year')  return { from:`${y-1}-01-01`, to:`${y-1}-12-31` };
+  return { from:'', to:'' };
 }
+
 function inRange(expense, from, to) {
   if (!from && !to) return true;
-  const d = expense.date || (expense.createdAt?.seconds ? new Date(expense.createdAt.seconds*1000).toISOString().split('T')[0] : '');
+  const d = expense.date ||
+    (expense.createdAt?.seconds ? new Date(expense.createdAt.seconds*1000).toISOString().split('T')[0] : '');
   if (!d) return true;
   if (from && d < from) return false;
   if (to   && d > to)   return false;
   return true;
 }
+
 function fmtLabel(preset, custom) {
   const labels = {
     all:'All Time', this_month:'This Month', last_month:'Last Month',
@@ -64,230 +73,9 @@ function Stat({label,value,color='#0f172a',bg='#f8fafc'}) {
   );
 }
 
-export default function AdminExpenses() {
-  const { user, userData, orgData, isOrgAdmin } = useAuth();
-  const orgId = userData?.activeOrgId;
-  const printRef = useRef();
-
-  const [expenses,       setExpenses]       = useState([]);
-  const [totalCapital,   setTotalCapital]   = useState(0);
-  const [totalFeeIncome, setTotalFeeIncome] = useState(0);
-  const [loading,        setLoading]        = useState(true);
-  const [showAdd,        setShowAdd]        = useState(false);
-  const [editTarget,     setEditTarget]     = useState(null);
-  const [saving,         setSaving]         = useState(false);
-  const [toast,          setToast]          = useState('');
-  const [search,         setSearch]         = useState('');
-  const [catFilter,      setCatFilter]      = useState('all');
-
-  // ── Date filter state ──────────────────────────────────────────────────────
-  const [datePreset,  setDatePreset]  = useState('all');
-  const [customRange, setCustomRange] = useState({ from:'', to:'' });
-
-  const [form, setForm] = useState(EMPTY_FORM);
-  const set = (k,v) => setForm(p=>({...p,[k]:v}));
-  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3000); };
-
-  useEffect(() => {
-    if (!orgId) return;
-    (async () => {
-      const [paySnap, feeSnap] = await Promise.all([
-        getDocs(collection(db,'organizations',orgId,'investments')),
-        getDocs(collection(db,'organizations',orgId,'entryFees')),
-      ]);
-      const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
-      const cap = paySnap.docs.map(d=>d.data()).filter(p=>p.status==='verified')
-        .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
-      setTotalCapital(cap);
-      const adminFees = feeSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
-      const invFees   = paySnap.docs.map(d=>d.data())
-        .filter(p=>p.status==='verified' &&
-          (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee') &&
-          p.isContribution===false)
-        .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
-      setTotalFeeIncome(adminFees+invFees);
-    })();
-    const unsubExp = onSnapshot(
-      query(collection(db,'organizations',orgId,'expenses'),orderBy('createdAt','desc')),
-      snap => { setExpenses(snap.docs.map(d=>({id:d.id,...d.data()}))); setLoading(false); }
-    );
-    return unsubExp;
-  }, [orgId]);
-
-  const fb       = orgData?.settings?.fundBudgets?.expenses;
-  const capAlloc = fb?.value
-    ? (fb.type==='amount'
-        ? Number(fb.value)||0
-        : Math.min(Math.round(totalCapital*(Number(fb.value)||0)/100),
-            fb.maxAmount&&Number(fb.maxAmount)>0?Number(fb.maxAmount):Infinity))
-    : 0;
-  const expenseBudget = capAlloc + totalFeeIncome;
-  const totalUsed     = expenses.reduce((s,e)=>s+(e.amount||0),0);
-  const fundBalance   = expenseBudget > 0 ? expenseBudget - totalUsed : null;
-  const overBudget    = fundBalance !== null && fundBalance < 0;
-  const newAmount     = Number(form.amount)||0;
-  const baseBalance   = editTarget ? (fundBalance!==null?fundBalance+(editTarget.amount||0):null) : fundBalance;
-  const afterAdd      = baseBalance !== null ? baseBalance - newAmount : null;
-
-  // ── Filtered list ──────────────────────────────────────────────────────────
-  const { from: drFrom, to: drTo } = getDateRange(datePreset, customRange);
-  const filtered = expenses
-    .filter(e => catFilter==='all' || e.category===catFilter)
-    .filter(e => !search || e.title?.toLowerCase().includes(search.toLowerCase()))
-    .filter(e => inRange(e, drFrom, drTo));
-  const filteredTotal = filtered.reduce((s,e)=>s+(e.amount||0),0);
-
-  const usedPct = expenseBudget > 0 ? Math.min(100,(totalUsed/expenseBudget)*100) : 0;
-
-  // ── CRUD ───────────────────────────────────────────────────────────────────
-  const handleAdd = async () => {
-    if (!form.title.trim()) return alert('Title is required.');
-    if (!form.amount||Number(form.amount)<=0) return alert('Enter a valid amount.');
-    if (!form.date) return alert('Date is required.');
-    setSaving(true);
-    try {
-      await addDoc(collection(db,'organizations',orgId,'expenses'),{
-        title:form.title, amount:Number(form.amount), category:form.category,
-        date:form.date, notes:form.notes, recordedBy:user.uid, createdAt:serverTimestamp(),
-      });
-      setShowAdd(false); setForm(EMPTY_FORM); showToast('✅ Expense recorded!');
-    } catch(e) { showToast('Error: '+e.message); }
-    setSaving(false);
-  };
-
-  const openEdit = e => { setEditTarget(e); setForm({title:e.title||'',amount:e.amount||'',category:e.category||'Office',date:e.date||new Date().toISOString().split('T')[0],notes:e.notes||''}); };
-  const closeEdit = () => { setEditTarget(null); setForm(EMPTY_FORM); };
-
-  const handleUpdate = async () => {
-    if (!form.title.trim()) return alert('Title is required.');
-    if (!form.amount||Number(form.amount)<=0) return alert('Enter a valid amount.');
-    if (!form.date) return alert('Date is required.');
-    setSaving(true);
-    try {
-      await updateDoc(doc(db,'organizations',orgId,'expenses',editTarget.id),{
-        title:form.title, amount:Number(form.amount), category:form.category,
-        date:form.date, notes:form.notes, updatedBy:user.uid, updatedAt:serverTimestamp(),
-      });
-      closeEdit(); showToast('✅ Expense updated!');
-    } catch(e) { showToast('Error: '+e.message); }
-    setSaving(false);
-  };
-
-  const handleDelete = async e => {
-    if (!confirm(`Delete "${e.title}"?`)) return;
-    try { await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id)); showToast('Deleted.'); }
-    catch(err) { showToast('Error: '+err.message); }
-  };
-
-  // ── CSV export ─────────────────────────────────────────────────────────────
-  const exportCSV = () => {
-    const org = orgData || {};
-    const header = ['Date','Title','Category','Amount (৳)','Notes'];
-    const rows = filtered.map(e => [
-      e.date||tsDate(e.createdAt), `"${(e.title||'').replace(/"/g,'""')}"`,
-      e.category, e.amount, `"${(e.notes||'').replace(/"/g,'""')}"`
-    ]);
-    const label = fmtLabel(datePreset, customRange);
-    const reportDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-    const meta = [
-      [`"${org.name_en||'Organization'}"`],
-      [`"Expenses Report — ${label}"`],
-      [`"Generated: ${reportDate}"`],
-      [],
-      header,
-      ...rows,
-      [],
-      ['','','Total', filteredTotal, ''],
-    ];
-    const csv = meta.map(r=>r.join(',')).join('\n');
-    const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
-    const url  = URL.createObjectURL(blob);
-    const a    = Object.assign(document.createElement('a'),{href:url,download:`expenses_${label.replace(/\s+/g,'_')}.csv`});
-    a.click(); URL.revokeObjectURL(url);
-  };
-
-  // ── PDF / Print ────────────────────────────────────────────────────────────
-  const exportPDF = () => {
-    const org = orgData || {};
-    const label     = fmtLabel(datePreset, customRange);
-    const reportDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
-
-    const rows = filtered.map((e,i) => `
-      <tr style="background:${i%2===0?'#fff':'#f8fafc'}">
-        <td>${e.date||tsDate(e.createdAt)}</td>
-        <td><strong>${e.title||''}</strong>${e.notes?`<br/><small style="color:#64748b">${e.notes}</small>`:''}</td>
-        <td><span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:600">${e.category||''}</span></td>
-        <td style="text-align:right;font-weight:600;color:#dc2626">৳${(e.amount||0).toLocaleString()}</td>
-      </tr>`).join('');
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
-      <title>Expenses Report</title>
-      <style>
-        *{box-sizing:border-box;margin:0;padding:0}
-        body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#0f172a;padding:32px 40px}
-        table{width:100%;border-collapse:collapse;margin-top:16px}
-        th{background:#f1f5f9;font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;
-           letter-spacing:.06em;padding:8px 10px;border-bottom:2px solid #e2e8f0;text-align:left}
-        td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
-        td:last-child,th:last-child{text-align:right}
-        .tfoot td{background:#fef2f2;font-weight:700;border-top:2px solid #fca5a5}
-        .meta{font-size:11px;color:#64748b;margin-top:5px}
-        @media print{body{padding:20px 28px}}
-      </style></head><body>
-      <!-- LETTERHEAD -->
-      <div style="border-bottom:2.5px solid #000;padding-bottom:14px;margin-bottom:18px;display:flex;align-items:flex-start;gap:16px">
-        ${org.logoURL ? `<img src="${org.logoURL}" alt="Logo" style="width:75px;height:75px;object-fit:contain;mix-blend-mode:multiply;filter:contrast(1.1)"/>` : ''}
-        <div style="flex:1">
-          <div style="font-size:20px;font-weight:900;color:#000;line-height:1.2">
-            ${org.name_bn||'Organization'}<br/>
-            <div style="font-size:12px;color:#64748b">${org.name_en||''}</div>
-          </div>
-          ${org.slogan ? `<div style="font-size:12px;color:#444;font-style:italic;margin-top:3px">${org.slogan}</div>` : ''}
-          <div style="margin-top:5px;font-size:10.5px;color:#333;display:flex;flex-wrap:wrap;gap:3px 14px">
-            ${org.email   ? `<span>✉ ${org.email}</span>`   : ''}
-            ${org.phone   ? `<span>☎ ${org.phone}</span>`   : ''}
-            ${org.website ? `<span>🌐 ${org.website}</span>` : ''}
-          </div>
-        </div>
-      </div>
-      <!-- REPORT META -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:4px">
-        <div>
-          <div style="font-size:16px;font-weight:800">Expenses Report</div>
-          <div class="meta">Period: <strong>${label}</strong></div>
-          ${drFrom||drTo ? `<div class="meta">Range: ${drFrom||'—'} to ${drTo||'—'}</div>` : ''}
-        </div>
-        <div style="text-align:right">
-          <div class="meta">Generated: <strong>${reportDate}</strong></div>
-          <div class="meta">Total entries: <strong>${filtered.length}</strong></div>
-        </div>
-      </div>
-      ${expenseBudget>0 ? `
-        <div style="display:flex;gap:24px;background:#f8fafc;border-radius:8px;padding:10px 14px;margin:12px 0;font-size:11px">
-          <span>Budget: <strong>৳${expenseBudget.toLocaleString()}</strong></span>
-          <span>Total Used: <strong style="color:#dc2626">৳${totalUsed.toLocaleString()}</strong></span>
-          <span>Remaining: <strong style="color:${overBudget?'#dc2626':'#15803d'}">৳${(fundBalance||0).toLocaleString()}</strong></span>
-        </div>` : ''}
-      <!-- TABLE -->
-      <table>
-        <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr></thead>
-        <tbody>${rows}</tbody>
-        <tfoot><tr class="tfoot">
-          <td colspan="3">Total (${filtered.length} entries)</td>
-          <td>৳${filteredTotal.toLocaleString()}</td>
-        </tr></tfoot>
-      </table>
-      <script>window.onload=()=>{window.print();}<\/script>
-    </body></html>`;
-
-    const w = window.open('','_blank','width=900,height=700');
-    w.document.write(html); w.document.close();
-  };
-
-  if (!isOrgAdmin) return null;
-
-  // ── Shared form fields ─────────────────────────────────────────────────────
-  const FormFields = () => (
+// ── Expense form — defined OUTSIDE the page component to prevent remount ──────
+function ExpenseForm({ form, set, expenseBudget, baseBalance, afterAdd, newAmount }) {
+  return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
       {expenseBudget > 0 && (
         <div style={{padding:'10px 14px',borderRadius:8,
@@ -333,6 +121,254 @@ export default function AdminExpenses() {
       </div>
     </div>
   );
+}
+
+export default function AdminExpenses() {
+  const { user, userData, orgData, isOrgAdmin } = useAuth();
+  const orgId = userData?.activeOrgId;
+
+  const [expenses,       setExpenses]       = useState([]);
+  const [totalCapital,   setTotalCapital]   = useState(0);
+  const [totalFeeIncome, setTotalFeeIncome] = useState(0);
+  const [loading,        setLoading]        = useState(true);
+  const [showAdd,        setShowAdd]        = useState(false);
+  const [editTarget,     setEditTarget]     = useState(null);
+  const [saving,         setSaving]         = useState(false);
+  const [toast,          setToast]          = useState('');
+  const [search,         setSearch]         = useState('');
+  const [catFilter,      setCatFilter]      = useState('all');
+  const [datePreset,     setDatePreset]     = useState('all');
+  const [customRange,    setCustomRange]    = useState({ from:'', to:'' });
+  const [form,           setForm]           = useState(EMPTY_FORM);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+  const showToast = msg => { setToast(msg); setTimeout(()=>setToast(''),3000); };
+
+  useEffect(() => {
+    if (!orgId) return;
+    (async () => {
+      const [paySnap, feeSnap] = await Promise.all([
+        getDocs(collection(db,'organizations',orgId,'investments')),
+        getDocs(collection(db,'organizations',orgId,'entryFees')),
+      ]);
+      const feeInAcct = !!orgData?.settings?.gatewayFeeInAccounting;
+      const cap = paySnap.docs.map(d=>d.data()).filter(p=>p.status==='verified')
+        .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
+      setTotalCapital(cap);
+      const adminFees = feeSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+      const invFees   = paySnap.docs.map(d=>d.data())
+        .filter(p=>p.status==='verified'&&
+          (p.paymentType==='entry_fee'||p.paymentType==='reregistration_fee')&&
+          p.isContribution===false)
+        .reduce((s,p)=>s+(p.amount||0)-(p.gatewayFee||0),0);
+      setTotalFeeIncome(adminFees+invFees);
+    })();
+    const unsubExp = onSnapshot(
+      query(collection(db,'organizations',orgId,'expenses'),orderBy('createdAt','desc')),
+      snap => { setExpenses(snap.docs.map(d=>({id:d.id,...d.data()}))); setLoading(false); }
+    );
+    return unsubExp;
+  }, [orgId]);
+
+  const fb       = orgData?.settings?.fundBudgets?.expenses;
+  const capAlloc = fb?.value
+    ? (fb.type==='amount'
+        ? Number(fb.value)||0
+        : Math.min(Math.round(totalCapital*(Number(fb.value)||0)/100),
+            fb.maxAmount&&Number(fb.maxAmount)>0?Number(fb.maxAmount):Infinity))
+    : 0;
+  const expenseBudget = capAlloc + totalFeeIncome;
+  const totalUsed     = expenses.reduce((s,e)=>s+(e.amount||0),0);
+  const fundBalance   = expenseBudget > 0 ? expenseBudget - totalUsed : null;
+  const overBudget    = fundBalance !== null && fundBalance < 0;
+  const newAmount     = Number(form.amount)||0;
+  const baseBalance   = editTarget ? (fundBalance!==null?fundBalance+(editTarget.amount||0):null) : fundBalance;
+  const afterAdd      = baseBalance !== null ? baseBalance - newAmount : null;
+
+  // ── Filtered list ──────────────────────────────────────────────────────────
+  const { from: drFrom, to: drTo } = getDateRange(datePreset, customRange);
+  const filtered = expenses
+    .filter(e => catFilter==='all' || e.category===catFilter)
+    .filter(e => !search || e.title?.toLowerCase().includes(search.toLowerCase()))
+    .filter(e => inRange(e, drFrom, drTo));
+  const filteredTotal = filtered.reduce((s,e)=>s+(e.amount||0),0);
+  const usedPct = expenseBudget > 0 ? Math.min(100,(totalUsed/expenseBudget)*100) : 0;
+
+  // ── CRUD ───────────────────────────────────────────────────────────────────
+  const handleAdd = async () => {
+    if (!form.title.trim()) return alert('Title is required.');
+    if (!form.amount||Number(form.amount)<=0) return alert('Enter a valid amount.');
+    if (!form.date) return alert('Date is required.');
+    setSaving(true);
+    try {
+      await addDoc(collection(db,'organizations',orgId,'expenses'),{
+        title:form.title, amount:Number(form.amount), category:form.category,
+        date:form.date, notes:form.notes, recordedBy:user.uid, createdAt:serverTimestamp(),
+      });
+      setShowAdd(false); setForm(EMPTY_FORM); showToast('✅ Expense recorded!');
+    } catch(e) { showToast('Error: '+e.message); }
+    setSaving(false);
+  };
+
+  const openEdit = e => {
+    setEditTarget(e);
+    setForm({title:e.title||'',amount:e.amount||'',category:e.category||'Office',
+      date:e.date||new Date().toISOString().split('T')[0],notes:e.notes||''});
+  };
+  const closeEdit = () => { setEditTarget(null); setForm(EMPTY_FORM); };
+
+  const handleUpdate = async () => {
+    if (!form.title.trim()) return alert('Title is required.');
+    if (!form.amount||Number(form.amount)<=0) return alert('Enter a valid amount.');
+    if (!form.date) return alert('Date is required.');
+    setSaving(true);
+    try {
+      await updateDoc(doc(db,'organizations',orgId,'expenses',editTarget.id),{
+        title:form.title, amount:Number(form.amount), category:form.category,
+        date:form.date, notes:form.notes, updatedBy:user.uid, updatedAt:serverTimestamp(),
+      });
+      closeEdit(); showToast('✅ Expense updated!');
+    } catch(e) { showToast('Error: '+e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async e => {
+    if (!confirm(`Delete "${e.title}"?`)) return;
+    try { await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id)); showToast('Deleted.'); }
+    catch(err) { showToast('Error: '+err.message); }
+  };
+
+  // ── CSV export ─────────────────────────────────────────────────────────────
+  const exportCSV = () => {
+    const org = orgData || {};
+    const label      = fmtLabel(datePreset, customRange);
+    const reportDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    const header = ['Date','Title','Category','Amount (৳)','Notes'];
+    const rows   = filtered.map(e => [
+      e.date||tsDate(e.createdAt),
+      `"${(e.title||'').replace(/"/g,'""')}"`,
+      e.category, e.amount,
+      `"${(e.notes||'').replace(/"/g,'""')}"`
+    ]);
+    const meta = [
+      [`"${org.name_en||'Organization'}"`],
+      [`"Expenses Report — ${label}"`],
+      [`"Period: ${drFrom||'—'} to ${drTo||'—'}"`],
+      [`"Generated: ${reportDate}"`],
+      [],
+      header,
+      ...rows,
+      [],
+      ['','','Total', filteredTotal, ''],
+    ];
+    const csv  = meta.map(r=>r.join(',')).join('\n');
+    const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8;'});
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'),
+      {href:url, download:`expenses_${label.replace(/[\s→]+/g,'_')}.csv`});
+    a.click(); URL.revokeObjectURL(url);
+  };
+
+  // ── PDF / Print ────────────────────────────────────────────────────────────
+  const exportPDF = () => {
+    const org        = orgData || {};
+    const label      = fmtLabel(datePreset, customRange);
+    const reportDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+
+    const rows = filtered.map((e,i) => `
+      <tr style="background:${i%2===0?'#fff':'#f8fafc'}">
+        <td>${e.date||tsDate(e.createdAt)}</td>
+        <td>
+          <strong>${e.title||''}</strong>
+          ${e.notes?`<br/><small style="color:#64748b">${e.notes}</small>`:''}
+        </td>
+        <td><span style="background:#fef3c7;color:#92400e;padding:2px 7px;border-radius:4px;
+          font-size:11px;font-weight:600">${e.category||''}</span></td>
+        <td style="text-align:right;font-weight:600;color:#dc2626">
+          ৳${(e.amount||0).toLocaleString()}
+        </td>
+      </tr>`).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+      <title>Expenses Report — ${label}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',Arial,sans-serif;font-size:12px;color:#0f172a;padding:32px 40px}
+        table{width:100%;border-collapse:collapse;margin-top:16px}
+        th{background:#f1f5f9;font-size:11px;font-weight:700;color:#475569;
+           text-transform:uppercase;letter-spacing:.06em;padding:8px 10px;
+           border-bottom:2px solid #e2e8f0;text-align:left}
+        td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+        td:last-child,th:last-child{text-align:right}
+        .tfoot td{background:#fef2f2;font-weight:700;border-top:2px solid #fca5a5}
+        @media print{body{padding:20px 28px}}
+      </style></head><body>
+
+      <!-- LETTERHEAD -->
+      <div style="border-bottom:2.5px solid #000;padding-bottom:14px;margin-bottom:18px;
+        display:flex;align-items:flex-start;gap:16px">
+        ${org.logoURL?`<img src="${org.logoURL}" alt="Logo"
+          style="width:75px;height:75px;object-fit:contain;mix-blend-mode:multiply;filter:contrast(1.1)"/>`:''}
+        <div style="flex:1">
+          <div style="font-size:20px;font-weight:900;color:#000;line-height:1.2">
+            ${org.name_bn||'Organization'}<br/>
+            <span style="font-size:12px;color:#64748b">${org.name_en||''}</span>
+          </div>
+          ${org.slogan?`<div style="font-size:12px;color:#444;font-style:italic;margin-top:3px">${org.slogan}</div>`:''}
+          <div style="margin-top:5px;font-size:10.5px;color:#333;display:flex;flex-wrap:wrap;gap:3px 14px">
+            ${org.email  ?`<span>✉ ${org.email}</span>`  :''}
+            ${org.phone  ?`<span>☎ ${org.phone}</span>`  :''}
+            ${org.website?`<span>🌐 ${org.website}</span>`:''}
+          </div>
+        </div>
+      </div>
+
+      <!-- REPORT META -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
+        <div>
+          <div style="font-size:16px;font-weight:800">Expenses Report</div>
+          <div style="font-size:11px;color:#64748b;margin-top:2px">
+            Period: <strong>${label}</strong>
+            ${drFrom||drTo?` &nbsp;|&nbsp; ${drFrom||'—'} to ${drTo||'—'}`:''}
+          </div>
+        </div>
+        <div style="text-align:right;font-size:11px;color:#64748b">
+          <div>Generated: <strong>${reportDate}</strong></div>
+          <div>Total entries: <strong>${filtered.length}</strong></div>
+        </div>
+      </div>
+
+      ${expenseBudget>0?`
+        <div style="display:flex;gap:24px;background:#f8fafc;border-radius:8px;
+          padding:10px 14px;margin-bottom:8px;font-size:11px">
+          <span>Budget: <strong>৳${expenseBudget.toLocaleString()}</strong></span>
+          <span>Total Used: <strong style="color:#dc2626">৳${totalUsed.toLocaleString()}</strong></span>
+          <span>Remaining: <strong style="color:${overBudget?'#dc2626':'#15803d'}">
+            ৳${(fundBalance||0).toLocaleString()}</strong></span>
+        </div>`:''}
+
+      <!-- TABLE -->
+      <table>
+        <thead>
+          <tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="tfoot">
+            <td colspan="3">Total (${filtered.length} entries)</td>
+            <td>৳${filteredTotal.toLocaleString()}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <script>window.onload=()=>{window.print();}<\/script>
+    </body></html>`;
+
+    const w = window.open('','_blank','width=900,height=700');
+    w.document.write(html);
+    w.document.close();
+  };
+
+  if (!isOrgAdmin) return null;
 
   return (
     <div className="page-wrap animate-fade">
@@ -392,10 +428,11 @@ export default function AdminExpenses() {
             const n=new Date(); return d.getMonth()===n.getMonth()&&d.getFullYear()===n.getFullYear();
           }).reduce((s,e)=>s+(e.amount||0),0))} bg="#f8fafc"/>
         <Stat label="Entries" value={expenses.length} bg="#f8fafc"/>
-        {expenseBudget>0&&<Stat label="Fund Remaining" value={fmt(fundBalance)} color={overBudget?'#dc2626':'#15803d'} bg={overBudget?'#fef2f2':'#f0fdf4'}/>}
+        {expenseBudget>0&&<Stat label="Fund Remaining" value={fmt(fundBalance)}
+          color={overBudget?'#dc2626':'#15803d'} bg={overBudget?'#fef2f2':'#f0fdf4'}/>}
       </div>
 
-      {/* ── Filters ── */}
+      {/* Filters */}
       <div style={{display:'flex',gap:10,marginBottom:10,flexWrap:'wrap'}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search expenses…"
           style={{flex:1,minWidth:160,padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
@@ -404,7 +441,6 @@ export default function AdminExpenses() {
           <option value="all">All Categories</option>
           {CATEGORIES.map(c=><option key={c} value={c}>{c}</option>)}
         </select>
-        {/* Date preset */}
         <select value={datePreset} onChange={e=>setDatePreset(e.target.value)}
           style={{padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13,color:'#475569'}}>
           <option value="all">All Time</option>
@@ -418,40 +454,37 @@ export default function AdminExpenses() {
         </select>
       </div>
 
-      {/* Custom date range inputs */}
+      {/* Custom range */}
       {datePreset==='custom' && (
         <div style={{display:'flex',gap:10,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
-          <div style={{fontSize:12,color:'#64748b',fontWeight:600}}>From</div>
-          <input type="date" value={customRange.from} onChange={e=>setCustomRange(p=>({...p,from:e.target.value}))}
+          <span style={{fontSize:12,color:'#64748b',fontWeight:600}}>From</span>
+          <input type="date" value={customRange.from}
+            onChange={e=>setCustomRange(p=>({...p,from:e.target.value}))}
             style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
-          <div style={{fontSize:12,color:'#64748b',fontWeight:600}}>To</div>
-          <input type="date" value={customRange.to} onChange={e=>setCustomRange(p=>({...p,to:e.target.value}))}
+          <span style={{fontSize:12,color:'#64748b',fontWeight:600}}>To</span>
+          <input type="date" value={customRange.to}
+            onChange={e=>setCustomRange(p=>({...p,to:e.target.value}))}
             style={{padding:'8px 12px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
         </div>
       )}
 
-      {/* Active filter badge + export buttons */}
+      {/* Filter badge + export */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
-        <div style={{fontSize:12,color:'#475569'}}>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
           {datePreset!=='all' && (
             <span style={{background:'#eff6ff',color:'#2563eb',padding:'3px 10px',borderRadius:99,fontWeight:600,fontSize:11}}>
               📅 {fmtLabel(datePreset,customRange)}
             </span>
           )}
-          {' '}
-          <span style={{color:'#94a3b8'}}>{filtered.length} result{filtered.length!==1?'s':''}</span>
+          <span style={{color:'#94a3b8',fontSize:12}}>{filtered.length} result{filtered.length!==1?'s':''}</span>
         </div>
         <div style={{display:'flex',gap:8}}>
           <button onClick={exportCSV}
             style={{padding:'7px 14px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',
-              cursor:'pointer',fontSize:12,fontWeight:600,color:'#059669',display:'flex',alignItems:'center',gap:5}}>
-            ⬇ CSV
-          </button>
+              cursor:'pointer',fontSize:12,fontWeight:600,color:'#059669'}}>⬇ CSV</button>
           <button onClick={exportPDF}
             style={{padding:'7px 14px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',
-              cursor:'pointer',fontSize:12,fontWeight:600,color:'#2563eb',display:'flex',alignItems:'center',gap:5}}>
-            🖨 PDF / Print
-          </button>
+              cursor:'pointer',fontSize:12,fontWeight:600,color:'#2563eb'}}>🖨 PDF / Print</button>
         </div>
       </div>
 
@@ -505,7 +538,8 @@ export default function AdminExpenses() {
       {/* ADD modal */}
       {showAdd && (
         <Modal title="Add Expense" onClose={()=>{setShowAdd(false);setForm(EMPTY_FORM);}}>
-          <FormFields/>
+          <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
+            baseBalance={baseBalance} afterAdd={afterAdd} newAmount={newAmount}/>
           <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
             <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
               {saving?'Saving…':'Record Expense'}
@@ -519,7 +553,8 @@ export default function AdminExpenses() {
       {/* EDIT modal */}
       {editTarget && (
         <Modal title="Edit Expense" onClose={closeEdit}>
-          <FormFields/>
+          <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
+            baseBalance={baseBalance} afterAdd={afterAdd} newAmount={newAmount}/>
           <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
             <button onClick={handleUpdate} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
               {saving?'Saving…':'Save Changes'}
