@@ -9,7 +9,7 @@ import { useRouter, usePathname } from 'next/navigation';
 const AuthContext = createContext({});
 
 const PUBLIC = [
-  '/', '/login', '/register', '/forgot-password',
+  '/', '/login', '/register', '/forgot-password', '/reset-password',
   '/select-org', '/create-org', '/join',
   '/pending-approval', '/org-pending',
   '/superadmin',
