@@ -10,9 +10,17 @@ import { useAuth } from '@/context/AuthContext';
 import Modal from '@/components/Modal';
 
 function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
+
 function tsDate(ts) {
   if (!ts) return '—';
   const d = ts.seconds ? new Date(ts.seconds*1000) : new Date(ts);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+}
+
+// Convert ISO date string "2026-04-22" → "22 Apr 2026"
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
 
@@ -60,7 +68,7 @@ function fmtLabel(preset, custom) {
     this_year:'This Year', last_year:'Last Year', custom:'Custom Range'
   };
   if (preset === 'custom' && custom.from && custom.to)
-    return `${custom.from} → ${custom.to}`;
+    return `${fmtDate(custom.from)} → ${fmtDate(custom.to)}`;
   return labels[preset] || 'All Time';
 }
 
@@ -73,7 +81,6 @@ function Stat({label,value,color='#0f172a',bg='#f8fafc'}) {
   );
 }
 
-// ── Expense form — defined OUTSIDE the page component to prevent remount ──────
 function ExpenseForm({ form, set, expenseBudget, baseBalance, afterAdd, newAmount }) {
   return (
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -132,6 +139,7 @@ export default function AdminExpenses() {
   const [totalFeeIncome, setTotalFeeIncome] = useState(0);
   const [loading,        setLoading]        = useState(true);
   const [showAdd,        setShowAdd]        = useState(false);
+  const [viewTarget,     setViewTarget]     = useState(null);
   const [editTarget,     setEditTarget]     = useState(null);
   const [saving,         setSaving]         = useState(false);
   const [toast,          setToast]          = useState('');
@@ -184,7 +192,6 @@ export default function AdminExpenses() {
   const baseBalance   = editTarget ? (fundBalance!==null?fundBalance+(editTarget.amount||0):null) : fundBalance;
   const afterAdd      = baseBalance !== null ? baseBalance - newAmount : null;
 
-  // ── Filtered list ──────────────────────────────────────────────────────────
   const { from: drFrom, to: drTo } = getDateRange(datePreset, customRange);
   const filtered = expenses
     .filter(e => catFilter==='all' || e.category===catFilter)
@@ -209,12 +216,13 @@ export default function AdminExpenses() {
     setSaving(false);
   };
 
-  const openEdit = e => {
+  const openView  = e => setViewTarget(e);
+  const closeView = () => { setViewTarget(null); setEditTarget(null); setForm(EMPTY_FORM); };
+  const startEdit = e => {
     setEditTarget(e);
     setForm({title:e.title||'',amount:e.amount||'',category:e.category||'Office',
       date:e.date||new Date().toISOString().split('T')[0],notes:e.notes||''});
   };
-  const closeEdit = () => { setEditTarget(null); setForm(EMPTY_FORM); };
 
   const handleUpdate = async () => {
     if (!form.title.trim()) return alert('Title is required.');
@@ -226,25 +234,28 @@ export default function AdminExpenses() {
         title:form.title, amount:Number(form.amount), category:form.category,
         date:form.date, notes:form.notes, updatedBy:user.uid, updatedAt:serverTimestamp(),
       });
-      closeEdit(); showToast('✅ Expense updated!');
+      closeView(); showToast('✅ Expense updated!');
     } catch(e) { showToast('Error: '+e.message); }
     setSaving(false);
   };
 
-  const handleDelete = async e => {
+  const handleDelete = async (e, fromModal=false) => {
     if (!confirm(`Delete "${e.title}"?`)) return;
-    try { await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id)); showToast('Deleted.'); }
-    catch(err) { showToast('Error: '+err.message); }
+    try {
+      await deleteDoc(doc(db,'organizations',orgId,'expenses',e.id));
+      if (fromModal) closeView();
+      showToast('Deleted.');
+    } catch(err) { showToast('Error: '+err.message); }
   };
 
   // ── CSV export ─────────────────────────────────────────────────────────────
   const exportCSV = () => {
-    const org = orgData || {};
+    const org        = orgData || {};
     const label      = fmtLabel(datePreset, customRange);
     const reportDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
     const header = ['Date','Title','Category','Amount (৳)','Notes'];
     const rows   = filtered.map(e => [
-      e.date||tsDate(e.createdAt),
+      fmtDate(e.date)||tsDate(e.createdAt),
       `"${(e.title||'').replace(/"/g,'""')}"`,
       e.category, e.amount,
       `"${(e.notes||'').replace(/"/g,'""')}"`
@@ -252,7 +263,7 @@ export default function AdminExpenses() {
     const meta = [
       [`"${org.name_en||'Organization'}"`],
       [`"Expenses Report — ${label}"`],
-      [`"Period: ${drFrom||'—'} to ${drTo||'—'}"`],
+      [`"Period: ${drFrom?fmtDate(drFrom):'—'} to ${drTo?fmtDate(drTo):'—'}"`],
       [`"Generated: ${reportDate}"`],
       [],
       header,
@@ -276,7 +287,7 @@ export default function AdminExpenses() {
 
     const rows = filtered.map((e,i) => `
       <tr style="background:${i%2===0?'#fff':'#f8fafc'}">
-        <td>${e.date||tsDate(e.createdAt)}</td>
+        <td>${fmtDate(e.date)||tsDate(e.createdAt)}</td>
         <td>
           <strong>${e.title||''}</strong>
           ${e.notes?`<br/><small style="color:#64748b">${e.notes}</small>`:''}
@@ -303,7 +314,6 @@ export default function AdminExpenses() {
         @media print{body{padding:20px 28px}}
       </style></head><body>
 
-      <!-- LETTERHEAD -->
       <div style="border-bottom:2.5px solid #000;padding-bottom:14px;margin-bottom:18px;
         display:flex;align-items:flex-start;gap:16px">
         ${org.logoURL?`<img src="${org.logoURL}" alt="Logo"
@@ -322,13 +332,12 @@ export default function AdminExpenses() {
         </div>
       </div>
 
-      <!-- REPORT META -->
       <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
         <div>
           <div style="font-size:16px;font-weight:800">Expenses Report</div>
           <div style="font-size:11px;color:#64748b;margin-top:2px">
             Period: <strong>${label}</strong>
-            ${drFrom||drTo?` &nbsp;|&nbsp; ${drFrom||'—'} to ${drTo||'—'}`:''}
+            ${drFrom||drTo?` &nbsp;|&nbsp; ${drFrom?fmtDate(drFrom):'—'} to ${drTo?fmtDate(drTo):'—'}`:''}
           </div>
         </div>
         <div style="text-align:right;font-size:11px;color:#64748b">
@@ -346,7 +355,6 @@ export default function AdminExpenses() {
             ৳${(fundBalance||0).toLocaleString()}</strong></span>
         </div>`:''}
 
-      <!-- TABLE -->
       <table>
         <thead>
           <tr><th>Date</th><th>Description</th><th>Category</th><th>Amount</th></tr>
@@ -367,18 +375,13 @@ export default function AdminExpenses() {
       <\/script>
     </body></html>`;
 
-    // Use Blob URL — avoids popup blockers and document.write issues
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url  = URL.createObjectURL(blob);
     const w    = window.open(url, '_blank');
-
-    // Fallback if popup was blocked
     if (!w) {
       const a = Object.assign(document.createElement('a'), { href: url, target: '_blank' });
       a.click();
     }
-
-    // Clean up blob URL after enough time for print dialog
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   };
 
@@ -514,33 +517,60 @@ export default function AdminExpenses() {
         </div>
       ) : (
         <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
+
+          {/* Column headers */}
+          <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 90px 36px',
             padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
             {['Date','Description','Category','Amount',''].map(h=>(
               <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',
                 letterSpacing:'0.06em',textAlign:h==='Amount'?'right':'left'}}>{h}</div>
             ))}
           </div>
+
           {filtered.map((e,i)=>(
-            <div key={e.id} style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
-              padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',
-              borderBottom:'1px solid #f1f5f9',alignItems:'center'}}>
-              <div style={{fontSize:12,color:'#475569'}}>{e.date||tsDate(e.createdAt)}</div>
+            <div
+              key={e.id}
+              onClick={()=>openView(e)}
+              style={{
+                display:'grid',
+                gridTemplateColumns:'110px 1fr 90px 90px 36px',
+                padding:'10px 16px',
+                background:i%2===0?'#fff':'#fafafa',
+                borderBottom:'1px solid #f1f5f9',
+                alignItems:'center',
+                cursor:'pointer',
+                transition:'background 0.12s',
+              }}
+              onMouseEnter={ev=>ev.currentTarget.style.background='#f1f5f9'}
+              onMouseLeave={ev=>ev.currentTarget.style.background=i%2===0?'#fff':'#fafafa'}
+            >
+              <div style={{fontSize:12,color:'#475569'}}>{fmtDate(e.date)||tsDate(e.createdAt)}</div>
               <div>
                 <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{e.title}</div>
                 {e.notes&&<div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
               </div>
-              <div><span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',color:'#92400e',fontSize:11,fontWeight:600}}>{e.category}</span></div>
+              <div>
+                <span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
+                  color:'#92400e',fontSize:11,fontWeight:600}}>{e.category}</span>
+              </div>
               <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(e.amount)}</div>
-              <div style={{display:'flex',gap:4}}>
-                <button onClick={()=>openEdit(e)} title="Edit"
-                  style={{background:'none',border:'none',cursor:'pointer',color:'#64748b',fontSize:13,padding:'4px 8px'}}>✏️</button>
-                <button onClick={()=>handleDelete(e)} title="Delete"
-                  style={{background:'none',border:'none',cursor:'pointer',color:'#94a3b8',fontSize:13,padding:'4px 8px'}}>✕</button>
+
+              {/* Desktop-only delete X — stopPropagation prevents opening the view modal */}
+              <div style={{display:'flex',justifyContent:'center'}}>
+                <button
+                  onClick={ev=>{ ev.stopPropagation(); handleDelete(e); }}
+                  title="Delete"
+                  style={{background:'none',border:'none',cursor:'pointer',color:'#cbd5e1',
+                    fontSize:14,padding:'4px 6px',borderRadius:4,lineHeight:1,transition:'color 0.15s'}}
+                  onMouseEnter={ev=>ev.currentTarget.style.color='#dc2626'}
+                  onMouseLeave={ev=>ev.currentTarget.style.color='#cbd5e1'}
+                >✕</button>
               </div>
             </div>
           ))}
-          <div style={{display:'grid',gridTemplateColumns:'1fr 2fr 1fr 1fr auto',
+
+          {/* Footer total */}
+          <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 90px 36px',
             padding:'10px 16px',background:'#fef2f2',borderTop:'2px solid #fca5a5'}}>
             <div style={{fontWeight:700,fontSize:13,gridColumn:'1/4'}}>Total ({filtered.length} entries)</div>
             <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(filteredTotal)}</div>
@@ -553,7 +583,9 @@ export default function AdminExpenses() {
       {showAdd && (
         <Modal title="Add Expense" onClose={()=>{setShowAdd(false);setForm(EMPTY_FORM);}}>
           <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
-            baseBalance={baseBalance} afterAdd={afterAdd} newAmount={newAmount}/>
+            baseBalance={fundBalance}
+            afterAdd={fundBalance!==null?fundBalance-newAmount:null}
+            newAmount={newAmount}/>
           <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
             <button onClick={handleAdd} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
               {saving?'Saving…':'Record Expense'}
@@ -564,18 +596,68 @@ export default function AdminExpenses() {
         </Modal>
       )}
 
-      {/* EDIT modal */}
-      {editTarget && (
-        <Modal title="Edit Expense" onClose={closeEdit}>
-          <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
-            baseBalance={baseBalance} afterAdd={afterAdd} newAmount={newAmount}/>
-          <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
-            <button onClick={handleUpdate} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
-              {saving?'Saving…':'Save Changes'}
-            </button>
-            <button onClick={closeEdit}
-              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
-          </div>
+      {/* VIEW / EDIT modal — triggered by clicking a row */}
+      {viewTarget && (
+        <Modal
+          title={editTarget ? 'Edit Expense' : 'Expense Details'}
+          onClose={closeView}
+        >
+          {editTarget ? (
+            <>
+              <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
+                baseBalance={baseBalance} afterAdd={afterAdd} newAmount={newAmount}/>
+              <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0'}}>
+                <button onClick={handleUpdate} disabled={saving} className="btn-primary" style={{padding:'10px 24px'}}>
+                  {saving?'Saving…':'Save Changes'}
+                </button>
+                <button
+                  onClick={()=>{ setEditTarget(null); setForm(EMPTY_FORM); }}
+                  style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                    background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Detail view */}
+              <div style={{display:'flex',flexDirection:'column',gap:14}}>
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <span style={{padding:'3px 10px',borderRadius:6,background:'#fef3c7',
+                    color:'#92400e',fontSize:12,fontWeight:600}}>{viewTarget.category}</span>
+                  <span style={{fontSize:12,color:'#94a3b8'}}>
+                    {fmtDate(viewTarget.date)||tsDate(viewTarget.createdAt)}
+                  </span>
+                </div>
+                <div style={{fontSize:18,fontWeight:700,color:'#0f172a',lineHeight:1.3}}>{viewTarget.title}</div>
+                <div style={{fontSize:26,fontWeight:800,color:'#dc2626'}}>{fmt(viewTarget.amount)}</div>
+                {viewTarget.notes && (
+                  <div style={{fontSize:13,color:'#64748b',background:'#f8fafc',
+                    borderRadius:8,padding:'10px 14px',lineHeight:1.5}}>
+                    {viewTarget.notes}
+                  </div>
+                )}
+              </div>
+
+              <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0',flexWrap:'wrap'}}>
+                <button onClick={()=>startEdit(viewTarget)} className="btn-primary" style={{padding:'10px 22px'}}>
+                  ✏️ Edit
+                </button>
+                <button
+                  onClick={()=>handleDelete(viewTarget, true)}
+                  style={{padding:'10px 22px',borderRadius:8,border:'1px solid #fca5a5',
+                    background:'#fef2f2',cursor:'pointer',fontSize:13,fontWeight:600,color:'#dc2626'}}>
+                  🗑 Delete
+                </button>
+                <button
+                  onClick={closeView}
+                  style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+                    background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b',marginLeft:'auto'}}>
+                  Close
+                </button>
+              </div>
+            </>
+          )}
         </Modal>
       )}
     </div>
