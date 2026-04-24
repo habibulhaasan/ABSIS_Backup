@@ -10,6 +10,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { fmtBDT } from '@/lib/fundCalculations';
 import Modal from '@/components/Modal';
+import * as XLSX from 'xlsx'; // npm install xlsx
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -46,21 +47,64 @@ function sortByMemberId(members) {
   });
 }
 
-// ── CSV Export — transposed layout ───────────────────────────────────────────
-// Columns = members, Rows = months
-// Row order: UID, Name, Member ID, [month rows], Comments, Total
-function downloadCSV(members, allMonths, payMap, feeInAcct, orgName) {
+// ── Avatar helper ─────────────────────────────────────────────────────────────
+function MemberAvatar({ member, size = 26 }) {
+  const [err, setErr] = useState(false);
+  const photoUrl = member.photoURL || member.profilePhoto || member.avatarUrl;
+  const initials = (member.nameEnglish || member.nameBengali || '?')
+    .split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase();
+
+  // deterministic pastel hue from member id
+  const hue = (member.idNo || member.id || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) % 360;
+
+  return photoUrl && !err ? (
+    <img
+      src={photoUrl} alt={initials}
+      onError={() => setErr(true)}
+      style={{
+        width: size, height: size, borderRadius: '50%',
+        objectFit: 'cover', flexShrink: 0,
+        border: '1.5px solid #e2e8f0',
+      }}
+    />
+  ) : (
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: `hsl(${hue},55%,72%)`, color: `hsl(${hue},55%,28%)`,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: size * 0.38, fontWeight: 700, flexShrink: 0,
+      border: '1.5px solid rgba(0,0,0,0.06)',
+    }}>
+      {initials}
+    </div>
+  );
+}
+
+// ── Installment count badge ───────────────────────────────────────────────────
+function InstallmentCount({ verCount, pendCount, total }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2, flexWrap: 'wrap' }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: '#15803d' }}>{verCount}</span>
+      <span style={{ fontSize: 10, color: '#94a3b8' }}>/</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#475569' }}>{total}</span>
+      {pendCount > 0 && (
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#d97706',
+          background: '#fef3c7', borderRadius: 4, padding: '1px 4px' }}>
+          +{pendCount}⏳
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── CSV Export (legacy, unchanged) ────────────────────────────────────────────
+function downloadCSV(members, allMonths, payMap, feeInAcct) {
   const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-
   const rows = [];
-
-  // Header rows (member info as columns)
-  rows.push(['Field', ...members.map(m => esc(m.id))].map(esc).join(','));           // UID row
+  rows.push(['Field', ...members.map(m => esc(m.id))].map(esc).join(','));
   rows.push(['Member Name', ...members.map(m => esc(m.nameEnglish || m.nameBengali || ''))].map(esc).join(','));
   rows.push(['Member ID', ...members.map(m => esc(m.idNo || ''))].map(esc).join(','));
-  rows.push(['', ...members.map(() => '')].join(',')); // blank separator
-
-  // Month rows — numbers only, oldest first
+  rows.push(['', ...members.map(() => '')].join(','));
   allMonths.slice().reverse().forEach(month => {
     const amtRow = [esc(monthLabel(month)), ...members.map(m => {
       const rec = payMap[m.id]?.[month];
@@ -70,11 +114,7 @@ function downloadCSV(members, allMonths, payMap, feeInAcct, orgName) {
     })];
     rows.push(amtRow.join(','));
   });
-
-  // Blank separator
   rows.push(['', ...members.map(() => '')].join(','));
-
-  // Total row — verified amounts only, numbers
   const totalRow = [esc('TOTAL (verified)'), ...members.map(m => {
     const total = Object.values(payMap[m.id] || {})
       .filter(p => p.status === 'verified')
@@ -82,20 +122,14 @@ function downloadCSV(members, allMonths, payMap, feeInAcct, orgName) {
     return total > 0 ? total : 0;
   })];
   rows.push(totalRow.join(','));
-
-  // Verified count row
   const cntRow = [esc('Verified Months'), ...members.map(m =>
     Object.values(payMap[m.id] || {}).filter(p => p.status === 'verified').length
   )];
   rows.push(cntRow.join(','));
-
-  // Pending count row
   const pendRow = [esc('Pending Months'), ...members.map(m =>
     Object.values(payMap[m.id] || {}).filter(p => p.status === 'pending').length
   )];
   rows.push(pendRow.join(','));
-
-  // Single notes column — one cell per member, all their notes concatenated
   const notesRow = [esc('Notes'), ...members.map(m => {
     const notes = Object.entries(payMap[m.id] || {})
       .filter(([, p]) => p.notes)
@@ -104,19 +138,235 @@ function downloadCSV(members, allMonths, payMap, feeInAcct, orgName) {
     return esc(notes);
   })];
   rows.push(notesRow.join(','));
-
   const csv  = rows.join('\n');
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `installments-${currentYM()}.csv`;
-  a.click();
+  a.href = url; a.download = `installments-${currentYM()}.csv`; a.click();
   URL.revokeObjectURL(url);
 }
 
-// ── Edit Modal ────────────────────────────────────────────────────────────────
-// Opens for any cell — including already-verified ones
+// ── XLSX Export — summary sheet + one sheet per member ───────────────────────
+function downloadXLSX(members, allMonths, payMap, feeInAcct, orgName) {
+  const wb = XLSX.utils.book_new();
+  const monthsAsc = [...allMonths].reverse(); // oldest first for readability
+
+  // ── Sheet 1: Summary (transposed, members as columns) ──
+  const summaryData = [];
+  summaryData.push(['Member ID',    ...members.map(m => m.idNo || '')]);
+  summaryData.push(['Member Name',  ...members.map(m => m.nameEnglish || m.nameBengali || '')]);
+  summaryData.push(['UID',          ...members.map(m => m.id)]);
+  summaryData.push([]);
+  monthsAsc.forEach(month => {
+    const row = [monthLabel(month)];
+    members.forEach(m => {
+      const rec = payMap[m.id]?.[month];
+      if (!rec || rec.status === 'rejected') { row.push(''); return; }
+      const net = (rec.amount || 0) - (feeInAcct ? 0 : (rec.gatewayFee || 0));
+      row.push(net > 0 ? net : '');
+    });
+    summaryData.push(row);
+  });
+  summaryData.push([]);
+  summaryData.push(['TOTAL (verified)', ...members.map(m =>
+    Object.values(payMap[m.id] || {}).filter(p => p.status === 'verified')
+      .reduce((s, p) => s + (p.amount || 0) - (feeInAcct ? 0 : (p.gatewayFee || 0)), 0)
+  )]);
+  summaryData.push(['Verified Months', ...members.map(m =>
+    Object.values(payMap[m.id] || {}).filter(p => p.status === 'verified').length
+  )]);
+  summaryData.push(['Pending Months', ...members.map(m =>
+    Object.values(payMap[m.id] || {}).filter(p => p.status === 'pending').length
+  )]);
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+  // bold header rows
+  ['A1','A2','A3'].forEach(cell => {
+    if (wsSummary[cell]) wsSummary[cell].s = { font: { bold: true } };
+  });
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
+
+  // ── One sheet per member ──
+  members.forEach(m => {
+    const mpm = payMap[m.id] || {};
+    const sheetData = [];
+    // Member info header
+    sheetData.push([`Member: ${m.nameEnglish || m.nameBengali || '—'}`]);
+    sheetData.push([`ID: ${m.idNo || '—'}`]);
+    sheetData.push([`UID: ${m.id}`]);
+    sheetData.push([]);
+    // Column headers
+    sheetData.push(['Month', 'Status', 'Amount (৳)', 'Method', 'Gateway Fee', 'Net Amount', 'Admin Entry', 'Notes']);
+    // Rows — oldest first
+    let totalVerified = 0;
+    monthsAsc.forEach(month => {
+      const rec = mpm[month];
+      if (!rec) {
+        sheetData.push([monthLabel(month), 'Unpaid', '', '', '', '', '', '']);
+      } else {
+        const net = (rec.amount || 0) - (feeInAcct ? 0 : (rec.gatewayFee || 0));
+        if (rec.status === 'verified') totalVerified += net;
+        sheetData.push([
+          monthLabel(month),
+          rec.status,
+          rec.amount || 0,
+          rec.method || '',
+          rec.gatewayFee || 0,
+          net,
+          rec.adminEntered ? 'Yes' : 'No',
+          rec.notes || '',
+        ]);
+      }
+    });
+    sheetData.push([]);
+    sheetData.push(['Total Verified', '', totalVerified]);
+
+    const ws = XLSX.utils.aoa_to_sheet(sheetData);
+    // Safe sheet name: max 31 chars, strip invalid chars
+    const safeName = `${m.idNo || m.id}`.replace(/[:\\/?*[\]]/g, '').slice(0, 31);
+    XLSX.utils.book_append_sheet(wb, ws, safeName || `M${members.indexOf(m)+1}`);
+  });
+
+  XLSX.writeFile(wb, `installments-${currentYM()}.xlsx`);
+}
+
+// ── Current-month paid/unpaid summary card ────────────────────────────────────
+function CurrentMonthCard({ members, payMap, curYM }) {
+  const paidMembers   = members.filter(m => payMap[m.id]?.[curYM]?.status === 'verified');
+  const pendMembers   = members.filter(m => payMap[m.id]?.[curYM]?.status === 'pending');
+  const unpaidMembers = members.filter(m => {
+    const s = payMap[m.id]?.[curYM]?.status;
+    return !s || s === 'rejected';
+  });
+  const total  = members.length;
+  const paidPct = total ? Math.round((paidMembers.length / total) * 100) : 0;
+
+  return (
+    <div style={{
+      background: '#fff', borderRadius: 12, border: '1px solid #e2e8f0',
+      padding: '16px 20px', marginBottom: 20,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+    }}>
+      {/* Title row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+            📅 {monthLabel(curYM)} — Current Month
+          </div>
+          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+            {paidMembers.length} of {total} members paid ({paidPct}%)
+          </div>
+        </div>
+        {/* Big progress circle */}
+        <div style={{ position: 'relative', width: 56, height: 56 }}>
+          <svg viewBox="0 0 36 36" style={{ width: 56, height: 56, transform: 'rotate(-90deg)' }}>
+            <circle cx="18" cy="18" r="15.9" fill="none" stroke="#f1f5f9" strokeWidth="3.5" />
+            <circle cx="18" cy="18" r="15.9" fill="none"
+              stroke={paidPct === 100 ? '#15803d' : paidPct >= 50 ? '#2563eb' : '#d97706'}
+              strokeWidth="3.5"
+              strokeDasharray={`${paidPct} ${100 - paidPct}`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', fontSize: 11, fontWeight: 800,
+            color: paidPct === 100 ? '#15803d' : '#0f172a',
+          }}>
+            {paidPct}%
+          </div>
+        </div>
+      </div>
+
+      {/* Three columns */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+
+        {/* Paid */}
+        <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#15803d', textTransform: 'uppercase',
+            letterSpacing: '0.06em', marginBottom: 6 }}>
+            ✓ Paid ({paidMembers.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {paidMembers.slice(0, 12).map(m => (
+              <MemberChip key={m.id} member={m} color="#15803d" bg="#dcfce7" />
+            ))}
+            {paidMembers.length > 12 && (
+              <span style={{ fontSize: 10, color: '#15803d', alignSelf: 'center' }}>
+                +{paidMembers.length - 12} more
+              </span>
+            )}
+            {paidMembers.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>None yet</span>}
+          </div>
+        </div>
+
+        {/* Pending */}
+        <div style={{ background: '#fffbeb', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#d97706', textTransform: 'uppercase',
+            letterSpacing: '0.06em', marginBottom: 6 }}>
+            ⏳ Pending ({pendMembers.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {pendMembers.slice(0, 12).map(m => (
+              <MemberChip key={m.id} member={m} color="#92400e" bg="#fef3c7" />
+            ))}
+            {pendMembers.length > 12 && (
+              <span style={{ fontSize: 10, color: '#d97706', alignSelf: 'center' }}>
+                +{pendMembers.length - 12} more
+              </span>
+            )}
+            {pendMembers.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>None</span>}
+          </div>
+        </div>
+
+        {/* Unpaid */}
+        <div style={{ background: '#fff1f2', borderRadius: 8, padding: '10px 12px' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#be123c', textTransform: 'uppercase',
+            letterSpacing: '0.06em', marginBottom: 6 }}>
+            ✕ Not Paid ({unpaidMembers.length})
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {unpaidMembers.slice(0, 12).map(m => (
+              <MemberChip key={m.id} member={m} color="#be123c" bg="#ffe4e6" />
+            ))}
+            {unpaidMembers.length > 12 && (
+              <span style={{ fontSize: 10, color: '#be123c', alignSelf: 'center' }}>
+                +{unpaidMembers.length - 12} more
+              </span>
+            )}
+            {unpaidMembers.length === 0 && <span style={{ fontSize: 11, color: '#94a3b8' }}>All paid 🎉</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// trim leading "MD"/"Md" word from name for compact display
+function shortName(member) {
+  const raw = member.nameEnglish || member.nameBengali || '';
+  const words = raw.trim().split(/\s+/);
+  // remove leading "MD" / "Md" / "md" token
+  const trimmed = /^md\.?$/i.test(words[0]) ? words.slice(1) : words;
+  // return only the first remaining word
+  return trimmed[0] || raw || '?';
+}
+
+// tiny chip used inside CurrentMonthCard
+function MemberChip({ member, color, bg }) {
+  return (
+    <div title={member.nameEnglish || member.nameBengali} style={{
+      display: 'flex', alignItems: 'center', gap: 4,
+      background: bg, borderRadius: 20, padding: '2px 7px 2px 3px',
+      fontSize: 10, fontWeight: 600, color,
+    }}>
+      <MemberAvatar member={member} size={16} />
+      <span>{shortName(member)}</span>
+    </div>
+  );
+}
+
+// ── Edit Modal (unchanged) ────────────────────────────────────────────────────
 function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, onClose, onRefresh, feeInAcct }) {
   const { user } = useAuth();
   const isNew    = !paymentRec;
@@ -126,7 +376,7 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
   const [method,  setMethod]  = useState(paymentRec?.method ?? 'Cash');
   const [notes,   setNotes]   = useState(paymentRec?.notes  ?? '');
   const [saving,  setSaving]  = useState(false);
-  const [confirm, setConfirm] = useState(false); // confirm delete
+  const [confirm, setConfirm] = useState(false);
 
   const handleSave = async () => {
     const amt = Number(amount);
@@ -178,10 +428,9 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
       onClose={onClose}
     >
       <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-
-        {/* Member info strip */}
         <div style={{ padding:'10px 14px', borderRadius:9, background:'#f8fafc', border:'1px solid #e2e8f0',
-          display:'flex', gap:16, flexWrap:'wrap', fontSize:12 }}>
+          display:'flex', gap:16, flexWrap:'wrap', fontSize:12, alignItems:'center' }}>
+          <MemberAvatar member={member} size={32} />
           <span><strong>Member:</strong> {member.nameEnglish || '—'}</span>
           <span><strong>ID:</strong> {member.idNo || '—'}</span>
           <span><strong>Month:</strong> {month}</span>
@@ -190,7 +439,6 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
           )}
         </div>
 
-        {/* Amount */}
         <div>
           <label style={{ fontSize:12, fontWeight:700, color:'#475569', display:'block', marginBottom:6 }}>
             Amount (৳) *
@@ -215,7 +463,6 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
           )}
         </div>
 
-        {/* Status */}
         <div>
           <label style={{ fontSize:12, fontWeight:700, color:'#475569', display:'block', marginBottom:8 }}>
             Status
@@ -242,7 +489,6 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
           )}
         </div>
 
-        {/* Method */}
         <div>
           <label style={{ fontSize:12, fontWeight:700, color:'#475569', display:'block', marginBottom:6 }}>
             Method
@@ -255,7 +501,6 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
           </select>
         </div>
 
-        {/* Notes */}
         <div>
           <label style={{ fontSize:12, fontWeight:700, color:'#475569', display:'block', marginBottom:6 }}>
             Notes (optional)
@@ -267,9 +512,7 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
         </div>
       </div>
 
-      {/* Actions */}
       <div style={{ display:'flex', gap:8, marginTop:20, paddingTop:16, borderTop:'1px solid #e2e8f0' }}>
-        {/* Delete button — only for existing records */}
         {!isNew && !confirm && (
           <button onClick={() => setConfirm(true)}
             style={{ padding:'10px 16px', borderRadius:8, border:'1px solid #fca5a5',
@@ -294,9 +537,7 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
             </button>
           </>
         )}
-
         <div style={{ flex:1 }} />
-
         <button onClick={onClose}
           style={{ padding:'10px 18px', borderRadius:8, border:'1px solid #e2e8f0',
             background:'#fff', cursor:'pointer', fontSize:13, color:'#64748b' }}>
@@ -311,7 +552,7 @@ function EditModal({ member, month, paymentRec, defaultAmount, orgId, userId, on
   );
 }
 
-// ── Undo Toast ────────────────────────────────────────────────────────────────
+// ── Undo Toast (unchanged) ────────────────────────────────────────────────────
 function UndoToast({ toast, onUndo, onDismiss }) {
   if (!toast) return null;
   return (
@@ -338,8 +579,7 @@ function UndoToast({ toast, onUndo, onDismiss }) {
   );
 }
 
-// ── Cell ──────────────────────────────────────────────────────────────────────
-// All cells are clickable — opens EditModal for both paid and unpaid
+// ── Cell (unchanged logic) ────────────────────────────────────────────────────
 function Cell({ member, month, paymentRec, defaultAmount, onOpen, saving, isCurrentMonth }) {
   const status     = paymentRec?.status;
   const isVerified = status === 'verified';
@@ -373,10 +613,8 @@ function Cell({ member, month, paymentRec, defaultAmount, onOpen, saving, isCurr
         padding:'5px 7px', cursor:'pointer', minHeight:38,
         display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
         transition:'all 0.12s', opacity: isSaving ? 0.6 : 1,
-        position:'relative',
       }}
     >
-      {/* Edit pencil hint on hover — CSS only via title attr, show via outline */}
       {isSaving ? (
         <span style={{ fontSize:10, color:'#94a3b8' }}>…</span>
       ) : hasPay ? (
@@ -407,7 +645,7 @@ export default function SubscriptionGrid() {
   const [loading,   setLoading]   = useState(true);
   const [saving,    setSaving]    = useState(null);
   const [search,    setSearch]    = useState('');
-  const [editState, setEditState] = useState(null); // { member, month, paymentRec }
+  const [editState, setEditState] = useState(null);
   const [undoToast, setUndoToast] = useState(null);
   const undoTimer = useRef(null);
 
@@ -465,16 +703,11 @@ export default function SubscriptionGrid() {
       .filter(p => p.status === 'verified')
       .reduce((s, p) => s + (p.amount || 0) - (feeInAcct ? 0 : (p.gatewayFee || 0)), 0);
 
-  // Smart click handler:
-  // - Empty cell or rejected → one-click auto-verify (no modal, instant)
-  // - Existing record (pending/verified) → open edit modal
   const handleOpenEdit = async (member, month, paymentRec) => {
     if (!paymentRec || paymentRec.status === 'rejected') {
-      // One-click instant payment entry — auto-verified
       const defaultAmt = (settings.uniformAmount === false && member.customAmount != null)
         ? member.customAmount : (settings.baseAmount || 0);
       if (!defaultAmt || defaultAmt <= 0) {
-        // No default amount configured — open modal so admin can enter amount
         setEditState({ member, month, paymentRec });
         return;
       }
@@ -488,7 +721,6 @@ export default function SubscriptionGrid() {
           createdAt: serverTimestamp(), verifiedAt: serverTimestamp(), verifiedBy: user.uid,
         });
         await refreshPayments();
-        // Undo available for 6 seconds
         showUndo(`✓ ${member.nameEnglish?.split(' ')[0] || 'Member'} — ${month} marked paid`, async () => {
           await deleteDoc(doc(db, 'organizations', orgId, 'investments', newRef.id));
           await refreshPayments();
@@ -497,7 +729,6 @@ export default function SubscriptionGrid() {
       } catch (e) { showUndo('Error: ' + e.message, null); }
       setSaving(null);
     } else {
-      // Has existing record — open edit modal
       setEditState({ member, month, paymentRec });
     }
   };
@@ -522,7 +753,6 @@ export default function SubscriptionGrid() {
         onDismiss={dismissUndo}
       />
 
-      {/* Edit modal */}
       {editState && (
         <EditModal
           member={editState.member}
@@ -549,18 +779,28 @@ export default function SubscriptionGrid() {
               Click any cell to add or edit a payment. Sorted by Member ID.
             </div>
           </div>
-          <button
-            onClick={() => downloadCSV(filtered, allMonths, payMap, feeInAcct, orgData?.name)}
-            style={{ padding:'9px 18px', borderRadius:8, border:'1px solid #e2e8f0',
-              background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600,
-              color:'#475569', display:'flex', alignItems:'center', gap:6, flexShrink:0 }}>
-            ⬇ Export CSV
-          </button>
+          {/* Export buttons */}
+          <div style={{ display:'flex', gap:8, flexShrink:0 }}>
+            <button
+              onClick={() => downloadCSV(filtered, allMonths, payMap, feeInAcct)}
+              style={{ padding:'9px 16px', borderRadius:8, border:'1px solid #e2e8f0',
+                background:'#fff', cursor:'pointer', fontSize:13, fontWeight:600,
+                color:'#475569', display:'flex', alignItems:'center', gap:6 }}>
+              ⬇ CSV
+            </button>
+            <button
+              onClick={() => downloadXLSX(filtered, allMonths, payMap, feeInAcct, orgData?.name)}
+              style={{ padding:'9px 16px', borderRadius:8, border:'1px solid #bbf7d0',
+                background:'#f0fdf4', cursor:'pointer', fontSize:13, fontWeight:600,
+                color:'#15803d', display:'flex', alignItems:'center', gap:6 }}>
+              ⬇ Excel (per member)
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Stats */}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:12, marginBottom:20 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:12, marginBottom:16 }}>
         {[
           { label:'Total Verified',  value: fmtBDT(totalVerifiedAmt), color:'#15803d', bg:'#f0fdf4' },
           { label:'Pending',         value: totalPendingCount,         color:'#d97706', bg:'#fffbeb' },
@@ -568,11 +808,17 @@ export default function SubscriptionGrid() {
           { label:'Total Months',    value: allMonths.length,          color:'#475569', bg:'#f8fafc' },
         ].map(s => (
           <div key={s.label} style={{ background:s.bg, borderRadius:10, padding:'12px 14px' }}>
-            <div style={{ fontSize:10, color:'#64748b', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', marginBottom:3 }}>{s.label}</div>
+            <div style={{ fontSize:10, color:'#64748b', fontWeight:700, textTransform:'uppercase',
+              letterSpacing:'0.07em', marginBottom:3 }}>{s.label}</div>
             <div style={{ fontSize:20, fontWeight:700, color:s.color }}>{s.value}</div>
           </div>
         ))}
       </div>
+
+      {/* ── NEW: Current Month Card ── */}
+      {!loading && members.length > 0 && (
+        <CurrentMonthCard members={members} payMap={payMap} curYM={curYM} />
+      )}
 
       {/* Legend */}
       <div style={{ display:'flex', gap:14, marginBottom:14, flexWrap:'wrap', fontSize:11, fontWeight:600 }}>
@@ -603,17 +849,16 @@ export default function SubscriptionGrid() {
         <div style={{ overflowX:'auto', borderRadius:12, border:'1px solid #e2e8f0' }}>
           <table style={{ borderCollapse:'collapse', minWidth:'100%', tableLayout:'fixed' }}>
             <colgroup>
-              <col style={{ width:150 }} />{/* merged: ID + Name + Total */}
+              <col style={{ width:160 }} />
               {allMonths.map(m => <col key={m} style={{ width: m === curYM ? 82 : 72 }} />)}
             </colgroup>
 
-            {/* Header */}
             <thead>
               <tr style={{ background:'#0f172a' }}>
                 <th style={{ padding:'10px 10px', textAlign:'left', fontSize:11, fontWeight:700,
                   color:'#94a3b8', textTransform:'uppercase', letterSpacing:'0.07em',
                   position:'sticky', left:0, zIndex:10, background:'#0f172a', borderRight:'2px solid #334155' }}>
-                  Member · Total
+                  Member · Progress
                 </th>
                 {allMonths.map(month => {
                   const isCur = month === curYM;
@@ -633,7 +878,6 @@ export default function SubscriptionGrid() {
               </tr>
             </thead>
 
-            {/* Body */}
             <tbody>
               {filtered.length === 0 ? (
                 <tr><td colSpan={1 + allMonths.length}
@@ -641,35 +885,45 @@ export default function SubscriptionGrid() {
                   No members found
                 </td></tr>
               ) : filtered.map((member, ri) => {
-                const mpm        = payMap[member.id] || {};
-                const verCount   = allMonths.filter(m => mpm[m]?.status === 'verified').length;
-                const pendCount  = allMonths.filter(m => mpm[m]?.status === 'pending').length;
-                const rowTotal   = memberTotal(member.id);
-                const rowBg      = ri % 2 === 0 ? '#fff' : '#fafafa';
+                const mpm       = payMap[member.id] || {};
+                const verCount  = allMonths.filter(m => mpm[m]?.status === 'verified').length;
+                const pendCount = allMonths.filter(m => mpm[m]?.status === 'pending').length;
+                const rowTotal  = memberTotal(member.id);
+                const rowBg     = ri % 2 === 0 ? '#fff' : '#fafafa';
 
                 return (
                   <tr key={member.id} style={{ background:rowBg, borderBottom:'1px solid #f1f5f9' }}>
                     <td style={{ padding:'6px 10px', position:'sticky', left:0, zIndex:5,
                       background:rowBg, borderRight:'2px solid #e2e8f0', minWidth:0 }}>
-                      {/* ID */}
-                      <div style={{ fontSize:10, fontWeight:700, color:'#64748b', letterSpacing:'0.04em' }}>
-                        {member.idNo || '—'}
-                      </div>
-                      {/* Name */}
-                      <div style={{ fontWeight:600, fontSize:12, color:'#0f172a',
-                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginTop:1 }}>
-                        {member.nameEnglish || member.nameBengali || '—'}
-                      </div>
-                      {/* Total + count */}
-                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:3 }}>
-                        <div style={{ fontSize:10, color:'#94a3b8' }}>
-                          <span style={{ color:'#15803d', fontWeight:600 }}>{verCount}✓</span>
-                          {pendCount > 0 && <span style={{ color:'#d97706', marginLeft:4 }}>{pendCount}⏳</span>}
-                          <span style={{ marginLeft:4 }}>/{allMonths.length}</span>
+                      {/* Row 1: ID top-left · amount (x/y) top-right */}
+                      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:4, marginBottom:3 }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:'#94a3b8', letterSpacing:'0.04em' }}>
+                          {member.idNo || '—'}
+                        </span>
+                        <div style={{ display:'flex', alignItems:'center', gap:3 }}>
+                          {rowTotal > 0 && (
+                            <span style={{ fontSize:10, fontWeight:700, color:'#15803d', whiteSpace:'nowrap' }}>
+                              {fmtBDT(rowTotal)}
+                            </span>
+                          )}
+                          <span style={{ fontSize:10, color:'#94a3b8', whiteSpace:'nowrap' }}>
+                            ({verCount}/{allMonths.length})
+                          </span>
+                          {pendCount > 0 && (
+                            <span style={{ fontSize:9, fontWeight:700, color:'#d97706',
+                              background:'#fef3c7', borderRadius:4, padding:'1px 4px' }}>
+                              +{pendCount}⏳
+                            </span>
+                          )}
                         </div>
-                        <div style={{ fontSize:11, fontWeight:700, color: rowTotal>0 ? '#15803d' : '#94a3b8' }}>
-                          {rowTotal > 0 ? fmtBDT(rowTotal) : ''}
-                        </div>
+                      </div>
+                      {/* Row 2: photo + short name */}
+                      <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                        <MemberAvatar member={member} size={26} />
+                        <span style={{ fontWeight:600, fontSize:12, color:'#0f172a',
+                          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {shortName(member)}
+                        </span>
                       </div>
                     </td>
                     {allMonths.map(month => {
@@ -697,7 +951,6 @@ export default function SubscriptionGrid() {
               })}
             </tbody>
 
-            {/* Footer */}
             {filtered.length > 0 && (
               <tfoot>
                 <tr style={{ background:'#0f172a' }}>
