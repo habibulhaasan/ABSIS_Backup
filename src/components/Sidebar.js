@@ -399,7 +399,7 @@ export default function Sidebar() {
       ]} />
 
       <NavSection navStyle={ns} label="Finance" pathname={pathname} onClick={closeDrawer} items={[
-        { label: 'Verify payments', path: '/admin',            icon: PATHS.verify   },
+        { label: 'Verify payments', path: '/admin/verify',            icon: PATHS.verify   },
         { label: 'Income',          path: '/admin/income',     icon: PATHS.income   },
         { label: 'Expenses',        path: '/admin/expenses',   icon: PATHS.expenses },
         { label: 'Penalties',       path: '/admin/penalties',  icon: PATHS.penalty  },
