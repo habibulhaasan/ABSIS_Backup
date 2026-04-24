@@ -13,13 +13,22 @@ function tsDate(ts) {
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
 
+// Returns "YYYY-MM" for the current month
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+}
+// e.g. "May 2025"
+function currentMonthLabel() {
+  return new Date().toLocaleDateString('en-GB',{month:'long',year:'numeric'});
+}
+
 // ── Shared fund computation ───────────────────────────────────────────────────
 function getFundAlloc(key, totalCapital, settings) {
   const fb = settings?.fundBudgets?.[key];
   if (!fb?.value) return 0;
   if (fb.type === 'amount') return Number(fb.value) || 0;
   const pct = Math.round(totalCapital * (Number(fb.value) || 0) / 100);
-  // Apply max cap if set (blank / 0 = no cap)
   const maxCap = fb.maxAmount && Number(fb.maxAmount) > 0 ? Number(fb.maxAmount) : Infinity;
   return Math.min(pct, maxCap);
 }
@@ -73,12 +82,11 @@ export default function Dashboard() {
 
       const payments    = paySnap.docs.map(d=>({id:d.id,...d.data()}));
       const myPayments  = payments.filter(p=>p.userId===viewUid);
-      // Only count records that are actual capital contributions
-      // isContribution defaults to true for old records (absent field = contribution)
       const myCapital   = myPayments
         .filter(p=>p.status==='verified' && p.isContribution !== false)
         .reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
       const myPending   = myPayments.filter(p=>p.status==='pending').length;
+      const myVerified  = myPayments.filter(p=>p.status==='verified').length;
 
       const totalCapital = payments
         .filter(p=>p.status==='verified' && p.isContribution !== false)
@@ -99,10 +107,35 @@ export default function Dashboard() {
       const activeLoans= myLoans.filter(l=>l.status==='disbursed');
       const outstanding= activeLoans.reduce((s,l)=>s+(l.outstandingBalance||0),0);
 
-      // Fund usage (org-wide)
+      // ── Next loan repayment (earliest upcoming schedule entry) ────────────
+      let nextRepayment = null;
+      const today = new Date(); today.setHours(0,0,0,0);
+      activeLoans.forEach(loan => {
+        (loan.repaymentSchedule||[]).forEach(entry => {
+          if (entry.status === 'pending') {
+            const d = new Date(entry.dueDate);
+            if (d >= today && (!nextRepayment || d < new Date(nextRepayment.dueDate))) {
+              nextRepayment = { ...entry, loanPurpose: loan.purpose };
+            }
+          }
+        });
+      });
+
+      // ── Current-month installment paid? ──────────────────────────────────
+      const curKey = currentMonthKey();
+      const paidThisMonth = myPayments.some(p =>
+        p.status !== 'rejected' &&
+        (p.paidMonths||[]).some(m => {
+          if (typeof m === 'string') return m === curKey;
+          // handle timestamp-style paidMonths
+          const d = m?.seconds ? new Date(m.seconds*1000) : new Date(m);
+          return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` === curKey;
+        })
+      );
+
+      // Fund usage
       const usedExpenses   = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
       const projs = projSnap.docs.map(d=>d.data());
-      // Phase 3B: use fundSources if present, fall back to legacy fundSource
       const usedInvestment = projs.reduce((s,p) => {
         if (p.fundSources) return s + (Number(p.fundSources.investment)||0);
         return s + (p.fundSource!=='reserve' ? (p.investedAmount||0) : 0);
@@ -115,12 +148,13 @@ export default function Dashboard() {
         .filter(l=>l.status==='disbursed'||l.status==='repaid').reduce((s,l)=>s+(l.amount||0),0);
 
       setData({
-        myCapital, myCapPct, myPending, myTotalProfit, myLatestShare, latestDist,
+        myCapital, myCapPct, myPending, myVerified, myTotalProfit, myLatestShare, latestDist,
         activeLoans:activeLoans.length, outstanding, myPayments,
         totalCapital, usedExpenses, usedInvestment, usedReserve, usedBenevolent,
+        paidThisMonth, nextRepayment,
+        isNewMember: myVerified === 0 && myPending === 0,
       });
 
-      // Fetch latest notifications for this member
       try {
         const nSnap = await getDocs(
           query(
@@ -141,7 +175,6 @@ export default function Dashboard() {
   const s    = orgData?.settings    || {};
   const name = userData?.nameEnglish||userData?.displayName||'Member';
 
-  // ── Dashboard display settings (all default ON) ───────────────────────────
   const showMyCapital          = s.showMyCapital          !== false;
   const showPendingWarning     = s.showPendingWarning     !== false;
   const showFund               = s.showFund               !== false;
@@ -159,8 +192,7 @@ export default function Dashboard() {
         <div className="page-title">Welcome, {name.split(' ')[0]} 👋</div>
         <div className="page-subtitle">
           {orgData?.name||'Organization'}
-          {showSlogan && s.slogan && ` · ${s.slogan}`}
-          {!showSlogan && ' · Member Dashboard'}
+          {showSlogan && s.slogan ? ` · ${s.slogan}` : ' · Member Dashboard'}
         </div>
       </div>
 
@@ -168,10 +200,71 @@ export default function Dashboard() {
         <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>
       ) : (
         <>
+          {/* ── New member onboarding nudge ── */}
+          {data.isNewMember && (
+            <Link href="/installment" style={{textDecoration:'none'}}>
+              <div style={{
+                display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'14px 18px',borderRadius:10,marginBottom:16,
+                background:'#eff6ff',border:'1px solid #bfdbfe',
+              }}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#1e40af'}}>👋 Welcome to the fund!</div>
+                  <div style={{fontSize:12,color:'#3b82f6',marginTop:2}}>
+                    Make your first installment to join the capital pool.
+                  </div>
+                </div>
+                <span style={{fontSize:13,fontWeight:700,color:'#1e40af',flexShrink:0}}>Pay now →</span>
+              </div>
+            </Link>
+          )}
+
+          {/* ── This month's installment reminder ── */}
+          {!data.isNewMember && !data.paidThisMonth && (
+            <Link href="/installment" style={{textDecoration:'none'}}>
+              <div style={{
+                display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'12px 16px',borderRadius:10,marginBottom:16,
+                background:'#fffbeb',border:'1px solid #fde68a',
+              }}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#92400e'}}>
+                    📅 {currentMonthLabel()} installment not yet paid
+                  </div>
+                  <div style={{fontSize:12,color:'#b45309',marginTop:2}}>
+                    Stay up to date — tap to pay now.
+                  </div>
+                </div>
+                <span style={{fontSize:13,fontWeight:700,color:'#92400e',flexShrink:0}}>Pay →</span>
+              </div>
+            </Link>
+          )}
+
+          {/* ── Loan repayment reminder ── */}
+          {data.nextRepayment && (
+            <Link href="/loans" style={{textDecoration:'none'}}>
+              <div style={{
+                display:'flex',alignItems:'center',justifyContent:'space-between',
+                padding:'12px 16px',borderRadius:10,marginBottom:16,
+                background:'#fdf4ff',border:'1px solid #e9d5ff',
+              }}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:13,color:'#7c3aed'}}>
+                    🔁 Loan repayment due {tsDate(data.nextRepayment.dueDate)}
+                  </div>
+                  <div style={{fontSize:12,color:'#9333ea',marginTop:2}}>
+                    {fmt(data.nextRepayment.amount)}
+                    {data.nextRepayment.loanPurpose ? ` · ${data.nextRepayment.loanPurpose}` : ''}
+                  </div>
+                </div>
+                <span style={{fontSize:13,fontWeight:700,color:'#7c3aed',flexShrink:0}}>View →</span>
+              </div>
+            </Link>
+          )}
+
           {/* ── Personal stats grid ── */}
           <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:20}}>
 
-            {/* My Capital — controlled by showMyCapital */}
             {showMyCapital && (
               <div style={{background:'#f0fdf4',borderRadius:12,padding:'16px 18px',border:'1px solid #e2e8f0'}}>
                 <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>My Capital</div>
@@ -180,7 +273,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Total Profit — always shown if there's data */}
             {data.myTotalProfit > 0 && (
               <div style={{background:'#eff6ff',borderRadius:12,padding:'16px 18px',border:'1px solid #e2e8f0'}}>
                 <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>Total Profit</div>
@@ -189,7 +281,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Total Fund — controlled by showFund */}
             {showFund && (
               <div style={{background:'#fafafa',borderRadius:12,padding:'16px 18px',border:'1px solid #e2e8f0'}}>
                 <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>Total Fund</div>
@@ -198,7 +289,17 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Pending warning — controlled by showPendingWarning */}
+            {/* Verified payments count — always useful at a glance */}
+            {data.myVerified > 0 && (
+              <div style={{background:'#f8fafc',borderRadius:12,padding:'16px 18px',border:'1px solid #e2e8f0'}}>
+                <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>Payments Made</div>
+                <div style={{fontSize:22,fontWeight:800,color:'#0f172a'}}>{data.myVerified}</div>
+                <div style={{fontSize:12,color:'#94a3b8',marginTop:4}}>
+                  {data.myPending > 0 ? `${data.myPending} pending` : 'all verified'}
+                </div>
+              </div>
+            )}
+
             {showPendingWarning && data.myPending > 0 && (
               <Link href="/installment" style={{textDecoration:'none'}}>
                 <div style={{background:'#fef3c7',borderRadius:12,padding:'16px 18px',border:'1px solid #fde68a'}}>
@@ -209,7 +310,6 @@ export default function Dashboard() {
               </Link>
             )}
 
-            {/* Active loans */}
             {orgF.qardHasana && data.activeLoans > 0 && (
               <Link href="/loans" style={{textDecoration:'none'}}>
                 <div style={{background:'#fef2f2',borderRadius:12,padding:'16px 18px',border:'1px solid #fca5a5'}}>
@@ -220,7 +320,7 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* ── Fund Breakdown Bars — controlled by showFundBreakdown ── */}
+          {/* ── Fund Breakdown Bars ── */}
           {hasFundBudgets && (
             <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
               padding:'16px 20px',marginBottom:20}}>
@@ -241,7 +341,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* ── Latest Distribution — controlled by showLatestDistribution ── */}
+          {/* ── Latest Distribution ── */}
           {showLatestDistribution && data.latestDist && (
             <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
               padding:'16px 20px',marginBottom:16}}>
@@ -271,7 +371,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* ── Notifications Card — controlled by showNotificationsCard ── */}
+          {/* ── Notifications ── */}
           {showNotificationsCard && notifs.length > 0 && (
             <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
               overflow:'hidden',marginBottom:16}}>
@@ -284,16 +384,14 @@ export default function Dashboard() {
                   background:n.read?'#fff':'#f0f9ff'}}>
                   <div style={{fontSize:13,color:'#0f172a',lineHeight:1.5}}>{n.message}</div>
                   {n.createdAt && (
-                    <div style={{fontSize:11,color:'#94a3b8',marginTop:3}}>
-                      {tsDate(n.createdAt)}
-                    </div>
+                    <div style={{fontSize:11,color:'#94a3b8',marginTop:3}}>{tsDate(n.createdAt)}</div>
                   )}
                 </div>
               ))}
             </div>
           )}
 
-          {/* ── Recent Payments — controlled by showRecentPayments ── */}
+          {/* ── Recent Payments ── */}
           {showRecentPayments && data.myPayments.length > 0 && (
             <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:16}}>
               <div style={{padding:'12px 16px',borderBottom:'1px solid #f1f5f9',
