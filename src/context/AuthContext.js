@@ -34,7 +34,6 @@ export const AuthProvider = ({ children }) => {
   });
 
   // ── Member impersonation ───────────────────────────────────────────────────
-  // When accessMode === 'member', this holds the uid being impersonated
   const [impersonateMemberId,   setImpersonateMemberId]   = useState(() => {
     if (typeof window !== 'undefined') return localStorage.getItem('dt_impersonate_uid') || null;
     return null;
@@ -66,7 +65,7 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('dt_impersonate_name');
     }
     setAccessMode('org');
-    router.push('/dashboard');
+    router.push('/admin');           // ← redirects org admins to /admin
   };
 
   // ── Switch back to SA platform mode ───────────────────────────────────────
@@ -82,8 +81,6 @@ export const AuthProvider = ({ children }) => {
   };
 
   // ── Start impersonating a member ──────────────────────────────────────────
-  // Call with: { uid, name, orgId }
-  // orgId is optional — if SA is already in an org it uses the existing activeOrgId
   const startViewingAsMember = async ({ uid, name, orgId }) => {
     if (orgId && user) {
       await setDoc(doc(db, 'users', user.uid), { activeOrgId: orgId }, { merge: true });
@@ -172,9 +169,20 @@ export const AuthProvider = ({ children }) => {
               if (mSnap.exists()) {
                 const mData = { id: mSnap.id, ...mSnap.data() };
                 setMembership(mData);
-                // Only redirect real members, not SA impersonating
+
+                // Redirect unapproved real members to pending page
                 if (!isSA && !mData.approved && !isPublic && pathname !== '/pending-approval') {
                   router.push('/pending-approval');
+                }
+
+                // Redirect approved org admins away from /dashboard or / to /admin
+                if (
+                  !isSA &&
+                  mData.approved &&
+                  mData.role === 'admin' &&
+                  (pathname === '/dashboard' || pathname === '/')
+                ) {
+                  router.push('/admin');
                 }
               } else {
                 setMembership(null);
@@ -217,7 +225,6 @@ export const AuthProvider = ({ children }) => {
     membership?.role === 'cashier' && !!membership?.approved;
 
   // The effective user ID for member-scoped queries
-  // Use this instead of user.uid in all member-facing pages
   const viewUid = isViewingAsMember ? impersonateMemberId : (user?.uid || null);
 
   // ── Loading screen ─────────────────────────────────────────────────────────
