@@ -52,6 +52,8 @@ const PATHS = {
   memo:          'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-4M9 15l3 3 3-3',
   export:        'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3',
   coins:         'M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2zM7 13s.5 1 2.5 1 2.5-1 2.5-1M7 11s.5-1 2.5-1 2.5 1 2.5 1',
+  adminOverview: 'M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z',
+  myDashboard:   'M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10',
 };
 
 const PUBLIC = ['/', '/login', '/register', '/forgot-password', '/create-org', '/select-org', '/join', '/pending-approval'];
@@ -84,7 +86,6 @@ function NavStyleSwitcher({ value, onChange }) {
   );
 }
 
-// ── Shared section tag ────────────────────────────────────────────────────────
 function SectionTag({ label }) {
   return (
     <p style={{ fontSize: 9, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase',
@@ -185,7 +186,7 @@ function AccentSection({ label, items, pathname, onClick }) {
   );
 }
 
-// ── Unified section renderer (picks style) ────────────────────────────────────
+// ── Unified section renderer ──────────────────────────────────────────────────
 function NavSection({ navStyle, label, items, pathname, onClick }) {
   const filtered = items.filter(Boolean);
   if (!filtered.length) return null;
@@ -194,7 +195,6 @@ function NavSection({ navStyle, label, items, pathname, onClick }) {
   return <DotSection label={label} items={filtered} pathname={pathname} onClick={onClick} />;
 }
 
-// ── Unified single nav item (for flat items outside sections) ─────────────────
 function NavItem({ navStyle = 'dots', label, path, icon, pathname, onClick }) {
   if (navStyle === 'tiles')  return <TileItem  label={label} path={path} icon={icon} pathname={pathname} onClick={onClick} />;
   if (navStyle === 'accent') return <AccentItem label={label} path={path} icon={icon} pathname={pathname} onClick={onClick} />;
@@ -329,7 +329,6 @@ export default function Sidebar() {
     startViewingAsMember, stopViewingAsMember,
   } = useAuth();
 
-  // ── Nav style — only available if userData.navStyleSwitcher === true ────
   const canSwitchNav = useMemo(() => !!userData?.navStyleSwitcher, [userData]);
   const [navStyle, setNavStyle] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -341,7 +340,6 @@ export default function Sidebar() {
     setNavStyle(s);
     if (typeof window !== 'undefined') localStorage.setItem(NAV_STYLE_KEY, s);
   };
-  // Force lines for users without switcher access
   const ns = canSwitchNav ? navStyle : 'accent';
 
   const isPublic     = PUBLIC.some(r => pathname === r || pathname.startsWith(r + '/'));
@@ -385,24 +383,26 @@ export default function Sidebar() {
   const chipBorder = inMemberMode ? '#e9d5ff' : inOrgMode ? '#ddd6fe' : '#bfdbfe';
   const chipColor  = inMemberMode ? '#7c3aed' : inOrgMode ? '#7c3aed' : '#2563eb';
 
-  // ── Shared section definitions ─────────────────────────────────────────────
+  // ── Admin nav (with My Space section including personal dashboard) ──────────
   const adminNav = (
     <>
+      {/* ── My Space: admin's personal member pages ── */}
       <NavSection navStyle={ns} label="My space" pathname={pathname} onClick={closeDrawer} items={[
-        { label: 'Dashboard',       path: '/dashboard',   icon: PATHS.home    },
-        { label: 'Pay installment', path: '/installment', icon: PATHS.pay     },
-        { label: 'My ledger',       path: '/ledger',      icon: PATHS.ledger  },
-        { label: 'My profile',      path: '/profile',     icon: PATHS.profile },
-        { label: 'Notices',         path: '/memoranda',   icon: PATHS.memo    },
+        { label: 'Admin overview',  path: '/admin',       icon: PATHS.adminOverview },
+        { label: 'My dashboard',    path: '/dashboard',   icon: PATHS.myDashboard   },
+        { label: 'Pay installment', path: '/installment', icon: PATHS.pay           },
+        { label: 'My ledger',       path: '/ledger',      icon: PATHS.ledger        },
+        { label: 'My profile',      path: '/profile',     icon: PATHS.profile       },
+        { label: 'Notices',         path: '/memoranda',   icon: PATHS.memo          },
         orgF.qardHasana    && { label: 'My loans',  path: '/loans',  icon: PATHS.loan  },
         orgF.assetRegistry && { label: 'Assets',    path: '/assets', icon: PATHS.asset },
       ]} />
 
       <NavSection navStyle={ns} label="Finance" pathname={pathname} onClick={closeDrawer} items={[
-        { label: 'Verify payments', path: '/admin/verify',            icon: PATHS.verify   },
-        { label: 'Income',          path: '/admin/income',     icon: PATHS.income   },
-        { label: 'Expenses',        path: '/admin/expenses',   icon: PATHS.expenses },
-        { label: 'Penalties',       path: '/admin/penalties',  icon: PATHS.penalty  },
+        { label: 'Verify payments', path: '/admin/verify',           icon: PATHS.verify   },
+        { label: 'Income',          path: '/admin/income',           icon: PATHS.income   },
+        { label: 'Expenses',        path: '/admin/expenses',         icon: PATHS.expenses },
+        { label: 'Penalties',       path: '/admin/penalties',        icon: PATHS.penalty  },
         orgF.entryFeeTracking && { label: 'Entry fees',     path: '/admin/entry-fees',  icon: PATHS.entryFee },
         orgF.assetRegistry    && { label: 'Asset registry', path: '/admin/assets',      icon: PATHS.asset    },
         orgF.qardHasana       && { label: 'Loans',          path: '/admin/loans',       icon: PATHS.loan     },
@@ -410,10 +410,10 @@ export default function Sidebar() {
       ]} />
 
       <NavSection navStyle={ns} label="Members" pathname={pathname} onClick={closeDrawer} items={[
-        { label: 'Member list',         path: '/admin/members',          icon: PATHS.members      },
-        { label: 'Subscriptions',       path: '/admin/subscriptions',    icon: PATHS.subscription },
-        { label: 'Installment tracker', path: '/admin/subscriptionsgrid', icon: PATHS.grid        },
-        { label: 'Notifications',       path: '/admin/notifications',    icon: PATHS.bell         },
+        { label: 'Member list',         path: '/admin/members',           icon: PATHS.members      },
+        { label: 'Subscriptions',       path: '/admin/subscriptions',     icon: PATHS.subscription },
+        { label: 'Installment tracker', path: '/admin/subscriptionsgrid', icon: PATHS.grid         },
+        { label: 'Notifications',       path: '/admin/notifications',     icon: PATHS.bell         },
       ]} />
 
       <NavSection navStyle={ns} label="Records" pathname={pathname} onClick={closeDrawer} items={[
@@ -432,8 +432,8 @@ export default function Sidebar() {
         ]} />
       )}
 
-      {/* Bottom utilities */}
-      <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #f1f5f9',
+      <div style={{
+        marginTop: 6, paddingTop: 6, borderTop: '1px solid #f1f5f9',
         display: ns === 'tiles' ? 'grid' : 'flex',
         gridTemplateColumns: ns === 'tiles' ? '1fr 1fr' : undefined,
         flexDirection: ns !== 'tiles' ? 'column' : undefined,
@@ -455,7 +455,7 @@ export default function Sidebar() {
 
       {/* Header */}
       <div style={{ padding: '18px 14px 14px', borderBottom: '1px solid #e2e8f0', flexShrink: 0 }}>
-        <Link href={inOrgMode || inMemberMode ? '/dashboard' : (isSuperAdmin ? '/superadmin' : '/dashboard')}
+        <Link href={inOrgMode || inMemberMode ? '/admin' : (isSuperAdmin ? '/superadmin' : '/dashboard')}
           style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
           <div style={{ width: 34, height: 34, borderRadius: 9, background: inMemberMode ? '#7c3aed' : inOrgMode ? '#7c3aed' : '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
             {orgData?.logoURL && (inOrgMode || inMemberMode || !isSuperAdmin)
@@ -490,15 +490,12 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Nav style switcher — only for users with navStyleSwitcher: true */}
-      {canSwitchNav && (
-        <NavStyleSwitcher value={navStyle} onChange={handleNavStyle} />
-      )}
+      {canSwitchNav && <NavStyleSwitcher value={navStyle} onChange={handleNavStyle} />}
 
       {/* Scrollable nav */}
       <nav style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
 
-        {/* ── SUPERADMIN PLATFORM MODE ──────────────────────────────── */}
+        {/* ── SUPERADMIN PLATFORM MODE ── */}
         {isSuperAdmin && !inOrgMode && !inMemberMode && (
           <div style={{ padding: '4px 0' }}>
             <NavSection navStyle={ns} label="Platform" pathname={pathname} onClick={closeDrawer} items={[
@@ -512,7 +509,7 @@ export default function Sidebar() {
           </div>
         )}
 
-        {/* ── ORG / MEMBER MODE ──────────────────────────────────────── */}
+        {/* ── ORG / MEMBER MODE ── */}
         {(!isSuperAdmin || inOrgMode || inMemberMode) && (
           <>
             {!inMemberMode && (
