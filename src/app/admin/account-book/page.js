@@ -28,15 +28,21 @@ function ymLabel(key) {
 function yKey(ts)  { const d=ts?.seconds?new Date(ts.seconds*1000):ts instanceof Date?ts:new Date(ts); return String(d.getFullYear()); }
 function initials(n) { return (n||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 
+// ── Short name: strip leading MD/Md/md, return first remaining word ───────────
+function shortName(fullName) {
+  if (!fullName) return '—';
+  const words = fullName.trim().split(/\s+/);
+  const trimmed = /^md\.?$/i.test(words[0]) ? words.slice(1) : words;
+  return trimmed[0] || fullName;
+}
+
 // ── NEW: format a paidMonths entry (e.g. "2026-04" or timestamp) → "Apr 2026"
 function fmtPaidMonth(val) {
   if (!val) return '—';
-  // "YYYY-MM" string format
   if (typeof val === 'string' && /^\d{4}-\d{2}$/.test(val)) {
     const [y, m] = val.split('-');
     return new Date(+y, +m - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
   }
-  // Firestore timestamp or Date
   const d = val?.seconds ? new Date(val.seconds * 1000) : val instanceof Date ? val : new Date(val);
   if (isNaN(d)) return String(val);
   return d.toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
@@ -71,7 +77,7 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
     rows.push({
       id:`pay-${p.id}`, type:'installment', ts:p.createdAt,
       sortKey:tsSort(p.createdAt), date:normDate(p.createdAt),
-      desc:'Capital Installment',
+      desc:'Installment',
       sub:m.nameEnglish||m.name||'Member',
       debit:0, credit:net, count:1,
       meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
@@ -93,7 +99,7 @@ function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
       desc:'Entry Fee',
       sub:m.nameEnglish||m.name||'Member',
       debit:0, credit:f.amount||0, count:0,
-      meta:{...f, memberName:m.nameEnglish||m.name||'—'},
+      meta:{...f, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
     });
   });
   loans.filter(l=>['disbursed','repaid'].includes(l.status)).forEach(l => {
@@ -219,16 +225,20 @@ function EntryDetailPanel({ entry }) {
   const m = entry.meta || {};
   const fields = [];
 
-  if (m.memberName)    fields.push(['Member',       m.memberName + (m.memberIdNo ? ` #${m.memberIdNo}` : '')]);
-  if (entry.desc)      fields.push(['Description',  entry.desc]);
+  // ── Use shortName for member display in detail panel ──
+  const displayMemberName = m.memberName ? shortName(m.memberName) : null;
+
+  if (displayMemberName) fields.push(['Member', displayMemberName]);
+  if (m.memberIdNo) fields.push(['ID', ` #${m.memberIdNo}`]);
+  if (entry.desc)        fields.push(['Description',  entry.desc]);
   if (entry.sub && entry.sub !== m.memberName) fields.push(['Details', entry.sub]);
-  if (entry.credit>0)  fields.push(['Credit',       fmt(entry.credit)]);
-  if (entry.debit>0)   fields.push(['Debit',        fmt(entry.debit)]);
-  if (m.gatewayFee>0)  fields.push(['Gateway Fee',  `−${fmt(m.gatewayFee)}`]);
-  if (m.method)        fields.push(['Method',       m.method]);
-  if (m.status)        fields.push(['Status',       m.status]);
-  if (m.purpose)       fields.push(['Purpose',      m.purpose]);
-  if (m.category)      fields.push(['Category',     m.category]);
+  if (entry.credit>0)    fields.push(['Credit',       fmt(entry.credit)]);
+  if (entry.debit>0)     fields.push(['Debit',        fmt(entry.debit)]);
+  if (m.gatewayFee>0)    fields.push(['Gateway Fee',  `−${fmt(m.gatewayFee)}`]);
+  if (m.method)          fields.push(['Method',       m.method]);
+  if (m.status)          fields.push(['Status',       m.status]);
+  if (m.purpose)         fields.push(['Purpose',      m.purpose]);
+  if (m.category)        fields.push(['Category',     m.category]);
   if (m.repayment) {
     if (m.repayment.principal) fields.push(['Principal', fmt(m.repayment.principal)]);
     if (m.repayment.interest)  fields.push(['Interest',  fmt(m.repayment.interest)]);
@@ -316,6 +326,10 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
         const cap  = e.type==='installment' ? e.credit : 0;
         const exp  = e.debit > 0 ? e.debit : 0;
         const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
+        // ── short name in ledger row ──
+        const rowLabel = e.meta?.memberName
+          ? `${shortName(e.meta.memberName)}${e.meta.memberIdNo ? ` #${e.meta.memberIdNo}` : ''}`
+          : e.sub || '';
         return (
           <div key={e.id}>
             <div
@@ -339,9 +353,7 @@ function DateGroupRow({ dateLabel, entries, isMobile }) {
                 <TypeTag type={e.type}/>
                 <span style={{fontSize:11,color:'#475569',overflow:'hidden',
                   textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                  {e.meta?.memberName
-                    ? `${e.meta.memberName}${e.meta.memberIdNo?` #${e.meta.memberIdNo}`:''}`
-                    : e.sub||''}
+                  {rowLabel}
                 </span>
               </div>
               <div style={{textAlign:'right',fontSize:11,fontWeight:600,
@@ -542,9 +554,7 @@ function downloadCSV(entries, orgData) {
 }
 
 // ── NEW: Export per-member Excel (one sheet per member) ───────────────────────
-// Uses SheetJS (xlsx) loaded from CDN. We lazy-load it so the page doesn't block.
 async function exportMembersExcel(memberRows, orgData) {
-  // Dynamically load SheetJS if not already present
   if (!window.XLSX) {
     await new Promise((resolve, reject) => {
       const s = document.createElement('script');
@@ -559,7 +569,6 @@ async function exportMembersExcel(memberRows, orgData) {
   const org = orgData || {};
   const genDate = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 
-  // ── Sheet 1: Summary of all members ──────────────────────────────────────
   const summaryData = [
     [`${org.name_en || org.name || 'Organisation'} — Member Capital Summary`],
     [`Generated: ${genDate}`],
@@ -588,20 +597,14 @@ async function exportMembersExcel(memberRows, orgData) {
   ];
   XLSX.utils.book_append_sheet(wb, summarySheet, 'Summary');
 
-  // ── One sheet per member ──────────────────────────────────────────────────
   memberRows.forEach(r => {
-    const name = (r.nameEnglish || r.name || 'Member').slice(0, 28); // sheet name max 31 chars
+    const name = (r.nameEnglish || r.name || 'Member').slice(0, 28);
     const safeSheetName = name.replace(/[:\\/?*\[\]]/g, '').trim() || `M_${r.idNo || 'unknown'}`;
-
-    // Build unified payment rows (same logic as MemberPaymentHistory)
     const allRows = [];
-
-    // Installment payments
     (r.payments || [])
       .filter(p => !p.paymentType || p.paymentType === 'monthly')
       .forEach(p => {
         const net = (p.amount || 0) - (p.gatewayFee || 0);
-        // Collect paidMonths labels
         const months = (p.paidMonths || []).map(fmtPaidMonth).join(', ');
         allRows.push({
           _sortKey: tsSort(p.createdAt),
@@ -615,8 +618,6 @@ async function exportMembersExcel(memberRows, orgData) {
           status: p.status || '—',
         });
       });
-
-    // Entry fees from entryFees collection
     (r.entryFees || []).forEach(f => {
       allRows.push({
         _sortKey: tsSort(f.paidAt || f.createdAt),
@@ -630,8 +631,6 @@ async function exportMembersExcel(memberRows, orgData) {
         status: 'verified',
       });
     });
-
-    // Fee payments from investments collection
     (r.feePays || [])
       .filter(p => p.status !== 'rejected')
       .forEach(p => {
@@ -648,16 +647,9 @@ async function exportMembersExcel(memberRows, orgData) {
           status: p.status || '—',
         });
       });
-
     allRows.sort((a, b) => a._sortKey - b._sortKey);
-
-    const capitalNet = allRows
-      .filter(x => x.type === 'Installment' && x.status === 'verified')
-      .reduce((s, x) => s + x.net, 0);
-    const feeTotal = allRows
-      .filter(x => x.type !== 'Installment')
-      .reduce((s, x) => s + x.net, 0);
-
+    const capitalNet = allRows.filter(x=>x.type==='Installment'&&x.status==='verified').reduce((s,x)=>s+x.net,0);
+    const feeTotal   = allRows.filter(x=>x.type!=='Installment').reduce((s,x)=>s+x.net,0);
     const sheetData = [
       [`${org.name_en || org.name || 'Organisation'} — Member Payment History`],
       [`Member: ${r.nameEnglish || r.name || '—'}  |  ID: ${r.idNo || '—'}`],
@@ -665,24 +657,15 @@ async function exportMembersExcel(memberRows, orgData) {
       [],
       ['Date', 'Type', 'Installment Month', 'Amount', 'Gateway Fee', 'Net', 'Method', 'Status'],
       ...allRows.map(row => [
-        row.date,
-        row.type,
-        row.installmentMonth,
-        row.amount,
-        row.gatewayFee || '',
-        row.net,
-        row.method,
-        row.status,
+        row.date, row.type, row.installmentMonth,
+        row.amount, row.gatewayFee || '', row.net, row.method, row.status,
       ]),
       [],
       ['', '', 'Capital Net (verified)', '', '', capitalNet, '', ''],
       ['', '', 'Fee Income (not capital)', '', '', feeTotal, '', ''],
     ];
-
     const ws = XLSX.utils.aoa_to_sheet(sheetData);
-    ws['!cols'] = [
-      {wch:14},{wch:20},{wch:18},{wch:12},{wch:12},{wch:12},{wch:12},{wch:10},
-    ];
+    ws['!cols'] = [{wch:14},{wch:20},{wch:18},{wch:12},{wch:12},{wch:12},{wch:12},{wch:10}];
     XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
   });
 
@@ -835,7 +818,8 @@ function ReportModal({ entries, orgData, onClose }) {
                       const cap = e.type==='installment'?e.credit:0;
                       const exp = e.debit>0?e.debit:0;
                       const fee = (e.type==='entry_fee'||e.type==='loan_repayment')?e.credit:0;
-                      const name = e.meta?.memberName || e.sub || '';
+                      // ── short name in report breakdown ──
+                      const name = e.meta?.memberName ? shortName(e.meta.memberName) : (e.sub || '');
                       return (
                         <tr key={e.id} style={{background:ei%2===0?'#fff':'#fafafa',borderTop:'1px solid #f1f5f9'}}>
                           <td style={{padding:'5px 10px 5px 18px',color:'#94a3b8',whiteSpace:'nowrap'}}>{e.date}</td>
@@ -910,17 +894,15 @@ function ReportModal({ entries, orgData, onClose }) {
   );
 }
 
-// ── MemberPaymentHistory — with Installment Month column ─────────────────────
+// ── MemberPaymentHistory — unchanged ─────────────────────────────────────────
 function MemberPaymentHistory({ member }) {
   const r = member;
   const allRows = [];
 
-  // Installment payments
   (r.payments || [])
     .filter(p => !p.paymentType || p.paymentType === 'monthly')
     .forEach(p => {
       const net = (p.amount || 0) - (p.gatewayFee || 0);
-      // Format each entry in paidMonths array → "Apr 2026"
       const months = (p.paidMonths || []).map(fmtPaidMonth).join(', ');
       allRows.push({
         _sortKey: tsSort(p.createdAt),
@@ -937,7 +919,6 @@ function MemberPaymentHistory({ member }) {
       });
     });
 
-  // Entry fees from entryFees collection
   (r.entryFees || []).forEach(f => {
     allRows.push({
       _sortKey: tsSort(f.paidAt || f.createdAt),
@@ -954,7 +935,6 @@ function MemberPaymentHistory({ member }) {
     });
   });
 
-  // Fee payments from investments collection
   (r.feePays || [])
     .filter(p => p.status !== 'rejected')
     .forEach(p => {
@@ -1007,7 +987,6 @@ function MemberPaymentHistory({ member }) {
                   <span style={{color:'#334155',fontSize:11}}>{row.label}</span>
                 </span>
               </td>
-              {/* ── NEW: Installment Month column ── */}
               <td style={{padding:'6px 10px',color:'#475569',fontSize:11,whiteSpace:'nowrap'}}>
                 {row.installmentMonth || <span style={{color:'#cbd5e1'}}>—</span>}
               </td>
@@ -1087,7 +1066,7 @@ export default function AdminAccountBook() {
   const [memSearch,  setMemSearch]  = useState('');
   const [memSort,    setMemSort]    = useState('idNo');
   const [selMember,  setSelMember]  = useState(null);
-  const [exporting,  setExporting]  = useState(false); // ← NEW
+  const [exporting,  setExporting]  = useState(false);
   const [isMobile,   setIsMobile]   = useState(false);
 
   useEffect(() => {
@@ -1289,7 +1268,6 @@ export default function AdminAccountBook() {
     </div>
   );
 
-  // ── Export handler ────────────────────────────────────────────────────────
   const handleExportExcel = async () => {
     setExporting(true);
     try {
@@ -1322,7 +1300,6 @@ export default function AdminAccountBook() {
               🖨 Generate Report
             </button>
           )}
-          {/* ── NEW: Export Excel button on members tab ── */}
           {tab==='members' && (
             <button
               onClick={handleExportExcel}
@@ -1462,9 +1439,10 @@ export default function AdminAccountBook() {
                             : initials(r.nameEnglish||r.name)}
                         </div>
                         <div style={{flex:1,minWidth:0}}>
+                          {/* ── short name in Top Members list ── */}
                           <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
                             overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                            {r.nameEnglish||r.name||'—'}
+                            {shortName(r.nameEnglish||r.name||'—')}
                           </div>
                           {r.idNo && <div style={{fontSize:11,color:'#94a3b8'}}>#{r.idNo}</div>}
                         </div>
@@ -1602,7 +1580,7 @@ export default function AdminAccountBook() {
             </div>
           )}
 
-          {/* ══ MEMBERS TAB ══ */}
+          {/* ══ MEMBERS TAB — full names kept as-is ══ */}
           {tab==='members' && (
             <div>
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',
@@ -1657,6 +1635,7 @@ export default function AdminAccountBook() {
                               : initials(r.nameEnglish||r.name)}
                           </div>
                           <div>
+                            {/* Per Member tab: full name kept intentionally */}
                             <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>
                               {r.nameEnglish||r.name||'—'}
                             </div>
