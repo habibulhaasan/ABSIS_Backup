@@ -1,3 +1,4 @@
+// src/app/admin/page.js  — Admin Overview (Phase 6)
 'use client';
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
@@ -7,7 +8,7 @@ import {
 } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 
-// ── helpers (same as account-book) ───────────────────────────────────────────
+// ── helpers ───────────────────────────────────────────────────────────────────
 function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
 function tsSort(ts) {
   if (!ts) return 0;
@@ -18,6 +19,17 @@ function tsDate(ts) {
   const d = ts?.seconds ? new Date(ts.seconds*1000) : new Date(ts);
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
+function normDate(val) {
+  if (!val) return '—';
+  if (typeof val === 'string') {
+    const iso = val.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (iso) {
+      const d = new Date(Number(iso[1]), Number(iso[2])-1, Number(iso[3]));
+      return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+    }
+  }
+  return tsDate(val);
+}
 function computeFundAlloc(key, totalCapital, settings) {
   const fb = settings?.fundBudgets?.[key];
   if (!fb?.value) return 0;
@@ -26,8 +38,15 @@ function computeFundAlloc(key, totalCapital, settings) {
   const mx = fb.maxAmount && Number(fb.maxAmount)>0 ? Number(fb.maxAmount) : Infinity;
   return Math.min(p, mx);
 }
+function shortName(fullName) {
+  if (!fullName) return '—';
+  const words = fullName.trim().split(/\s+/);
+  const trimmed = /^md\.?$/i.test(words[0]) ? words.slice(1) : words;
+  return trimmed[0] || fullName;
+}
+function initials(n) { return (n||'?').split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 
-// ── TYPE config (mirrors account-book) ───────────────────────────────────────
+// ── TYPE config ───────────────────────────────────────────────────────────────
 const TYPE_CFG = {
   installment:       { label:'Installment',  short:'In',  bg:'#dbeafe', color:'#1e40af' },
   expense:           { label:'Expense',      short:'Ex',  bg:'#fee2e2', color:'#dc2626' },
@@ -48,6 +67,237 @@ function TypeTag({ type }) {
   );
 }
 
+function LedgerLegend() {
+  return (
+    <div style={{display:'flex',flexWrap:'wrap',gap:'5px 12px',
+      padding:'7px 10px',background:'#f8fafc',borderRadius:0,
+      borderBottom:'1px solid #e2e8f0',alignItems:'center'}}>
+      <span style={{fontSize:10,fontWeight:700,color:'#64748b',textTransform:'uppercase',
+        letterSpacing:'0.05em',flexShrink:0}}>Key:</span>
+      {Object.entries(TYPE_CFG).map(([key,cfg])=>(
+        <span key={key} style={{display:'inline-flex',alignItems:'center',gap:4,fontSize:11,color:'#475569'}}>
+          <span style={{display:'inline-block',padding:'1px 5px',borderRadius:4,
+            fontSize:9,fontWeight:800,background:cfg.bg,color:cfg.color,lineHeight:'16px'}}>
+            {cfg.short}
+          </span>
+          {cfg.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── EntryDetailPanel (mirrors account-book) ───────────────────────────────────
+function EntryDetailPanel({ entry }) {
+  const m = entry.meta || {};
+  const fields = [];
+  const displayMemberName = m.memberName ? shortName(m.memberName) : null;
+  if (displayMemberName) fields.push(['Member', displayMemberName]);
+  if (m.memberIdNo)      fields.push(['ID', `#${m.memberIdNo}`]);
+  if (entry.desc)        fields.push(['Description', entry.desc]);
+  if (entry.sub && entry.sub !== m.memberName) fields.push(['Details', entry.sub]);
+  if (entry.credit>0)    fields.push(['Credit', fmt(entry.credit)]);
+  if (entry.debit>0)     fields.push(['Debit', fmt(entry.debit)]);
+  if (m.gatewayFee>0)    fields.push(['Gateway Fee', `−${fmt(m.gatewayFee)}`]);
+  if (m.method)          fields.push(['Method', m.method]);
+  if (m.status)          fields.push(['Status', m.status]);
+  if (m.purpose)         fields.push(['Purpose', m.purpose]);
+  if (m.category)        fields.push(['Category', m.category]);
+  fields.push(['Balance After', fmt(entry.balance)]);
+  return (
+    <div style={{padding:'10px 12px 10px 16px',background:'#f0f9ff',
+      borderTop:'1px solid #bae6fd',borderBottom:'1px solid #bae6fd'}}>
+      <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:7}}>
+        <TypeTag type={entry.type}/>
+        <span style={{fontSize:10,color:'#94a3b8'}}>{entry.date}</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(140px,1fr))',gap:'3px 16px'}}>
+        {fields.map(([k,v])=>(
+          <div key={k} style={{display:'flex',gap:4,fontSize:11,alignItems:'baseline',minWidth:0}}>
+            <span style={{color:'#94a3b8',flexShrink:0,fontSize:10}}>{k}:</span>
+            <span style={{color:'#0f172a',fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── DateGroupRow (mirrors account-book exactly) ───────────────────────────────
+function DateGroupRow({ dateLabel, entries, isMobile }) {
+  const [open, setOpen] = useState(false);
+  const [openEntry, setOpenEntry] = useState(null);
+
+  const totalCapital  = entries.filter(e=>e.type==='installment').reduce((s,e)=>s+e.credit,0);
+  const totalExpenses = entries.filter(e=>e.debit>0).reduce((s,e)=>s+e.debit,0);
+  const totalFees     = entries.filter(e=>e.type==='entry_fee'||e.type==='loan_repayment').reduce((s,e)=>s+e.credit,0);
+  const closingBal    = entries[entries.length - 1]?.balance ?? 0;
+  const typeSet       = [...new Set(entries.map(e => e.type))];
+
+  return (
+    <div style={{borderBottom:'1px solid #f1f5f9'}}>
+      <div
+        onClick={()=>setOpen(o=>!o)}
+        style={{
+          display:'grid',
+          gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+          padding:'8px 10px',
+          background: open ? '#f0f9ff' : '#fff',
+          cursor:'pointer', userSelect:'none', alignItems:'center', gap:'4px 8px',
+          transition:'background 0.1s',
+        }}
+        onMouseEnter={e=>{ if(!open) e.currentTarget.style.background='#f8fafc'; }}
+        onMouseLeave={e=>{ e.currentTarget.style.background=open?'#f0f9ff':'#fff'; }}
+      >
+        <div style={{display:'flex',alignItems:'center',gap:4,flexWrap:'wrap',minWidth:0}}>
+          <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{open?'▾':'▸'}</span>
+          <span style={{fontSize:11,color:'#475569',fontWeight:600,flexShrink:0}}>{dateLabel}</span>
+          {(!isMobile || open) && typeSet.map(t=><TypeTag key={t} type={t}/>)}
+          {entries.length>1 && !isMobile && (
+            <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>×{entries.length}</span>
+          )}
+        </div>
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalCapital>0?'#1e40af':'#cbd5e1'}}>
+          {totalCapital>0 ? `+${fmt(totalCapital)}` : '—'}
+        </div>
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalExpenses>0?'#dc2626':'#cbd5e1'}}>
+          {totalExpenses>0 ? `−${fmt(totalExpenses)}` : '—'}
+        </div>
+        <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:totalFees>0?'#0d9488':'#cbd5e1'}}>
+          {totalFees>0 ? `+${fmt(totalFees)}` : '—'}
+        </div>
+        <div style={{textAlign:'right',fontSize:12,fontWeight:800,flexShrink:0,
+          color:closingBal>=0?'#0f172a':'#dc2626'}}>
+          {fmt(closingBal)}
+        </div>
+      </div>
+
+      {open && entries.map((e,ei)=>{
+        const isOpen = openEntry === e.id;
+        const cap  = e.type==='installment' ? e.credit : 0;
+        const exp  = e.debit > 0 ? e.debit : 0;
+        const fee  = (e.type==='entry_fee'||e.type==='loan_repayment') ? e.credit : 0;
+        const rowLabel = e.meta?.memberName
+          ? `${shortName(e.meta.memberName)}${e.meta.memberIdNo ? ` #${e.meta.memberIdNo}` : ''}`
+          : e.sub || '';
+        return (
+          <div key={e.id}>
+            <div
+              onClick={()=>setOpenEntry(isOpen ? null : e.id)}
+              style={{
+                display:'grid',
+                gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+                padding:'7px 10px 7px 20px',
+                borderTop:'1px solid #f1f5f9',
+                background: isOpen ? '#e0f2fe' : ei%2===0?'#fafeff':'#f0f9ff',
+                alignItems:'center', gap:'4px 8px', cursor:'pointer', userSelect:'none',
+              }}
+              onMouseEnter={e2=>{ if(!isOpen) e2.currentTarget.style.background='#e0f2fe'; }}
+              onMouseLeave={e2=>{ e2.currentTarget.style.background=isOpen?'#e0f2fe':ei%2===0?'#fafeff':'#f0f9ff'; }}
+            >
+              <div style={{display:'flex',alignItems:'center',gap:5,minWidth:0,overflow:'hidden'}}>
+                <span style={{fontSize:10,color:'#94a3b8',flexShrink:0}}>{isOpen?'▾':'▸'}</span>
+                <TypeTag type={e.type}/>
+                <span style={{fontSize:11,color:'#475569',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  {rowLabel}
+                </span>
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:cap>0?'#1e40af':'#cbd5e1'}}>
+                {cap>0?`+${fmt(cap)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:exp>0?'#dc2626':'#cbd5e1'}}>
+                {exp>0?`−${fmt(exp)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:600,color:fee>0?'#0d9488':'#cbd5e1'}}>
+                {fee>0?`+${fmt(fee)}`:'—'}
+              </div>
+              <div style={{textAlign:'right',fontSize:11,fontWeight:700,color:e.balance>=0?'#0f172a':'#dc2626'}}>
+                {fmt(e.balance)}
+              </div>
+            </div>
+            {isOpen && <EntryDetailPanel entry={e}/>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── buildOrgEntries (mirrors account-book) ────────────────────────────────────
+function buildOrgEntries(payments, expenses, fees, loans, memberMap) {
+  const rows = [];
+  payments.filter(p=>p.status==='verified').forEach(p => {
+    const net = (p.amount||0) - (p.gatewayFee||0);
+    const m   = memberMap[p.userId]||{};
+    rows.push({
+      id:`pay-${p.id}`, type:'installment', ts:p.createdAt,
+      sortKey:tsSort(p.createdAt), date:normDate(p.createdAt),
+      desc:'Installment',
+      sub:m.nameEnglish||m.name||'Member',
+      debit:0, credit:net, count:1,
+      meta:{...p, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
+    });
+  });
+  expenses.forEach(e => {
+    rows.push({
+      id:`exp-${e.id}`, type:'expense', ts:e.createdAt,
+      sortKey:tsSort(e.createdAt), date:e.date?normDate(e.date):normDate(e.createdAt),
+      desc:e.title||e.description||'Expense', sub:e.category||'',
+      debit:e.amount||0, credit:0, count:0, meta:e,
+    });
+  });
+  fees.forEach(f => {
+    const m = memberMap[f.userId]||{};
+    rows.push({
+      id:`fee-${f.id}`, type:'entry_fee', ts:f.createdAt,
+      sortKey:tsSort(f.createdAt), date:f.paidAt?normDate(f.paidAt):normDate(f.createdAt),
+      desc:'Entry Fee',
+      sub:m.nameEnglish||m.name||'Member',
+      debit:0, credit:f.amount||0, count:0,
+      meta:{...f, memberName:m.nameEnglish||m.name||'—', memberIdNo:m.idNo||''},
+    });
+  });
+  loans.filter(l=>['disbursed','repaid'].includes(l.status)).forEach(l => {
+    const m = memberMap[l.userId]||{};
+    if (l.disbursedAt && l.amount) {
+      rows.push({
+        id:`loand-${l.id}`, type:'loan_disbursement', ts:l.disbursedAt,
+        sortKey:tsSort(l.disbursedAt), date:normDate(l.disbursedAt),
+        desc:'Loan Disbursed',
+        sub:`${m.nameEnglish||m.name||'Member'}${l.purpose?` — ${l.purpose}`:''}`,
+        debit:l.amount, credit:0, count:0,
+        meta:{...l, memberName:m.nameEnglish||m.name||'—'},
+      });
+    }
+    (l.repayments||[]).forEach((r,ri) => {
+      const d2 = new Date(r.date);
+      rows.push({
+        id:`loanr-${l.id}-${ri}`, type:'loan_repayment',
+        ts:{seconds:d2.getTime()/1000}, sortKey:d2.getTime()/1000,
+        date:normDate(r.date), desc:'Loan Repayment',
+        sub:`${m.nameEnglish||m.name||'Member'}${l.purpose?` — ${l.purpose}`:''}`,
+        debit:0, credit:r.amount, count:0,
+        meta:{...l, repayment:r, memberName:m.nameEnglish||m.name||'—'},
+      });
+    });
+  });
+  rows.sort((a,b) => a.sortKey - b.sortKey);
+  let bal = 0;
+  rows.forEach(r => { bal += r.credit - r.debit; r.balance = bal; });
+  return rows;
+}
+
+function buildDateGroups(entries) {
+  const map = {};
+  entries.forEach(e => {
+    const key = e.date || '—';
+    if (!map[key]) map[key] = { dateLabel: key, entries: [], sortKey: e.sortKey };
+    map[key].entries.push(e);
+    if (e.sortKey < map[key].sortKey) map[key].sortKey = e.sortKey;
+  });
+  return Object.values(map).sort((a, b) => a.sortKey - b.sortKey);
+}
+
 // ── Stat card ─────────────────────────────────────────────────────────────────
 function SB({ label, value, sub, color='#0f172a', bg='#f8fafc' }) {
   return (
@@ -60,7 +310,6 @@ function SB({ label, value, sub, color='#0f172a', bg='#f8fafc' }) {
   );
 }
 
-// ── Progress bar ──────────────────────────────────────────────────────────────
 function ProgressBar({ pct, color }) {
   const c = color || (pct >= 90 ? '#dc2626' : pct >= 70 ? '#d97706' : '#2563eb');
   return (
@@ -70,7 +319,6 @@ function ProgressBar({ pct, color }) {
   );
 }
 
-// ── Quick action button ───────────────────────────────────────────────────────
 function QuickBtn({ href, icon, label, sub, bg, stroke }) {
   return (
     <Link href={href} style={{
@@ -95,7 +343,6 @@ function QuickBtn({ href, icon, label, sub, bg, stroke }) {
   );
 }
 
-// ── Section label ─────────────────────────────────────────────────────────────
 function SL({ children }) {
   return (
     <div style={{ fontSize:10, fontWeight:600, textTransform:'uppercase',
@@ -112,7 +359,6 @@ export default function AdminDashboard() {
   const settings = orgData?.settings || {};
   const feeInAcct = !!settings.gatewayFeeInAccounting;
 
-  // raw data
   const [payments,   setPayments]   = useState([]);
   const [expenses,   setExpenses]   = useState([]);
   const [fees,       setFees]       = useState([]);
@@ -120,51 +366,64 @@ export default function AdminDashboard() {
   const [projects,   setProjects]   = useState([]);
   const [dists,      setDists]      = useState([]);
   const [members,    setMembers]    = useState([]);
+  const [memberMap,  setMemberMap]  = useState({});
   const [loading,    setLoading]    = useState(true);
+  const [isMobile,   setIsMobile]   = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
 
   useEffect(() => {
     if (!orgId) return;
     const unsubs = [];
-    // investments (payments)
+
     unsubs.push(onSnapshot(
       query(collection(db,'organizations',orgId,'investments'), orderBy('createdAt','desc')),
       snap => setPayments(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // expenses
     unsubs.push(onSnapshot(
       collection(db,'organizations',orgId,'expenses'),
       snap => setExpenses(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // entry fees
     unsubs.push(onSnapshot(
       collection(db,'organizations',orgId,'entryFees'),
       snap => setFees(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // loans
     unsubs.push(onSnapshot(
       collection(db,'organizations',orgId,'loans'),
       snap => setLoans(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // projects
     unsubs.push(onSnapshot(
       collection(db,'organizations',orgId,'investmentProjects'),
       snap => setProjects(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // distributions
     unsubs.push(onSnapshot(
       collection(db,'organizations',orgId,'profitDistributions'),
       snap => setDists(snap.docs.map(d=>({id:d.id,...d.data()})))
     ));
-    // members
-    getDocs(collection(db,'organizations',orgId,'members'))
-      .then(snap => {
-        setMembers(snap.docs.map(d=>({id:d.id,...d.data()})));
-        setLoading(false);
-      });
+
+    // members — one-time fetch + build map (same as account-book)
+    getDocs(collection(db,'organizations',orgId,'members')).then(async snap => {
+      const rawMem = snap.docs.map(d=>({id:d.id,...d.data()})).filter(m=>m.approved);
+      const enriched = await Promise.all(rawMem.map(async m => {
+        try {
+          const u = await getDoc(doc(db,'users',m.id));
+          return u.exists() ? {...u.data(),...m, id:m.id} : m;
+        } catch { return m; }
+      }));
+      setMembers(snap.docs.map(d=>({id:d.id,...d.data()})));
+      setMemberMap(Object.fromEntries(enriched.map(m=>[m.id,m])));
+      setLoading(false);
+    });
+
     return () => unsubs.forEach(u=>u());
   }, [orgId]);
 
-  // ── Derived numbers (mirrors account-book logic) ──────────────────────────
+  // ── Derived numbers ───────────────────────────────────────────────────────
   const verified = useMemo(() =>
     payments.filter(p => p.status==='verified' && p.isContribution!==false),
   [payments]);
@@ -201,7 +460,6 @@ export default function AdminDashboard() {
     members.filter(m => !m.approved),
   [members]);
 
-  // profit/loss from distributions
   const { totalProfit, totalLoss } = useMemo(() => {
     const distributed = dists.filter(d => d.status==='distributed');
     return {
@@ -212,19 +470,27 @@ export default function AdminDashboard() {
     };
   }, [dists]);
 
-  // net balance
   const net = totalCapital + totalProfit - totalExpenses - totalLoss;
 
-  // ── Fund budget bars ───────────────────────────────────────────────────────
+  // ── Full org entries (for Recent Transactions) ────────────────────────────
+  const allEntries = useMemo(() =>
+    buildOrgEntries(payments, expenses, fees, loans, memberMap),
+  [payments, expenses, fees, loans, memberMap]);
+
+  // Last 5 date groups (most recent first → reverse, take 5, then re-reverse for display)
+  const recentDateGroups = useMemo(() => {
+    const groups = buildDateGroups(allEntries);
+    return groups.slice(-5); // last 5 date groups (oldest→newest for running balance)
+  }, [allEntries]);
+
+  // ── Fund budgets ──────────────────────────────────────────────────────────
   const expAlloc  = computeFundAlloc('expenses',   totalCapital, settings) + totalFeeIncome;
   const invAlloc  = computeFundAlloc('investment', totalCapital, settings);
   const resAlloc  = computeFundAlloc('reserve',    totalCapital, settings);
   const benAlloc  = computeFundAlloc('benevolent', totalCapital, settings);
   const hasBudgets = expAlloc>0 || invAlloc>0 || resAlloc>0 || benAlloc>0;
 
-  // expenses used
   const expUsed = totalExpenses;
-  // investments used
   const invUsed = projects.reduce((s,p) => {
     const fi = p.fundSources ? Number(p.fundSources.investment)||0 : (p.fundSource!=='reserve'?(p.investedAmount||0):0);
     return s+fi;
@@ -242,49 +508,6 @@ export default function AdminDashboard() {
     { key:'reserve',    label:'Reserve',        icon:'🛡',  color:'#16a34a', alloc:resAlloc,  used:resUsed  },
     { key:'benevolent', label:'Benevolent',     icon:'🤝', color:'#7c3aed', alloc:benAlloc,  used:benUsed  },
   ].filter(f => f.alloc > 0);
-
-  // ── Recent 20 transactions (mirrors account-book buildOrgEntries) ─────────
-  const recentEntries = useMemo(() => {
-    const rows = [];
-    payments.filter(p=>p.status==='verified').slice(0,50).forEach(p => {
-      rows.push({
-        id:'pay-'+p.id, type:'installment', sortKey:tsSort(p.createdAt),
-        date:tsDate(p.createdAt),
-        desc: (p.paidMonths||[]).join(', ') || 'Installment',
-        sub: p.userId?.slice(0,8),
-        credit:((p.amount||0)-(p.gatewayFee||0)),
-        debit:0,
-      });
-    });
-    expenses.forEach(e => {
-      rows.push({
-        id:'exp-'+e.id, type:'expense', sortKey:tsSort(e.createdAt),
-        date: e.date || tsDate(e.createdAt),
-        desc: e.title || e.description || 'Expense',
-        sub: e.category||'',
-        credit:0, debit:e.amount||0,
-      });
-    });
-    fees.forEach(f => {
-      rows.push({
-        id:'fee-'+f.id, type:'entry_fee', sortKey:tsSort(f.createdAt),
-        date: f.paidAt || tsDate(f.createdAt),
-        desc:'Entry Fee', sub:'',
-        credit:f.amount||0, debit:0,
-      });
-    });
-    loans.filter(l=>l.status==='disbursed'||l.status==='repaid').forEach(l => {
-      if (l.disbursedAt && l.amount) {
-        rows.push({
-          id:'loand-'+l.id, type:'loan_disbursement', sortKey:tsSort(l.disbursedAt),
-          date:tsDate(l.disbursedAt),
-          desc:'Loan Disbursed', sub:l.purpose||'',
-          credit:0, debit:l.amount,
-        });
-      }
-    });
-    return rows.sort((a,b)=>b.sortKey-a.sortKey).slice(0,20);
-  }, [payments, expenses, fees, loans]);
 
   if (!isOrgAdmin) return null;
 
@@ -377,6 +600,72 @@ export default function AdminDashboard() {
         </div>
       )}
 
+      {/* ── Pending Installments ── */}
+      {pendingPayments.length > 0 && (
+        <>
+          <SL>Pending Installments</SL>
+          <div style={{ background:'var(--color-background-primary,#fff)',
+            border:'0.5px solid var(--color-border-tertiary,#e5e7eb)',
+            borderRadius:12, overflow:'hidden' }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto auto',
+              gap:'4px 12px', padding:'8px 14px', background:'#92400e' }}>
+              {['Member / Method','Amount','Months',''].map((h,i)=>(
+                <div key={i} style={{ fontSize:10, fontWeight:700, color:'#fef3c7',
+                  textTransform:'uppercase', letterSpacing:'0.05em',
+                  textAlign:i===0?'left':'right' }}>{h}</div>
+              ))}
+            </div>
+            {pendingPayments.slice(0, 8).map((p, i) => {
+              const m = memberMap[p.userId] || {};
+              const name = shortName(m.nameEnglish || m.name || '—');
+              const months = (p.paidMonths||[]).join(', ') || '—';
+              return (
+                <div key={p.id} style={{
+                  display:'grid', gridTemplateColumns:'1fr auto auto auto',
+                  gap:'4px 12px', padding:'9px 14px', alignItems:'center',
+                  background:i%2===0?'var(--color-background-primary,#fff)':'#fffbeb',
+                  borderBottom:'0.5px solid #fde68a',
+                }}>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12, fontWeight:600, color:'#0f172a',
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {name}
+                      {m.idNo && <span style={{ fontWeight:400, color:'#94a3b8', marginLeft:5 }}>#{m.idNo}</span>}
+                    </div>
+                    <div style={{ fontSize:10, color:'#94a3b8', marginTop:1 }}>
+                      {p.method}{p.accountLabel ? ` · ${p.accountLabel}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:'right', fontSize:12, fontWeight:700, color:'#92400e' }}>
+                    {fmt(p.amount)}
+                  </div>
+                  <div style={{ textAlign:'right', fontSize:11, color:'#64748b', maxWidth:120,
+                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    {months}
+                  </div>
+                  <div style={{ textAlign:'right' }}>
+                    <span style={{ fontSize:10, fontWeight:700, padding:'2px 7px', borderRadius:99,
+                      background:'#fef3c7', color:'#92400e' }}>
+                      pending
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ padding:'10px 14px', display:'flex', justifyContent:'space-between',
+              alignItems:'center', borderTop:'0.5px solid #fde68a', background:'#fffbeb' }}>
+              <span style={{ fontSize:12, color:'#92400e', fontWeight:500 }}>
+                {pendingPayments.length > 8 ? `+${pendingPayments.length - 8} more pending` : `${pendingPayments.length} total pending`}
+              </span>
+              <Link href="/admin/verify" style={{ fontSize:12, color:'#92400e', fontWeight:700, textDecoration:'none' }}>
+                Verify all →
+              </Link>
+            </div>
+          </div>
+        </>
+      )}
+
+
       {/* ── Expenses Fund Budget ── */}
       {expAlloc > 0 && (() => {
         const pct = expAlloc > 0 ? Math.min(100, Math.round(expUsed/expAlloc*100)) : 0;
@@ -425,9 +714,7 @@ export default function AdminDashboard() {
                   borderRadius:12, padding:'12px 14px' }}>
                   <div style={{ display:'flex', justifyContent:'space-between', marginBottom:4 }}>
                     <span style={{ fontSize:12, fontWeight:500 }}>{f.icon} {f.label}</span>
-                    <span style={{ fontSize:12, fontWeight:600, color:over?'#dc2626':f.color }}>
-                      {pct}%
-                    </span>
+                    <span style={{ fontSize:12, fontWeight:600, color:over?'#dc2626':f.color }}>{pct}%</span>
                   </div>
                   <ProgressBar pct={pct} color={over?'#dc2626':f.color}/>
                   <div style={{ display:'flex', justifyContent:'space-between', marginTop:5, fontSize:11, color:'#94a3b8' }}>
@@ -444,51 +731,33 @@ export default function AdminDashboard() {
         </>
       )}
 
-      {/* ── Recent transactions ── */}
+
+      {/* ── Recent Transactions (last 5 date groups, same as account-book) ── */}
       <SL>Recent Transactions</SL>
       <div style={{ background:'var(--color-background-primary,#fff)',
-        border:'0.5px solid var(--color-border-tertiary,#e5e7eb)', borderRadius:12, overflow:'hidden' }}>
-        {/* header */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr auto auto auto',
-          gap:'4px 12px', padding:'8px 14px', background:'#0f172a' }}>
-          {['Date / Type','Credit (+)','Debit (−)',''].map((h,i)=>(
-            <div key={i} style={{ fontSize:10, fontWeight:700, color:'#94a3b8',
-              textTransform:'uppercase', letterSpacing:'0.05em',
-              textAlign:i===0?'left':'right' }}>{h}</div>
+        border:'0.5px solid var(--color-border-tertiary,#e5e7eb)',
+        borderRadius:12, overflow:'hidden' }}>
+        {/* column header */}
+        <div style={{
+          display:'grid',
+          gridTemplateColumns:'1fr minmax(60px,auto) minmax(60px,auto) minmax(60px,auto) minmax(64px,auto)',
+          padding:'7px 10px', background:'#0f172a', gap:'4px 8px',
+        }}>
+          {['Date / Type','Capital (+)','Expenses (−)','Fees (+)','Balance'].map((h,hi)=>(
+            <div key={h} style={{ fontSize:10, fontWeight:700, color:'#94a3b8',
+              textTransform:'uppercase', letterSpacing:'0.05em', textAlign:hi===0?'left':'right' }}>
+              {h}
+            </div>
           ))}
         </div>
+        <LedgerLegend/>
         {loading ? (
           <div style={{ padding:'28px', textAlign:'center', color:'#94a3b8', fontSize:13 }}>Loading…</div>
-        ) : recentEntries.length===0 ? (
+        ) : recentDateGroups.length === 0 ? (
           <div style={{ padding:'28px', textAlign:'center', color:'#94a3b8', fontSize:13 }}>No transactions yet.</div>
         ) : (
-          recentEntries.map((e,i) => (
-            <div key={e.id} style={{
-              display:'grid', gridTemplateColumns:'1fr auto auto auto',
-              gap:'4px 12px', padding:'9px 14px', alignItems:'center',
-              background:i%2===0?'var(--color-background-primary,#fff)':'var(--color-background-secondary,#fafafa)',
-              borderBottom:'0.5px solid var(--color-border-tertiary,#e5e7eb)',
-            }}>
-              <div style={{ display:'flex', alignItems:'center', gap:6, minWidth:0 }}>
-                <TypeTag type={e.type}/>
-                <div style={{ minWidth:0 }}>
-                  <div style={{ fontSize:12, fontWeight:500, color:'#0f172a',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                    {e.desc}
-                  </div>
-                  <div style={{ fontSize:10, color:'#94a3b8' }}>{e.date}</div>
-                </div>
-              </div>
-              <div style={{ textAlign:'right', fontSize:12, fontWeight:600,
-                color:e.credit>0?'#15803d':'#cbd5e1' }}>
-                {e.credit>0 ? `+${fmt(e.credit)}` : '—'}
-              </div>
-              <div style={{ textAlign:'right', fontSize:12, fontWeight:600,
-                color:e.debit>0?'#dc2626':'#cbd5e1' }}>
-                {e.debit>0 ? `−${fmt(e.debit)}` : '—'}
-              </div>
-              <div/>
-            </div>
+          recentDateGroups.map(grp => (
+            <DateGroupRow key={grp.dateLabel} dateLabel={grp.dateLabel} entries={grp.entries} isMobile={isMobile}/>
           ))
         )}
         <div style={{ padding:'10px 14px', display:'flex', justifyContent:'flex-end',
