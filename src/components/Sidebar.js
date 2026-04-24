@@ -1,6 +1,6 @@
 // src/components/Sidebar.js
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -320,18 +320,6 @@ export default function Sidebar() {
   const [showOrgPicker,    setShowOrgPicker]    = useState(false);
   const [showMemberPicker, setShowMemberPicker] = useState(false);
 
-  // ── Nav style — persisted to localStorage ────────────────────────────────
-  const [navStyle, setNavStyle] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(NAV_STYLE_KEY) || 'dots';
-    }
-    return 'dots';
-  });
-  const handleNavStyle = (s) => {
-    setNavStyle(s);
-    if (typeof window !== 'undefined') localStorage.setItem(NAV_STYLE_KEY, s);
-  };
-
   const pathname = usePathname();
   const {
     user, userData, orgData, membership,
@@ -340,6 +328,21 @@ export default function Sidebar() {
     switchToOrgMode, switchToSuperAdminMode,
     startViewingAsMember, stopViewingAsMember,
   } = useAuth();
+
+  // ── Nav style — only available if userData.navStyleSwitcher === true ────
+  const canSwitchNav = useMemo(() => !!userData?.navStyleSwitcher, [userData]);
+  const [navStyle, setNavStyle] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(NAV_STYLE_KEY) || 'accent';
+    }
+    return 'accent';
+  });
+  const handleNavStyle = (s) => {
+    setNavStyle(s);
+    if (typeof window !== 'undefined') localStorage.setItem(NAV_STYLE_KEY, s);
+  };
+  // Force lines for users without switcher access
+  const ns = canSwitchNav ? navStyle : 'accent';
 
   const isPublic     = PUBLIC.some(r => pathname === r || pathname.startsWith(r + '/'));
   const inOrgMode    = isSuperAdmin && accessMode === 'org';
@@ -383,8 +386,6 @@ export default function Sidebar() {
   const chipColor  = inMemberMode ? '#7c3aed' : inOrgMode ? '#7c3aed' : '#2563eb';
 
   // ── Shared section definitions ─────────────────────────────────────────────
-  const ns = navStyle; // shorthand
-
   const adminNav = (
     <>
       <NavSection navStyle={ns} label="My space" pathname={pathname} onClick={closeDrawer} items={[
@@ -489,8 +490,8 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Nav style switcher — shown for org/member views */}
-      {(!isSuperAdmin || inOrgMode || inMemberMode) && (
+      {/* Nav style switcher — only for users with navStyleSwitcher: true */}
+      {canSwitchNav && (
         <NavStyleSwitcher value={navStyle} onChange={handleNavStyle} />
       )}
 
@@ -500,7 +501,6 @@ export default function Sidebar() {
         {/* ── SUPERADMIN PLATFORM MODE ──────────────────────────────── */}
         {isSuperAdmin && !inOrgMode && !inMemberMode && (
           <div style={{ padding: '4px 0' }}>
-            <NavStyleSwitcher value={navStyle} onChange={handleNavStyle} />
             <NavSection navStyle={ns} label="Platform" pathname={pathname} onClick={closeDrawer} items={[
               { label: 'Overview',          path: '/superadmin',          icon: PATHS.grid     },
               { label: 'Organisations',     path: '/superadmin/orgs',     icon: PATHS.orgs     },
