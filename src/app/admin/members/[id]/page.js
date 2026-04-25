@@ -1351,32 +1351,44 @@ export default function AdminMemberProfile() {
   setSaving(false);
 };
 
-  const photoRef = useRef(null);
-  const [photoUploading, setPhotoUploading] = useState(false);
 
-  const handleAdminPhotoUpload = async (file) => {
-    if (!file) return;
-    setPhotoUploading(true);
-    try {
-      const fd = new FormData();
-      fd.append('file',    file);
-      fd.append('orgId',   orgId  || '');
-      fd.append('orgName', orgData?.name||'');
-      fd.append('subfolder','members-papers');
-      if (member.memberDriveFolderId) fd.append('memberFolderId',member.memberDriveFolderId);
-      else if (orgData?.driveFolderId) fd.append('driveFolderId',orgData.driveFolderId);
-      const res  = await fetch('/api/upload',{method:'POST',body:fd});
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error||'Upload failed');
-      await updateDoc(doc(db,'organizations',orgId,'members',memberId),
-        {photoURL:data.viewUrl,...(data.newMemberFolderId?{memberDriveFolderId:data.newMemberFolderId}:{})});
-      await updateDoc(doc(db,'users',memberId),{photoURL:data.viewUrl});
-      setMember(prev=>({...prev,photoURL:data.viewUrl}));
-      setForm(prev=>({...prev,photoURL:data.viewUrl}));
-      showToast('✅ Photo updated!');
-    } catch(e) { showToast(e.message,true); }
-    setPhotoUploading(false);
-  };
+const photoRef        = useRef(null);
+const nomineePhotoRef = useRef(null);
+const [photoUploading,         setPhotoUploading]         = useState(false);
+const [nomineePhotoUploading,  setNomineePhotoUploading]  = useState(false);
+
+
+// ── 2. Replace handleAdminPhotoUpload with two handlers ──────────────────────
+
+const handleAdminPhotoUpload = async (file) => {
+  if (!file) return;
+  if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
+  setPhotoUploading(true);
+  try {
+    const base64 = await toBase64(file);
+    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), { photoURL: base64 });
+    await updateDoc(doc(db, 'users', memberId), { photoURL: base64 });
+    setMember(prev => ({ ...prev, photoURL: base64 }));
+    setForm(prev   => ({ ...prev, photoURL: base64 }));
+    showToast('✅ Photo updated!');
+  } catch (e) { showToast(e.message, true); }
+  setPhotoUploading(false);
+};
+
+const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLER
+  if (!file) return;
+  if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
+  setNomineePhotoUploading(true);
+  try {
+    const base64 = await toBase64(file);
+    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), { nomineePhotoURL: base64 });
+    setMember(prev => ({ ...prev, nomineePhotoURL: base64 }));
+    setForm(prev   => ({ ...prev, nomineePhotoURL: base64 }));
+    showToast('✅ Nominee photo updated!');
+  } catch (e) { showToast(e.message, true); }
+  setNomineePhotoUploading(false);
+};
+
 
   if (!isOrgAdmin) return null;
   if (loading) return <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>;
@@ -1573,124 +1585,111 @@ export default function AdminMemberProfile() {
       )}
 
       {/* ── Photo strip + Capital cards ──────────────────────────────────── */}
-      <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
-        padding:'16px 20px',marginBottom:14,
-        display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap'}}>
-        <div style={{position:'relative',flexShrink:0}}>
-          <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
-            border:'3px solid #bfdbfe',background:'#dbeafe',
-            display:'flex',alignItems:'center',justifyContent:'center',
-            fontSize:28,fontWeight:700,color:'#1d4ed8',cursor:'pointer'}}
-            onClick={()=>photoRef.current?.click()}>
-            {member.photoURL
-              ? <img src={member.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
-              : (member.nameEnglish?.[0]||'?')}
-          </div>
-          <button onClick={()=>photoRef.current?.click()} disabled={photoUploading}
-            style={{position:'absolute',bottom:0,right:0,width:24,height:24,borderRadius:'50%',
-              background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
-              display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff'}}>
-            {photoUploading?'…':'📷'}
-          </button>
-          <input ref={photoRef} type="file" accept="image/*" style={{display:'none'}}
-            onChange={e=>handleAdminPhotoUpload(e.target.files?.[0])}/>
-        </div>
-        {member.nomineePhotoURL && (
-          <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
-            <div style={{width:56,height:56,borderRadius:8,overflow:'hidden',
-              border:'2px solid #e2e8f0',background:'#f1f5f9'}}>
-              <img src={member.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="Nominee"/>
-            </div>
-            <span style={{fontSize:9,color:'#94a3b8',fontWeight:600}}>NOMINEE</span>
-          </div>
-        )}
-        <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
-          {/* ── Member ID — neutral ── */}
-          {[
-            {label:'Member ID',   value:member.idNo,                      bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-            {label:'Blood Group', value:member.bloodGroup,                 bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-            {label:'Status',
-              value:(member.memberStatus==='archived'||memberStatus==='archived')?'📦 Archived'
-                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'⛔ Terminated'
-                   :member.approved?'✅ Active':'⏳ Pending',
-              bg: (member.memberStatus==='archived'||memberStatus==='archived')?'#fffbeb'
-                 :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fef2f2'
-                 :member.approved?'#f0fdf4':'#fffbeb',
-              border:(member.memberStatus==='archived'||memberStatus==='archived')?'#fde68a'
-                    :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fca5a5'
-                    :member.approved?'#86efac':'#fde68a',
-              color:(member.memberStatus==='archived'||memberStatus==='archived')?'#92400e'
-                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#dc2626'
-                   :member.approved?'#15803d':'#92400e'},
-            {label:'Profile',     value:member.profileSubmitted?'Submitted':'Not submitted',
-              bg:member.profileSubmitted?'#f0fdf4':'#f8fafc',
-              border:member.profileSubmitted?'#86efac':'#e2e8f0',
-              color:member.profileSubmitted?'#15803d':'#64748b'},
-            {label:'Last Updated',value:fmtTS(member.profileUpdatedAt),   bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-          ].map(({label,value,bg,border,color})=>(
-            <div key={label} style={{background:bg,borderRadius:7,padding:'8px 10px',
-              border:`1px solid ${border}`}}>
-              <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
-                textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{label}</div>
-              <div style={{fontSize:12,fontWeight:600,color}}>{value||'—'}</div>
-            </div>
-          ))}
+    <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
+      padding:'16px 20px',marginBottom:14,
+      display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap'}}>
 
-          {/* ── Capital card — dynamic color ── */}
-          <div style={{background:capColor.bg,borderRadius:7,padding:'8px 10px',
-            border:`1px solid ${capColor.border}`}}>
+      {/* ── Member photo ── */}
+      <div style={{position:'relative',flexShrink:0}}>
+        <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
+          border:'3px solid #bfdbfe',background:'#dbeafe',
+          display:'flex',alignItems:'center',justifyContent:'center',
+          fontSize:28,fontWeight:700,color:'#1d4ed8',cursor:'pointer'}}
+          onClick={()=>photoRef.current?.click()}>
+          {member.photoURL
+            ? <img src={member.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+            : (member.nameEnglish?.[0]||'?')}
+        </div>
+        <button onClick={()=>photoRef.current?.click()} disabled={photoUploading}
+          style={{position:'absolute',bottom:0,right:0,width:24,height:24,borderRadius:'50%',
+            background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
+            display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff'}}>
+          {photoUploading?'…':'📷'}
+        </button>
+        <input ref={photoRef} type="file" accept="image/*" style={{display:'none'}}
+          onChange={e=>handleAdminPhotoUpload(e.target.files?.[0])}/>
+        <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>MEMBER</div>
+      </div>
+
+      {/* ── Nominee photo ── */}
+      <div style={{position:'relative',flexShrink:0}}>
+        <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
+          border:'2px solid #e2e8f0',background:'#f1f5f9',
+          display:'flex',alignItems:'center',justifyContent:'center',
+          fontSize:24,cursor:'pointer'}}
+          onClick={()=>nomineePhotoRef.current?.click()}>
+          {member.nomineePhotoURL
+            ? <img src={member.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="Nominee"/>
+            : '👤'}
+        </div>
+        <button onClick={()=>nomineePhotoRef.current?.click()} disabled={nomineePhotoUploading}
+          style={{position:'absolute',bottom:0,right:0,width:22,height:22,borderRadius:'50%',
+            background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
+            display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff'}}>
+          {nomineePhotoUploading?'…':'📷'}
+        </button>
+        <input ref={nomineePhotoRef} type="file" accept="image/*" style={{display:'none'}}
+          onChange={e=>handleAdminNomineePhotoUpload(e.target.files?.[0])}/>
+        <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>NOMINEE</div>
+      </div>
+
+      {/* ── Info cards ── */}
+      <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
+        {[
+          {label:'Member ID',   value:member.idNo,                      bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+          {label:'Blood Group', value:member.bloodGroup,                 bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+          {label:'Status',
+            value:(member.memberStatus==='archived'||memberStatus==='archived')?'📦 Archived'
+                :(member.memberStatus==='terminated'||memberStatus==='terminated')?'⛔ Terminated'
+                :member.approved?'✅ Active':'⏳ Pending',
+            bg:(member.memberStatus==='archived'||memberStatus==='archived')?'#fffbeb'
+              :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fef2f2'
+              :member.approved?'#f0fdf4':'#fffbeb',
+            border:(member.memberStatus==='archived'||memberStatus==='archived')?'#fde68a'
+                  :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fca5a5'
+                  :member.approved?'#86efac':'#fde68a',
+            color:(member.memberStatus==='archived'||memberStatus==='archived')?'#92400e'
+                :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#dc2626'
+                :member.approved?'#15803d':'#92400e'},
+          {label:'Profile',     value:member.profileSubmitted?'Submitted':'Not submitted',
+            bg:member.profileSubmitted?'#f0fdf4':'#f8fafc',
+            border:member.profileSubmitted?'#86efac':'#e2e8f0',
+            color:member.profileSubmitted?'#15803d':'#64748b'},
+          {label:'Last Updated',value:fmtTS(member.profileUpdatedAt),   bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+        ].map(({label,value,bg,border,color})=>(
+          <div key={label} style={{background:bg,borderRadius:7,padding:'8px 10px',
+            border:`1px solid ${border}`}}>
             <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
-              textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>Capital</div>
-            <div style={{fontSize:14,fontWeight:800,color:capColor.accent||capColor.label}}>
-              {capital ? fmt(capital.total) : '…'}
-            </div>
-            {capital && capital.loanOutstanding>0 && (
-              <div style={{fontSize:9,color:capColor.label,marginTop:2,fontWeight:600}}>
-                Loan: {fmt(capital.loanOutstanding)}
-              </div>
-            )}
-            {capital && capital.missedMonths>0 && (
-              <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
-                {capital.missedMonths} missed Installments
-              </div>
-            )}
+              textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{label}</div>
+            <div style={{fontSize:12,fontWeight:600,color}}>{value||'—'}</div>
           </div>
+        ))}
+
+        {/* Capital card */}
+        <div style={{background:capColor.bg,borderRadius:7,padding:'8px 10px',
+          border:`1px solid ${capColor.border}`}}>
+          <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
+            textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>Capital</div>
+          <div style={{fontSize:14,fontWeight:800,color:capColor.accent||capColor.label}}>
+            {capital ? fmt(capital.total) : '…'}
+          </div>
+          {capital && capital.loanOutstanding>0 && (
+            <div style={{fontSize:9,color:capColor.label,marginTop:2,fontWeight:600}}>
+              Loan: {fmt(capital.loanOutstanding)}
+            </div>
+          )}
+          {capital && capital.missedMonths>0 && (
+            <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
+              {capital.missedMonths} missed Installments
+            </div>
+          )}
         </div>
       </div>
+    </div>
 
       {editMode ? (
         <>
           <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',padding:'16px 20px',marginBottom:12}}>
-            <div style={{fontWeight:700,fontSize:13,color:'#0f172a',marginBottom:12}}>📷 Photos</div>
-            <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
-                <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
-                  border:'3px solid #bfdbfe',background:'#dbeafe',
-                  display:'flex',alignItems:'center',justifyContent:'center',
-                  fontSize:28,fontWeight:700,color:'#1d4ed8'}}>
-                  {form.photoURL
-                    ? <img src={form.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
-                    : (form.nameEnglish?.[0]||'?')}
-                </div>
-                <AdminPhotoUpload label="Member Photo" currentUrl={form.photoURL}
-                  orgId={orgId} orgData={orgData} memberId={memberId}
-                  memberFolderId={form.memberDriveFolderId}
-                  onUploaded={url=>set('photoURL',url)}/>
-              </div>
-              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
-                <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
-                  border:'2px solid #e2e8f0',background:'#f1f5f9',
-                  display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>
-                  {form.nomineePhotoURL
-                    ? <img src={form.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
-                    : '👤'}
-                </div>
-                <AdminPhotoUpload label="Nominee Photo" currentUrl={form.nomineePhotoURL}
-                  orgId={orgId} orgData={orgData} memberId={memberId}
-                  memberFolderId={form.memberDriveFolderId}
-                  onUploaded={url=>set('nomineePhotoURL',url)}/>
-              </div>
-            </div>
           </div>
           <EditSection title="👤 Personal"           fields={EDIT_PERSONAL} form={form} set={set}/>
           <EditSection title="📍 Address"            fields={EDIT_ADDR}     form={form} set={set}/>
