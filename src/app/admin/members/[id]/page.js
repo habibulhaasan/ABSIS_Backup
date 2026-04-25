@@ -190,8 +190,6 @@ function downloadCSV(rows, filename) {
 
 // ── Print CSS (keep for window.print fallback only) ───────────────────────────
 
-// ── Print CSS — proper @page setup so browser print dialog shows page options ─
-// ── Print CSS — proper @page setup so browser print dialog shows page options ─
 const PRINT_CSS = `
 @page {
   size: A4 portrait;
@@ -515,7 +513,10 @@ function PrintModal({ member, orgData, capital, onClose }) {
   const handleDownloadPDF = async () => {
     setGenerating(true);
     try {
-      await generatePDF(`member-${member.idNo || 'profile'}.pdf`);
+      const safeName = (member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_');
+      const safeId   = member.idNo || 'profile';
+      await generatePDF(`${safeId}_${safeName}.pdf`);
+
     } catch (err) {
       alert('PDF generation failed: ' + err.message);
     }
