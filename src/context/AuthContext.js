@@ -174,16 +174,6 @@ export const AuthProvider = ({ children }) => {
                 if (!isSA && !mData.approved && !isPublic && pathname !== '/pending-approval') {
                   router.push('/pending-approval');
                 }
-
-                // Redirect approved org admins away from /dashboard or / to /admin
-                if (
-                  !isSA &&
-                  mData.approved &&
-                  mData.role === 'admin' &&
-                  (pathname === '/dashboard' || pathname === '/')
-                ) {
-                  router.push('/admin');
-                }
               } else {
                 setMembership(null);
               }

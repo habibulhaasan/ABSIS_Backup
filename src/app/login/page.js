@@ -1,7 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { auth } from '@/lib/firebase';
+import { auth, db } from '@/lib/firebase';
 import { signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, getDoc } from 'firebase/firestore';
 import Link from 'next/link';
 
 export default function Login() {
@@ -13,12 +14,41 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     e.preventDefault();
-    setLoading(true); setError('');
+    setLoading(true);
+    setError('');
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const { user } = await signInWithEmailAndPassword(auth, email, password);
+
+      // Fetch user doc to determine role
+      const userSnap = await getDoc(doc(db, 'users', user.uid));
+      const userData = userSnap.exists() ? userSnap.data() : null;
+
+      if (userData?.role === 'superadmin') {
+        window.location.href = '/superadmin';
+        return;
+      }
+
+      // For org members/admins — check their membership role in activeOrg
+      if (userData?.activeOrgId) {
+        const memberSnap = await getDoc(
+          doc(db, 'organizations', userData.activeOrgId, 'members', user.uid)
+        );
+        const membership = memberSnap.exists() ? memberSnap.data() : null;
+
+        if (membership?.role === 'admin' && membership?.approved) {
+          window.location.href = '/admin';
+          return;
+        }
+      }
+
+      // Default: regular member (or no org yet)
       window.location.href = '/dashboard';
-    } catch { setError('Invalid email or password.'); }
-    finally { setLoading(false); }
+    } catch (err) {
+      // Keep firebase auth errors opaque for security
+      setError('Invalid email or password.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -69,4 +99,3 @@ export default function Login() {
     </div>
   );
 }
-

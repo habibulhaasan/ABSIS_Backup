@@ -13,17 +13,14 @@ function tsDate(ts) {
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
 
-// Returns "YYYY-MM" for the current month
 function currentMonthKey() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
 }
-// e.g. "May 2025"
 function currentMonthLabel() {
   return new Date().toLocaleDateString('en-GB',{month:'long',year:'numeric'});
 }
 
-// ── Shared fund computation ───────────────────────────────────────────────────
 function getFundAlloc(key, totalCapital, settings) {
   const fb = settings?.fundBudgets?.[key];
   if (!fb?.value) return 0;
@@ -60,7 +57,7 @@ function FundBar({ label, icon, alloc, used, color }) {
 }
 
 export default function Dashboard() {
-  const { user, userData, orgData, isSuperAdmin, impersonateMemberId } = useAuth();
+  const { user, userData, orgData, isOrgAdmin, isSuperAdmin, impersonateMemberId } = useAuth();
   const viewUid = (isSuperAdmin && impersonateMemberId) ? impersonateMemberId : user?.uid;
   const orgId = userData?.activeOrgId;
 
@@ -107,7 +104,7 @@ export default function Dashboard() {
       const activeLoans= myLoans.filter(l=>l.status==='disbursed');
       const outstanding= activeLoans.reduce((s,l)=>s+(l.outstandingBalance||0),0);
 
-      // ── Next loan repayment (earliest upcoming schedule entry) ────────────
+      // Next loan repayment
       let nextRepayment = null;
       const today = new Date(); today.setHours(0,0,0,0);
       activeLoans.forEach(loan => {
@@ -121,19 +118,17 @@ export default function Dashboard() {
         });
       });
 
-      // ── Current-month installment paid? ──────────────────────────────────
+      // Current-month installment paid?
       const curKey = currentMonthKey();
       const paidThisMonth = myPayments.some(p =>
         p.status !== 'rejected' &&
         (p.paidMonths||[]).some(m => {
           if (typeof m === 'string') return m === curKey;
-          // handle timestamp-style paidMonths
           const d = m?.seconds ? new Date(m.seconds*1000) : new Date(m);
           return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}` === curKey;
         })
       );
 
-      // Fund usage
       const usedExpenses   = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
       const projs = projSnap.docs.map(d=>d.data());
       const usedInvestment = projs.reduce((s,p) => {
@@ -188,6 +183,28 @@ export default function Dashboard() {
 
   return (
     <div className="page-wrap animate-fade">
+
+      {/* ── Admin banner — only shown to org admins on this page ── */}
+      {isOrgAdmin && (
+        <Link href="/admin" style={{ textDecoration: 'none' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '9px 14px', borderRadius: 9, marginBottom: 16,
+            background: '#f5f3ff', border: '1px solid #ddd6fe',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 14 }}>🛠</span>
+              <span style={{ fontSize: 12, color: '#6d28d9', fontWeight: 600 }}>
+                You're viewing your personal member dashboard
+              </span>
+            </div>
+            <span style={{ fontSize: 12, fontWeight: 700, color: '#7c3aed', flexShrink: 0 }}>
+              Admin overview →
+            </span>
+          </div>
+        </Link>
+      )}
+
       <div className="page-header">
         <div className="page-title">Welcome, {name.split(' ')[0]} 👋</div>
         <div className="page-subtitle">
@@ -289,7 +306,6 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Verified payments count — always useful at a glance */}
             {data.myVerified > 0 && (
               <div style={{background:'#f8fafc',borderRadius:12,padding:'16px 18px',border:'1px solid #e2e8f0'}}>
                 <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:6}}>Payments Made</div>
