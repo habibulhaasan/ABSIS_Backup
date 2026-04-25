@@ -100,9 +100,6 @@ async function deleteLegalFileFromGAS(fileId) {
 }
 
 // ── PDF generator ─────────────────────────────────────────────────────────────
-// ── Page-break aware PDF generator ───────────────────────────────────────────
-// Instead of slicing canvas blindly, we capture PAGE 1 and PAGE 2 elements
-// separately and place each on its own PDF page. No mid-content cuts.
 async function generatePDF(filename) {
   const page1El = document.getElementById('mpp-page1');
   const page2El = document.getElementById('mpp-page2');
@@ -194,6 +191,7 @@ function downloadCSV(rows, filename) {
 // ── Print CSS (keep for window.print fallback only) ───────────────────────────
 
 // ── Print CSS — proper @page setup so browser print dialog shows page options ─
+// ── Print CSS — proper @page setup so browser print dialog shows page options ─
 const PRINT_CSS = `
 @page {
   size: A4 portrait;
@@ -202,29 +200,53 @@ const PRINT_CSS = `
 @media print {
   html, body {
     width: 210mm;
-    height: 297mm;
     margin: 0 !important;
     padding: 0 !important;
   }
-  body * { visibility: hidden !important; }
-  #print-root, #print-root * { visibility: visible !important; }
+
+  /* Hide everything */
+  body > * { display: none !important; }
+
+  /* Show only the portal root that contains our print content */
+  body > div:last-of-type { display: block !important; }
+
+  /* Hide all modal chrome — overlay, toolbar, preview cards */
+  .modal-overlay,
+  .modal-shell,
+  .no-print,
+  .preview-card { display: none !important; }
+
+  /* Show only the hidden print root */
   #print-root {
-    position: fixed !important;
-    top: 0; left: 0;
-    width: 100%;
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
     font-family: 'Times New Roman', serif;
     font-size: 10.5pt;
     color: #000;
   }
-  .no-print { display: none !important; }
 
-  /* Force page 2 content onto a new page */
+  /* Each page div fills one A4 page */
+  #print-page1,
+  #print-page2 {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  /* Hard page break before page 2 */
   #print-page2 {
     page-break-before: always;
     break-before: page;
   }
 
-  /* Prevent tables / sections from splitting mid-row */
+  /* Kill fixed widths set for screen preview — let it reflow to 100% */
+  #print-page1 > div,
+  #print-page2 > div {
+    width: 100% !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
   table { page-break-inside: auto; }
   tr    { page-break-inside: avoid; break-inside: avoid; }
   .print-section { page-break-inside: avoid; break-inside: avoid; }
@@ -239,11 +261,15 @@ function Letterhead({ org }) {
       display: 'flex', alignItems: 'flex-start', gap: 16 }}>
       {org.logoURL && (
         <img src={org.logoURL} alt="" crossOrigin="anonymous"
-          style={{ width: 72, height: 72, objectFit: 'contain', flexShrink: 0 }} />
+          style={{ width: 72, height: 72, objectFit: 'contain',mixBlendMode: 'multiply',filter: 'contrast(1.1)', flexShrink: 0 }} />
       )}
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 22, fontWeight: 900, color: '#000', lineHeight: 1.2 }}>
-          {org.name || 'Organization'}
+        <div style={{fontSize:20,fontWeight:900,color:'#000',
+          fontFamily:"'SolaimanLipi','Arial',sans-serif",lineHeight:1.2}}>
+          {org.name_bn||'Organization'}<br/>
+          <div style={{fontSize:12,color:'#64748b'}}>
+            {org.name_en||'Organization'}
+          </div>
         </div>
         {org.slogan && (
           <div style={{ fontSize: 11, color: '#444', fontStyle: 'italic', marginTop: 2, marginBottom: 4 }}>
@@ -479,6 +505,7 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
 
 
 // ── PrintModal ────────────────────────────────────────────────────────────────
+
 function PrintModal({ member, orgData, capital, onClose }) {
   const org = orgData || {};
   const [generating, setGenerating] = useState(false);
@@ -498,25 +525,25 @@ function PrintModal({ member, orgData, capital, onClose }) {
   const sharedProps = { member, org, capital, fmtDate, fmtTS, fmt };
 
   return createPortal(
-    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.65)',
+    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.65)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
 
-      {/*
-        Print root: only #print-root is visible during browser print.
-        It contains both page divs; #print-page2 gets page-break-before via CSS.
-      */}
       <style>{PRINT_CSS}</style>
-      <div id="print-root" style={{ display: 'none' }}>
-        <div id="print-page1">
-          <DocPage1 {...sharedProps} />
-        </div>
-        <div id="print-page2">
-          <DocPage2 {...sharedProps} />
-        </div>
+
+      {/*
+        Print root sits OUTSIDE the modal shell so print CSS can target it cleanly.
+        Visually hidden on screen via position+opacity trick (display:none blocks print).
+      */}
+      <div id="print-root" style={{
+        position: 'absolute', left: '-9999px', top: 0,
+        width: 780, overflow: 'hidden', pointerEvents: 'none', opacity: 0,
+      }}>
+        <div id="print-page1"><DocPage1 {...sharedProps} /></div>
+        <div id="print-page2"><DocPage2 {...sharedProps} /></div>
       </div>
 
       {/* Modal shell */}
-      <div style={{ background: '#fff', borderRadius: 12, width: 'min(860px,100%)',
+      <div className="modal-shell" style={{ background: '#fff', borderRadius: 12, width: 'min(860px,100%)',
         height: 'calc(100dvh - 32px)', display: 'flex', flexDirection: 'column',
         overflow: 'hidden', boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
 
