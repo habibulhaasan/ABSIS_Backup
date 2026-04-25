@@ -42,6 +42,21 @@ export async function GET(request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  // ── Temporary debug — remove after fixing ──
+  if (searchParams.get('debug') === '1') {
+    const pk = process.env.FIREBASE_PRIVATE_KEY || '';
+    return NextResponse.json({
+      projectId:        process.env.FIREBASE_PROJECT_ID,
+      clientEmail:      process.env.FIREBASE_CLIENT_EMAIL,
+      privateKeyLength: pk.length,
+      privateKeyStart:  pk.slice(0, 40),
+      privateKeyEnd:    pk.slice(-30),
+      hasBeginMarker:   pk.includes('BEGIN PRIVATE KEY'),
+      hasNewlines:      pk.includes('\n'),
+      hasLiteralSlashN: pk.includes('\\n'),
+    });
+  }
+
   try {
     const db = getAdminDb();
 
