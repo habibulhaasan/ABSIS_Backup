@@ -394,19 +394,13 @@ export default function Sidebar() {
         { label: 'My ledger',       path: '/ledger',      icon: PATHS.ledger        },
         { label: 'My profile',      path: '/profile',     icon: PATHS.profile       },
         { label: 'Notices',         path: '/memoranda',   icon: PATHS.memo          },
-        orgF.qardHasana    && { label: 'My loans',  path: '/loans',  icon: PATHS.loan  },
-        orgF.assetRegistry && { label: 'Assets',    path: '/assets', icon: PATHS.asset },
       ]} />
 
       <NavSection navStyle={ns} label="Finance" pathname={pathname} onClick={closeDrawer} items={[
         { label: 'Verify payments', path: '/admin/verify',           icon: PATHS.verify   },
-        { label: 'Income',          path: '/admin/income',           icon: PATHS.income   },
         { label: 'Expenses',        path: '/admin/expenses',         icon: PATHS.expenses },
         { label: 'Penalties',       path: '/admin/penalties',        icon: PATHS.penalty  },
         orgF.entryFeeTracking && { label: 'Entry fees',     path: '/admin/entry-fees',  icon: PATHS.entryFee },
-        orgF.assetRegistry    && { label: 'Asset registry', path: '/admin/assets',      icon: PATHS.asset    },
-        orgF.qardHasana       && { label: 'Loans',          path: '/admin/loans',       icon: PATHS.loan     },
-        orgF.cashierRole      && { label: 'Fund transfers', path: '/cashier/transfer',  icon: PATHS.transfer },
       ]} />
 
       <NavSection navStyle={ns} label="Members" pathname={pathname} onClick={closeDrawer} items={[
@@ -428,7 +422,6 @@ export default function Sidebar() {
         <NavSection navStyle={ns} label="Library" pathname={pathname} onClick={closeDrawer} items={[
           orgF.fileLibrary     && { label: 'File library',     path: '/admin/files',   icon: PATHS.folder    },
           orgF.memberDirectory && { label: 'Member directory', path: '/members',       icon: PATHS.directory },
-          orgF.charityTracking && { label: 'Charity',          path: '/admin/charity', icon: PATHS.charity   },
         ]} />
       )}
 
@@ -528,7 +521,6 @@ export default function Sidebar() {
               <>
                 <NavSection navStyle={ns} label="Cashier" pathname={pathname} onClick={closeDrawer} items={[
                   { label: 'Verify payments', path: '/admin',            icon: PATHS.verify   },
-                  { label: 'Fund transfers',  path: '/cashier/transfer', icon: PATHS.transfer },
                 ]} />
                 {memberNav([
                   { label: 'Dashboard',       path: '/dashboard',   icon: PATHS.home     },
@@ -540,8 +532,6 @@ export default function Sidebar() {
                   { label: 'Notices',         path: '/memoranda',   icon: PATHS.memo     },
                   orgF.fileLibrary     && { label: 'File library',     path: '/files',   icon: PATHS.folder    },
                   orgF.memberDirectory && { label: 'Member directory', path: '/members', icon: PATHS.directory },
-                  orgF.qardHasana      && { label: 'My loans',  path: '/loans',  icon: PATHS.loan  },
-                  orgF.assetRegistry   && { label: 'Assets',    path: '/assets', icon: PATHS.asset },
                 ])}
               </>
             )}
@@ -566,8 +556,6 @@ export default function Sidebar() {
                   { label: 'Notices',         path: '/memoranda',   icon: PATHS.memo     },
                   orgF.fileLibrary     && { label: 'File library',     path: '/files',   icon: PATHS.folder    },
                   orgF.memberDirectory && { label: 'Member directory', path: '/members', icon: PATHS.directory },
-                  orgF.qardHasana      && { label: 'My loans',  path: '/loans',  icon: PATHS.loan  },
-                  orgF.assetRegistry   && { label: 'Assets',    path: '/assets', icon: PATHS.asset },
                 ])}
                 {inMemberMode && (
                   <div style={{ margin: '10px 8px 0', padding: '10px 12px', borderRadius: 8, background: '#fdf4ff', border: '1px solid #e9d5ff' }}>
