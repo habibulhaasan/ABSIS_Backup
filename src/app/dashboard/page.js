@@ -445,7 +445,7 @@ export default function Dashboard() {
               + Pay Installment
             </Link>
             {orgF.capitalLedger && (
-              <Link href="/capital" style={{padding:'10px 18px',borderRadius:8,border:'1px solid #e2e8f0',
+              <Link href="/ledger" style={{padding:'10px 18px',borderRadius:8,border:'1px solid #e2e8f0',
                 background:'#fff',color:'#475569',fontWeight:600,fontSize:13,textDecoration:'none'}}>
                 My Capital
               </Link>
