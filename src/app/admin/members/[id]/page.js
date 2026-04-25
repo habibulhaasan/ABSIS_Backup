@@ -380,7 +380,13 @@ async function buildPrintHTML({ member, org, capital, fmtDate, fmtTS, fmt }) {
 <div class="letterhead">
   ${logoSrc ? `<img class="letterhead-logo" src="${logoSrc}" alt=""/>` : ''}
   <div>
-    <div class="org-name">${esc(org.name || 'Organization')}</div>
+    <div style={{fontSize:20,fontWeight:900,color:'#000',
+          fontFamily:"'SolaimanLipi','Arial',sans-serif",lineHeight:1.2}}>
+          ${org.name_bn||'Organization'}<br/>
+          <div style={{fontSize:12,color:'#64748b'}}>
+            ${org.name_en||'Organization'}
+          </div>
+        </div>
     ${org.slogan ? `<div class="org-slogan">${esc(org.slogan)}</div>` : ''}
     <div class="org-meta">
       ${org.email   ? `<span>✉ ${esc(org.email)}</span>`   : ''}
