@@ -1287,63 +1287,69 @@ export default function AdminMemberProfile() {
   },[orgId,memberId]);
 
   const handleSave = async () => {
-    if (!form) return;
-    setSaving(true);
-    try {
-      const now = serverTimestamp();
-      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{
-        nameEnglish:        form.nameEnglish,
-        nameBengali:        form.nameBengali,
-        fatherNameEn:       form.fatherNameEn,
-        fatherNameBn:       form.fatherNameBn,
-        motherNameEn:       form.motherNameEn,
-        motherNameBn:       form.motherNameBn,
-        dob:                form.dob,
-        nid:                form.nid,
-        bloodGroup:         form.bloodGroup,
-        maritalStatus:      form.maritalStatus,
-        spouseNameEn:       form.spouseNameEn,
-        spouseNameBn:       form.spouseNameBn,
-        education:          form.education,
-        occupation:         form.occupation,
-        monthlyIncome:      form.monthlyIncome,
-        phone:              form.phone,
-        alternativePhone:   form.alternativePhone,
-        presentAddressEn:   form.presentAddressEn,
-        presentAddressBn:   form.presentAddressBn,
-        permanentAddressEn: form.permanentAddressEn,
-        permanentAddressBn: form.permanentAddressBn,
-        joiningDate:        form.joiningDate,
-        heirNameEn:         form.heirNameEn,
-        heirNameBn:         form.heirNameBn,
-        heirRelation:       form.heirRelation,
-        heirFatherHusbandEn:form.heirFatherHusbandEn,
-        heirFatherHusbandBn:form.heirFatherHusbandBn,
-        heirNID:            form.heirNID,
-        heirPhone:          form.heirPhone,
-        heirAddressEn:      form.heirAddressEn,
-        heirAddressBn:      form.heirAddressBn,
-        applicationNo:      form.applicationNo,
-        applicationDate:    form.applicationDate,
-        agreementNo:        form.agreementNo,
-        agreementDate:      form.agreementDate,
-        legalPapersLink:    form.legalPapersLink,
-        profileUpdatedAt:   now,
-        profileSubmitted:   true,
-      });
-      await updateDoc(doc(db,'users',memberId),{
-        nameEnglish: form.nameEnglish,
-        nameBengali: form.nameBengali,
-        bloodGroup:  form.bloodGroup,
-        occupation:  form.occupation,
-        phone:       form.phone,
-      });
-      setMember(prev=>({...prev,...form,profileUpdatedAt:{seconds:Date.now()/1000}}));
-      setEditMode(false);
-      showToast('✅ Profile updated!');
-    } catch(e) { showToast(e.message,true); }
-    setSaving(false);
-  };
+  if (!form) return;
+  setSaving(true);
+
+  // Firestore rejects `undefined` — convert every value to null if falsy/undefined
+  const clean = (v) => (v === undefined || v === null ? null : v);
+
+  try {
+    const now = serverTimestamp();
+    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), {
+      nameEnglish:         clean(form.nameEnglish),
+      nameBengali:         clean(form.nameBengali),
+      fatherNameEn:        clean(form.fatherNameEn),
+      fatherNameBn:        clean(form.fatherNameBn),
+      motherNameEn:        clean(form.motherNameEn),
+      motherNameBn:        clean(form.motherNameBn),
+      dob:                 clean(form.dob),
+      nid:                 clean(form.nid),
+      bloodGroup:          clean(form.bloodGroup),
+      maritalStatus:       clean(form.maritalStatus),
+      spouseNameEn:        clean(form.spouseNameEn),
+      spouseNameBn:        clean(form.spouseNameBn),
+      education:           clean(form.education),
+      occupation:          clean(form.occupation),
+      monthlyIncome:       clean(form.monthlyIncome),
+      phone:               clean(form.phone),
+      alternativePhone:    clean(form.alternativePhone),
+      presentAddressEn:    clean(form.presentAddressEn),
+      presentAddressBn:    clean(form.presentAddressBn),
+      permanentAddressEn:  clean(form.permanentAddressEn),
+      permanentAddressBn:  clean(form.permanentAddressBn),
+      joiningDate:         clean(form.joiningDate),
+      heirNameEn:          clean(form.heirNameEn),
+      heirNameBn:          clean(form.heirNameBn),
+      heirRelation:        clean(form.heirRelation),
+      heirFatherHusbandEn: clean(form.heirFatherHusbandEn),
+      heirFatherHusbandBn: clean(form.heirFatherHusbandBn),
+      heirNID:             clean(form.heirNID),
+      heirPhone:           clean(form.heirPhone),
+      heirAddressEn:       clean(form.heirAddressEn),
+      heirAddressBn:       clean(form.heirAddressBn),
+      applicationNo:       clean(form.applicationNo),
+      applicationDate:     clean(form.applicationDate),
+      agreementNo:         clean(form.agreementNo),
+      agreementDate:       clean(form.agreementDate),
+      legalPapersLink:     clean(form.legalPapersLink),
+      profileUpdatedAt:    now,
+      profileSubmitted:    true,
+    });
+    await updateDoc(doc(db, 'users', memberId), {
+      nameEnglish: clean(form.nameEnglish),
+      nameBengali: clean(form.nameBengali),
+      bloodGroup:  clean(form.bloodGroup),
+      occupation:  clean(form.occupation),
+      phone:       clean(form.phone),
+    });
+    setMember(prev => ({ ...prev, ...form, profileUpdatedAt: { seconds: Date.now() / 1000 } }));
+    setEditMode(false);
+    showToast('✅ Profile updated!');
+  } catch (e) {
+    showToast(e.message, true);
+  }
+  setSaving(false);
+};
 
   const photoRef = useRef(null);
   const [photoUploading, setPhotoUploading] = useState(false);

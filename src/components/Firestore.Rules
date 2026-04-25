@@ -47,12 +47,30 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Checks whether the requester is an org admin in their active org
+    // AND that the target userId is a member of that same org.
+    // Used to allow admins to mirror display fields onto /users/{memberId}.
+    function isOrgAdminOfUser(userId) {
+      let adminOrgId = get(/databases/$(database)/documents/users/$(request.auth.uid))
+                         .data.get('activeOrgId', '');
+      return adminOrgId != ''
+        && isOrgAdmin(adminOrgId)
+        && exists(/databases/$(database)/documents/organizations/$(adminOrgId)/members/$(userId));
+    }
+
 
     // ── Users ─────────────────────────────────────────────────────────────
     match /users/{userId} {
       allow read:   if isSignedIn();
       allow create: if isOwnDoc(userId);
-      allow update: if isOwnDoc(userId) || isSuperAdmin();
+      allow update:
+        if isOwnDoc(userId)
+        || isSuperAdmin()
+        // Org admin may only update the mirrored display fields — never role/email/activeOrgId/etc.
+        || (isOrgAdminOfUser(userId)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['nameEnglish', 'nameBengali', 'bloodGroup',
+                            'occupation', 'phone', 'photoURL']));
       allow delete: if isSuperAdmin();
     }
 
@@ -61,16 +79,16 @@ service cloud.firestore {
     match /organizations/{orgId} {
       allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
       allow create: if isSignedIn();
-      // SuperAdmin: full rights on org doc.
-      // OrgAdmin: can update settings and orgFeatures (feature activation layer)
-      //           but NOT features (superadmin unlock layer), limits, or status.
-      // Direct field equality is more reliable than affectedKeys() for nested writes.
+      allow read: if true; //newly added at 64 line
+
+      // Org admin may NOT touch superadmin-controlled fields: features, limits, status
+      // Org admin may write settings and orgFeatures only
       allow update:
         if isSuperAdmin()
         || (isOrgAdmin(orgId)
-            && request.resource.data.get('features', {}) == resource.data.get('features', {})
-            && request.resource.data.get('limits',   {}) == resource.data.get('limits',   {})
-            && request.resource.data.get('status', null) == resource.data.get('status', null));
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(['features', 'limits', 'status']));
+
       allow delete: if isSuperAdmin();
 
 
@@ -80,7 +98,7 @@ service cloud.firestore {
           if isSuperAdmin()
           || isOrgAdmin(orgId)
           || isOwnDoc(memberId)
-          // Approved members can read the directory when org admin has activated it
+          // Approved members can read the directory when the feature is on
           || (isApprovedMember(orgId)
               && get(/databases/$(database)/documents/organizations/$(orgId)).data
                   .get('orgFeatures',{}).get('memberDirectory', false) == true);
@@ -88,20 +106,15 @@ service cloud.firestore {
         allow create:
           if isSuperAdmin() || isOrgAdmin(orgId) || isOwnDoc(memberId);
 
-        // Members may update their own profile including nominee fields
-        // (nomineeNameEnglish, nomineenameBengali, nomineeNID, nomineeRelationship, nomineePhone)
-        // but CANNOT touch role / approval / cashier assignments / committee role / entryFeePaid / idNo.
+        // Members may update their own profile, but CANNOT touch
+        // role / approval / cashier assignments / committee role / entry fee / ID number
         allow update:
           if isSuperAdmin()
           || isOrgAdmin(orgId)
           || (isOwnDoc(memberId)
-              && request.resource.data.get('role',            '') == resource.data.get('role',            '')
-              && request.resource.data.get('approved',     false) == resource.data.get('approved',     false)
-              && request.resource.data.get('cashierMethods',  []) == resource.data.get('cashierMethods',  [])
-              && request.resource.data.get('cashierAccountIds',[]) == resource.data.get('cashierAccountIds',[])
-              && request.resource.data.get('committeeRole',   '') == resource.data.get('committeeRole',   '')
-              && request.resource.data.get('entryFeePaid', false) == resource.data.get('entryFeePaid', false)
-              && request.resource.data.get('idNo',            '') == resource.data.get('idNo',            ''));
+              && !request.resource.data.diff(resource.data).affectedKeys()
+                  .hasAny(['role','approved','cashierMethods','cashierAccountIds',
+                           'committeeRole','entryFeePaid','idNo']));
 
         allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
       }
@@ -177,88 +190,85 @@ service cloud.firestore {
       }
 
 
-      // ── Entry Fees (F6) ──────────────────────────────────────────────────────
-      // One-time non-refundable joining fees. Members read own record only.
-      match /entryFees/{feeId} {
+      // ── Entry Fees ────────────────────────────────────────────────────────
+      // One-time membership entry fee records
+      match /entryFees/{entryFeeId} {
+        // Members can read their own entry fee record; admin reads all
         allow read:
           if isSuperAdmin()
           || isOrgAdmin(orgId)
-          || (isApprovedMember(orgId)
-              && resource.data.get('userId','') == request.auth.uid);
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        // Only admin creates/updates/deletes entry fee records
         allow create: if isSuperAdmin() || isOrgAdmin(orgId);
         allow update: if isSuperAdmin() || isOrgAdmin(orgId);
         allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
       }
 
 
-      // ── Asset Registry (F17) ─────────────────────────────────────────────────
-      // Org-owned assets. All approved members read; admin writes.
+      // ── Assets ────────────────────────────────────────────────────────────
+      // Org-owned physical and financial assets registry
       match /assets/{assetId} {
+        // All approved members can view the asset registry
         allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin manages asset records
         allow create: if isSuperAdmin() || isOrgAdmin(orgId);
         allow update: if isSuperAdmin() || isOrgAdmin(orgId);
         allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
       }
 
 
-      // ── Investment Projects (F2) ──────────────────────────────────────────────
-      // Tracks investment projects (Musharaka, Mudaraba, Ijara, etc.).
-      // Separate from /investments which are installment payment records.
-      // Investment Projects (F2)
+      // ── Investment Projects ───────────────────────────────────────────────
+      // Shariah-compliant investment project records (Musharaka, Mudaraba, etc.)
       match /investmentProjects/{projectId} {
+        // All approved members can view investment projects
         allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
-        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
-        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
-        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
 
-        // Periodic return entries (rent, dividend, profit_share, etc.)
-        match /returns/{returnId} {
-          allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
-          allow create: if isSuperAdmin() || isOrgAdmin(orgId);
-          // update allowed for marking distributedInDistributionId after payout
-          allow update: if isSuperAdmin() || isOrgAdmin(orgId);
-          allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
-        }
-
-        // Project-level expenses (maintenance, tax, management fees, etc.)
-        match /projectExpenses/{expenseId} {
-          allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
-          allow create: if isSuperAdmin() || isOrgAdmin(orgId);
-          allow update: if isSuperAdmin() || isOrgAdmin(orgId);
-          allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
-        }
-      }
-
-
-      // ── Profit Distributions (F3) ─────────────────────────────────────────────
-      // Annual profit declaration and per-member share records.
-      match /profitDistributions/{distId} {
-        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+        // Only admin creates/updates/deletes projects
         allow create: if isSuperAdmin() || isOrgAdmin(orgId);
         allow update: if isSuperAdmin() || isOrgAdmin(orgId);
         allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
       }
 
 
-      // ── Loans / Interest-Free (F1) ────────────────────────────────────────────
-      // Members apply (create); only admin can approve/update. Members read own only.
+      // ── Profit Distributions ──────────────────────────────────────────────
+      // Annual/periodic profit distribution records per member
+      match /profitDistributions/{distributionId} {
+        // All approved members can view distributions (to see their own share)
+        allow read:   if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin creates/updates/deletes distribution records
+        allow create: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow update: if isSuperAdmin() || isOrgAdmin(orgId);
+        allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
+      }
+
+
+      // ── Qard al-Hasan Loans ───────────────────────────────────────────────
+      // Interest-free benevolent loan applications and records
       match /loans/{loanId} {
+        // Members can read their own loan records; admin reads all
         allow read:
           if isSuperAdmin()
           || isOrgAdmin(orgId)
-          || (isApprovedMember(orgId)
-              && resource.data.get('userId','') == request.auth.uid);
+          || (isSignedIn() && resource.data.get('userId','') == request.auth.uid);
+
+        // Any approved member may submit a loan application (create)
         allow create: if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
+
+        // Only admin can approve, update status, or record repayments
         allow update: if isSuperAdmin() || isOrgAdmin(orgId);
         allow delete: if isSuperAdmin() || isOrgAdmin(orgId);
       }
 
 
       // ── Catch-all ─────────────────────────────────────────────────────────
-      // Covers: income, penalties, investments (as a collection, handled above),
-      // subscriptions, specialSubscriptions, distributions, reports, etc.
-      // Note: expenses, cashierTransfers, notifications are matched ABOVE with
-      // finer-grained rules and will NOT fall through to this catch-all.
+      // Covers: income, penalties, subscriptions, specialSubscriptions,
+      // distributions, reports, etc.
+      // Note: expenses, cashierTransfers, notifications, files, entryFees,
+      // assets, investmentProjects, profitDistributions, loans are matched
+      // ABOVE with finer-grained rules and will NOT fall through to this catch-all.
       match /{collection}/{docId} {
         allow read:  if isSuperAdmin() || isOrgAdmin(orgId) || isApprovedMember(orgId);
         allow write: if isSuperAdmin() || isOrgAdmin(orgId);
