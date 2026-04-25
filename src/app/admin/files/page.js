@@ -15,7 +15,6 @@ import Modal from '@/components/Modal';
 const GAS_URL = "https://script.google.com/macros/s/AKfycbymijcqicl0oQoYZsCA5B1UjtqmJAsWDM-KQqvQzmaGZeD7GK8j2y9w8tZ6lr0c0H4A/exec";
 const SECRET = "absis-secret-123";
 
-// 🔹 Convert file → base64
 function toBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -25,33 +24,22 @@ function toBase64(file) {
   });
 }
 
-// 🔹 Upload via GAS
 async function uploadFileToGAS(file) {
   const base64 = await toBase64(file);
-
   const res = await fetch(GAS_URL, {
     method: "POST",
     body: JSON.stringify({
-      action: "upload",
-      secret: SECRET,
-      file: base64.split(",")[1],
-      fileName: file.name,
-      mimeType: file.type,
+      action: "upload", secret: SECRET,
+      file: base64.split(",")[1], fileName: file.name, mimeType: file.type,
     }),
   });
-
   return await res.json();
 }
 
-// 🔹 Delete via GAS
 async function deleteFileFromGAS(fileId) {
   await fetch(GAS_URL, {
     method: "POST",
-    body: JSON.stringify({
-      action: "delete",
-      secret: SECRET,
-      fileId,
-    }),
+    body: JSON.stringify({ action: "delete", secret: SECRET, fileId }),
   });
 }
 
@@ -102,6 +90,44 @@ function FileTypeBadge({ mime }) {
   );
 }
 
+// ─── Visibility Toggle ────────────────────────────────────────────────────
+function VisibilityToggle({ fileId, orgId, visible, onToggle }) {
+  const [loading, setLoading] = useState(false);
+  const isVisible = visible !== false; // default true for existing files
+
+  const handle = async (e) => {
+    e.stopPropagation();
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'organizations', orgId, 'files', fileId), {
+        visible: !isVisible,
+      });
+      onToggle?.(fileId, !isVisible);
+    } catch (err) { alert(err.message); }
+    setLoading(false);
+  };
+
+  return (
+    <button
+      onClick={handle}
+      disabled={loading}
+      title={isVisible ? 'Visible to members — click to hide' : 'Hidden from members — click to show'}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 5,
+        padding: '4px 10px', borderRadius: 20,
+        border: `1.5px solid ${isVisible ? '#bbf7d0' : '#fca5a5'}`,
+        background: isVisible ? '#f0fdf4' : '#fff5f5',
+        color: isVisible ? '#15803d' : '#dc2626',
+        fontSize: 11, fontWeight: 700, cursor: loading ? 'wait' : 'pointer',
+        whiteSpace: 'nowrap', transition: 'all 0.15s',
+        opacity: loading ? 0.6 : 1,
+      }}
+    >
+      {isVisible ? '👁 Visible' : '🚫 Hidden'}
+    </button>
+  );
+}
+
 async function compressImage(file, maxPx = 1400, quality = 0.82) {
   return new Promise((resolve) => {
     const img = new Image();
@@ -130,17 +156,21 @@ async function prepareFile(file) {
   return file;
 }
 
-function FileCard({ f, onView }) {
+function FileCard({ f, orgId, onView }) {
   return (
     <div
       onClick={() => onView(f)}
       onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 20px rgba(0,0,0,.10)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'none'; }}
-      style={{ background:'var(--surface,#fff)', border:'1.5px solid var(--border,#e2e8f0)', borderRadius:12, overflow:'hidden', cursor:'pointer', transition:'all 0.15s' }}
+      style={{
+        background: f.visible === false ? '#fffbfb' : 'var(--surface,#fff)',
+        border: `1.5px solid ${f.visible === false ? '#fca5a5' : 'var(--border,#e2e8f0)'}`,
+        borderRadius:12, overflow:'hidden', cursor:'pointer', transition:'all 0.15s',
+      }}
     >
       <div style={{ height:80, display:'flex', alignItems:'center', justifyContent:'center', background:'#f8fafc', fontSize:36 }}>
-  {fileIcon(f.mimeType)}
-</div>
+        {fileIcon(f.mimeType)}
+      </div>
       <div style={{ padding:'12px 14px 14px' }}>
         <div style={{ fontWeight:600, fontSize:13, color:'var(--text,#0f172a)', marginBottom:3, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
           {f.title}
@@ -150,9 +180,13 @@ function FileCard({ f, onView }) {
             {f.description}
           </div>
         )}
-        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:4 }}>
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:6 }}>
           <FileTypeBadge mime={f.mimeType} />
           <span className="badge badge-gray" style={{ fontSize:10 }}>{f.category}</span>
+        </div>
+        {/* Visibility toggle in card */}
+        <div onClick={e => e.stopPropagation()} style={{ marginBottom:4 }}>
+          <VisibilityToggle fileId={f.id} orgId={orgId} visible={f.visible} />
         </div>
         <div style={{ display:'flex', gap:6, alignItems:'center', justifyContent:'flex-end' }}>
           <span style={{ fontSize:10, color:'var(--text-dim,#94a3b8)' }}>{fmtSize(f.size)}</span>
@@ -168,11 +202,8 @@ function FileCard({ f, onView }) {
 }
 
 // ─── UploadModal ──────────────────────────────────────────────────────────
-// - Reads driveFolderId from orgData (already loaded in AuthContext)
-// - Sends it to the API so files go into the correct folder
-// - If API creates a new folder, saves its ID back to Firestore via client SDK
 function UploadModal({ onClose, orgId, orgName, orgData, userData }) {
-  const [form,       setForm]       = useState({ title:'', description:'', category:'' });
+  const [form,       setForm]       = useState({ title:'', description:'', category:'', visible: true });
   const [pickedFile, setPickedFile] = useState(null);
   const [progress,   setProgress]   = useState(0);
   const [uploading,  setUploading]  = useState(false);
@@ -200,25 +231,23 @@ function UploadModal({ onClose, orgId, orgName, orgData, userData }) {
     try {
       const prepared = await prepareFile(pickedFile);
       setProgress(30);
-
       setProgress(50);
 
-    // ✅ GAS upload (replacing API)
-    const data = await uploadFileToGAS(prepared);
-    setProgress(80);
+      const data = await uploadFileToGAS(prepared);
+      setProgress(80);
 
-    if (!data.success) throw new Error(data.error || 'Upload failed');
-
+      if (!data.success) throw new Error(data.error || 'Upload failed');
 
       await addDoc(collection(db, 'organizations', orgId, 'files'), {
         title:        form.title.trim(),
         description:  form.description.trim(),
         category:     form.category || 'General',
+        visible:      form.visible,          // ← saved on upload
         fileId:       data.fileId,
         fileName:     prepared.name,
         originalName: pickedFile.name,
         originalSize: pickedFile.size,
-        viewUrl:      data.url,              // ✅ GAS
+        viewUrl:      data.url,
         thumbUrl:     data.url,
         mimeType:     prepared.type,
         size:         prepared.size,
@@ -281,6 +310,36 @@ function UploadModal({ onClose, orgId, orgName, orgData, userData }) {
         </select>
       </div>
 
+      {/* Visibility setting at upload time */}
+      <div className="form-group">
+        <label className="form-label">Member Visibility</label>
+        <div style={{ display:'flex', gap:8 }}>
+          {[
+            { val: true,  label: '👁 Visible to members',  activeColor:'#15803d', activeBg:'#f0fdf4', activeBorder:'#86efac' },
+            { val: false, label: '🚫 Hidden from members', activeColor:'#dc2626', activeBg:'#fff5f5', activeBorder:'#fca5a5' },
+          ].map(({ val, label, activeColor, activeBg, activeBorder }) => {
+            const active = form.visible === val;
+            return (
+              <button key={String(val)} type="button"
+                onClick={() => setForm(p => ({ ...p, visible: val }))}
+                style={{
+                  flex:1, padding:'9px 12px', borderRadius:8, cursor:'pointer',
+                  border: `1.5px solid ${active ? activeBorder : '#e2e8f0'}`,
+                  background: active ? activeBg : '#fff',
+                  color: active ? activeColor : '#64748b',
+                  fontSize:12, fontWeight: active ? 700 : 400,
+                  transition:'all 0.15s',
+                }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize:11, color:'#94a3b8', marginTop:5 }}>
+          You can change this at any time from the file list.
+        </div>
+      </div>
+
       {uploading && (
         <div style={{ marginBottom:16 }}>
           <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, color:'var(--text-muted,#64748b)', marginBottom:4 }}>
@@ -301,7 +360,7 @@ function UploadModal({ onClose, orgId, orgName, orgData, userData }) {
   );
 }
 
-function ViewModal({ file, onClose, onDelete }) {
+function ViewModal({ file, orgId, onClose, onDelete }) {
   const [tab, setTab] = useState('preview');
   const canEmbed   = !!file.fileId;
   const previewUrl = file.fileId
@@ -361,8 +420,7 @@ function ViewModal({ file, onClose, onDelete }) {
             }}>
             ↗ Open
           </a>
-          <button
-            onClick={onClose}
+          <button onClick={onClose}
             style={{
               width:32, height:32, borderRadius:8,
               border:'1px solid #e2e8f0', background:'#fff',
@@ -376,11 +434,7 @@ function ViewModal({ file, onClose, onDelete }) {
         </div>
 
         {/* Tab bar */}
-        <div style={{
-          display:'flex', gap:0,
-          borderBottom:'2px solid #e2e8f0',
-          flexShrink:0,
-        }}>
+        <div style={{ display:'flex', gap:0, borderBottom:'2px solid #e2e8f0', flexShrink:0 }}>
           {[['preview', canEmbed ? '👁 Preview' : '📄 Info'], ['info', 'ℹ️ Details']].map(([id, label]) => (
             <button key={id} onClick={() => setTab(id)}
               style={{
@@ -395,18 +449,13 @@ function ViewModal({ file, onClose, onDelete }) {
           ))}
         </div>
 
-        {/* Body — fills all remaining height */}
+        {/* Body */}
         <div style={{ flex:1, minHeight:0, overflow:'hidden', display:'flex', flexDirection:'column', background:'#f8fafc' }}>
 
-          {/* Preview tab */}
           {tab === 'preview' && (
             canEmbed ? (
               file.mimeType?.startsWith('image/') ? (
-                <div style={{
-                  flex:1, minHeight:0,
-                  display:'flex', alignItems:'center', justifyContent:'center',
-                  padding:16, overflow:'hidden',
-                }}>
+                <div style={{ flex:1, minHeight:0, display:'flex', alignItems:'center', justifyContent:'center', padding:16, overflow:'hidden' }}>
                   <img
                     src={`https://drive.google.com/thumbnail?id=${file.fileId}&sz=w1600`}
                     alt={file.title}
@@ -415,41 +464,44 @@ function ViewModal({ file, onClose, onDelete }) {
                 </div>
               ) : (
                 <iframe
-                  src={previewUrl}
-                  title={file.title}
-                  allow="autoplay"
+                  src={previewUrl} title={file.title} allow="autoplay"
                   style={{ flex:1, width:'100%', border:'none', display:'block', minHeight:0 }}
                 />
               )
             ) : (
-              <div style={{
-                flex:1, display:'flex', flexDirection:'column',
-                alignItems:'center', justifyContent:'center',
-                color:'#94a3b8', gap:12,
-              }}>
+              <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', color:'#94a3b8', gap:12 }}>
                 <div style={{ fontSize:48 }}>{fileIcon(file.mimeType)}</div>
                 <div style={{ fontSize:13 }}>Preview not available for this file type.</div>
-                <a href={file.viewUrl} target="_blank" rel="noopener noreferrer"
-                  className="btn-primary" style={{ textDecoration:'none' }}>
+                <a href={file.viewUrl} target="_blank" rel="noopener noreferrer" className="btn-primary" style={{ textDecoration:'none' }}>
                   ↗ Open in Drive
                 </a>
               </div>
             )
           )}
 
-          {/* Info tab */}
           {tab === 'info' && (
             <div style={{ flex:1, minHeight:0, overflowY:'auto', padding:16 }}>
               {file.description && (
-                <div style={{
-                  background:'var(--surface-2,#f8fafc)', borderRadius:8,
-                  padding:'12px 14px', marginBottom:14, fontSize:13,
-                  color:'var(--text-muted,#475569)',
-                  border:'1px solid #e2e8f0',
-                }}>
+                <div style={{ background:'var(--surface-2,#f8fafc)', borderRadius:8, padding:'12px 14px', marginBottom:14, fontSize:13, color:'var(--text-muted,#475569)', border:'1px solid #e2e8f0' }}>
                   {file.description}
                 </div>
               )}
+
+              {/* Visibility control inside info tab */}
+              <div style={{ background: file.visible === false ? '#fff5f5' : '#f0fdf4', border:`1px solid ${file.visible === false ? '#fca5a5' : '#86efac'}`, borderRadius:10, padding:'12px 14px', marginBottom:14, display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, flexWrap:'wrap' }}>
+                <div>
+                  <div style={{ fontSize:12, fontWeight:700, color: file.visible === false ? '#dc2626' : '#15803d' }}>
+                    {file.visible === false ? '🚫 Hidden from members' : '👁 Visible to members'}
+                  </div>
+                  <div style={{ fontSize:11, color:'#64748b', marginTop:2 }}>
+                    {file.visible === false
+                      ? 'Members cannot see this file. Toggle to make it visible.'
+                      : 'Members can see and preview this file. Toggle to hide it.'}
+                  </div>
+                </div>
+                <VisibilityToggle fileId={file.id} orgId={orgId} visible={file.visible} />
+              </div>
+
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16 }}>
                 {[
                   ['File type',     fileType(file.mimeType).label],
@@ -461,18 +513,13 @@ function ViewModal({ file, onClose, onDelete }) {
                     ? `${Math.round((1 - file.size / file.originalSize) * 100)}% smaller` : '—'],
                 ].map(([l, v]) => (
                   <div key={l} style={{ background:'var(--surface-2,#f8fafc)', borderRadius:8, padding:'10px 12px', border:'1px solid #e2e8f0' }}>
-                    <div style={{ fontSize:10, fontWeight:700, color:'var(--text-dim,#94a3b8)',
-                      textTransform:'uppercase', letterSpacing:'.05em', marginBottom:2 }}>{l}</div>
-                    <div style={{ fontSize:12, color:'var(--text,#0f172a)', fontWeight:500,
-                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v || '—'}</div>
+                    <div style={{ fontSize:10, fontWeight:700, color:'var(--text-dim,#94a3b8)', textTransform:'uppercase', letterSpacing:'.05em', marginBottom:2 }}>{l}</div>
+                    <div style={{ fontSize:12, color:'var(--text,#0f172a)', fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{v || '—'}</div>
                   </div>
                 ))}
               </div>
-              {/* Delete + open actions inside info tab */}
               <div style={{ display:'flex', gap:8, paddingTop:4 }}>
-                <button onClick={() => onDelete(file)} className="btn-danger" style={{ flexShrink:0 }}>
-                  Delete
-                </button>
+                <button onClick={() => onDelete(file)} className="btn-danger" style={{ flexShrink:0 }}>Delete</button>
                 <a href={file.viewUrl} target="_blank" rel="noopener noreferrer" className="btn-primary"
                   style={{ flex:1, justifyContent:'center', textDecoration:'none' }}>
                   ↗ Open in Drive
@@ -494,6 +541,7 @@ export default function AdminFiles() {
   const [viewFile, setViewFile] = useState(null);
   const [filter,   setFilter]   = useState('All');
   const [search,   setSearch]   = useState('');
+  const [visFilter, setVisFilter] = useState('all'); // 'all' | 'visible' | 'hidden'
 
   const orgId   = userData?.activeOrgId;
   const orgName = orgData?.name;
@@ -504,12 +552,17 @@ export default function AdminFiles() {
     return onSnapshot(q, snap => setFiles(snap.docs.map(d => ({ id:d.id, ...d.data() }))));
   }, [orgId]);
 
+  // Keep viewFile in sync with live Firestore data (e.g. after visibility toggle)
+  useEffect(() => {
+    if (!viewFile) return;
+    const updated = files.find(f => f.id === viewFile.id);
+    if (updated) setViewFile(updated);
+  }, [files]);
+
   const handleDelete = useCallback(async (file) => {
     if (!confirm(`Delete "${file.title}"?`)) return;
     try {
-      if (file.fileId) {
-        await deleteFileFromGAS(file.fileId);
-      }
+      if (file.fileId) await deleteFileFromGAS(file.fileId);
       await deleteDoc(doc(db, 'organizations', orgId, 'files', file.id));
     } catch (err) { alert(err.message); }
     setViewFile(null);
@@ -527,8 +580,15 @@ export default function AdminFiles() {
     const matchSearch = !search
       || f.title.toLowerCase().includes(search.toLowerCase())
       || (f.description || '').toLowerCase().includes(search.toLowerCase());
-    return matchCat && matchSearch;
+    const isVisible   = f.visible !== false;
+    const matchVis    = visFilter === 'all'
+      || (visFilter === 'visible' && isVisible)
+      || (visFilter === 'hidden'  && !isVisible);
+    return matchCat && matchSearch && matchVis;
   });
+
+  const hiddenCount  = files.filter(f => f.visible === false).length;
+  const visibleCount = files.length - hiddenCount;
 
   return (
     <div className="page-wrap animate-fade">
@@ -543,19 +603,18 @@ export default function AdminFiles() {
           <div>
             <div className="page-title">File Library</div>
             <div className="page-subtitle">
-              {files.length} file{files.length !== 1 ? 's' : ''} · Stored on Google Drive
+              {files.length} file{files.length !== 1 ? 's' : ''} · {visibleCount} visible · {hiddenCount} hidden · Stored on Google Drive
             </div>
           </div>
         </div>
         <button onClick={openUpload} className="btn-primary">+ Upload File</button>
       </div>
 
+      {/* Search + category + visibility filters */}
       <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
         <input
-          value={search}
-          onChange={handleSearchChange}
-          placeholder="Search files…"
-          style={{ flex:1, minWidth:160 }}
+          value={search} onChange={handleSearchChange}
+          placeholder="Search files…" style={{ flex:1, minWidth:160 }}
         />
         <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
           {cats.map(c => (
@@ -568,7 +627,32 @@ export default function AdminFiles() {
         </div>
       </div>
 
-      {/* Responsive CSS: table on desktop, cards on mobile */}
+      {/* Visibility filter strip */}
+      <div style={{ display:'flex', gap:6, marginBottom:16, flexWrap:'wrap' }}>
+        {[
+          { key:'all',     label:`All (${files.length})` },
+          { key:'visible', label:`👁 Visible (${visibleCount})` },
+          { key:'hidden',  label:`🚫 Hidden (${hiddenCount})` },
+        ].map(({ key, label }) => (
+          <button key={key} onClick={() => setVisFilter(key)}
+            style={{
+              padding:'6px 14px', borderRadius:20, fontSize:12, cursor:'pointer',
+              border: `1.5px solid ${visFilter === key ? '#2563eb' : '#e2e8f0'}`,
+              background: visFilter === key ? '#eff6ff' : '#fff',
+              color: visFilter === key ? '#1d4ed8' : '#64748b',
+              fontWeight: visFilter === key ? 700 : 400,
+              transition:'all 0.15s',
+            }}>
+            {label}
+          </button>
+        ))}
+        {hiddenCount > 0 && (
+          <span style={{ fontSize:11, color:'#dc2626', alignSelf:'center', marginLeft:4 }}>
+            ⚠ {hiddenCount} file{hiddenCount !== 1 ? 's' : ''} hidden from members
+          </span>
+        )}
+      </div>
+
       <style>{`
         .af-table-wrap { display: none; }
         .af-card-wrap  { display: block; }
@@ -586,45 +670,39 @@ export default function AdminFiles() {
         </div>
       ) : (
         <>
-          {/* ── DESKTOP: table view ───────────────────────────────── */}
+          {/* ── DESKTOP: table view ── */}
           <div className="af-table-wrap">
             <div style={{ borderRadius:12, border:'1.5px solid var(--border,#e2e8f0)', overflow:'hidden' }}>
-
-              {/* Header */}
-              <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 130px 120px',
+              <div style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 110px 130px 120px',
                 gap:12, padding:'9px 16px', background:'var(--surface-2,#f8fafc)',
                 borderBottom:'1px solid var(--border,#e2e8f0)', alignItems:'center' }}>
-                {['', 'Title', 'Type', 'Category', 'Size', 'Uploaded by', ''].map((h, i) => (
-                  <div key={i} style={{ fontSize:11, fontWeight:700, color:'#64748b',
-                    textTransform:'uppercase', letterSpacing:'0.06em' }}>{h}</div>
+                {['', 'Title', 'Type', 'Category', 'Size', 'Visibility', 'Uploaded by', ''].map((h, i) => (
+                  <div key={i} style={{ fontSize:11, fontWeight:700, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.06em' }}>{h}</div>
                 ))}
               </div>
 
-              {/* Rows */}
               {shown.map((f, i) => (
                 <div key={f.id}
-                  style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 130px 120px',
+                  style={{ display:'grid', gridTemplateColumns:'36px 1fr 90px 100px 80px 110px 130px 120px',
                     gap:12, padding:'10px 16px', alignItems:'center', cursor:'pointer',
-                    background: i % 2 === 0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)',
+                    background: f.visible === false
+                      ? (i % 2 === 0 ? '#fff8f8' : '#fff2f2')
+                      : (i % 2 === 0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)'),
                     borderBottom:'1px solid var(--border-light,#f1f5f9)', transition:'background 0.1s' }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#f0f9ff'}
-                  onMouseLeave={e => e.currentTarget.style.background = i%2===0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)'}
+                  onMouseEnter={e => e.currentTarget.style.background = f.visible === false ? '#ffe4e4' : '#f0f9ff'}
+                  onMouseLeave={e => e.currentTarget.style.background = f.visible === false
+                    ? (i%2===0 ? '#fff8f8' : '#fff2f2')
+                    : (i%2===0 ? 'var(--surface,#fff)' : 'var(--surface-2,#fafafa)')}
                   onClick={() => handleView(f)}
                 >
-                  {/* Icon / thumb */}
-                  <div style={{ fontSize:20, textAlign:'center', flexShrink:0 }}>
-                    {fileIcon(f.mimeType)}
-                  </div>
+                  <div style={{ fontSize:20, textAlign:'center', flexShrink:0 }}>{fileIcon(f.mimeType)}</div>
 
-                  {/* Title + description */}
                   <div style={{ minWidth:0 }}>
-                    <div style={{ fontWeight:600, fontSize:13, color:'var(--text,#0f172a)',
-                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                    <div style={{ fontWeight:600, fontSize:13, color:'var(--text,#0f172a)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                       {f.title}
                     </div>
                     {f.description && (
-                      <div style={{ fontSize:11, color:'var(--text-muted,#64748b)',
-                        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      <div style={{ fontSize:11, color:'var(--text-muted,#64748b)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                         {f.description}
                       </div>
                     )}
@@ -635,37 +713,26 @@ export default function AdminFiles() {
                     )}
                   </div>
 
-                  {/* File type */}
-                  <div>
-                    <FileTypeBadge mime={f.mimeType} />
+                  <div><FileTypeBadge mime={f.mimeType} /></div>
+                  <div><span className="badge badge-gray" style={{ fontSize:10 }}>{f.category}</span></div>
+                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)' }}>{fmtSize(f.size) || '—'}</div>
+
+                  {/* Visibility toggle column */}
+                  <div onClick={e => e.stopPropagation()}>
+                    <VisibilityToggle fileId={f.id} orgId={orgId} visible={f.visible} />
                   </div>
 
-                  {/* Category */}
-                  <div>
-                    <span className="badge badge-gray" style={{ fontSize:10 }}>{f.category}</span>
-                  </div>
-
-                  {/* Size */}
-                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)' }}>
-                    {fmtSize(f.size) || '—'}
-                  </div>
-
-                  {/* Uploaded by */}
-                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)',
-                    overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                  <div style={{ fontSize:12, color:'var(--text-muted,#64748b)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                     {f.uploadedBy || '—'}
                   </div>
 
-                  {/* Actions */}
                   <div style={{ display:'flex', gap:6 }} onClick={e => e.stopPropagation()}>
                     <a href={f.viewUrl} target="_blank" rel="noopener noreferrer"
-                      style={{ padding:'5px 10px', borderRadius:6, background:'#eff6ff',
-                        color:'#1d4ed8', fontSize:12, fontWeight:600, textDecoration:'none', whiteSpace:'nowrap' }}>
+                      style={{ padding:'5px 10px', borderRadius:6, background:'#eff6ff', color:'#1d4ed8', fontSize:12, fontWeight:600, textDecoration:'none', whiteSpace:'nowrap' }}>
                       ↗ Open
                     </a>
                     <button onClick={() => handleDelete(f)}
-                      style={{ padding:'5px 10px', borderRadius:6, border:'1px solid #fca5a5',
-                        background:'#fff', color:'#dc2626', fontSize:12, cursor:'pointer', whiteSpace:'nowrap' }}>
+                      style={{ padding:'5px 10px', borderRadius:6, border:'1px solid #fca5a5', background:'#fff', color:'#dc2626', fontSize:12, cursor:'pointer', whiteSpace:'nowrap' }}>
                       Delete
                     </button>
                   </div>
@@ -674,11 +741,11 @@ export default function AdminFiles() {
             </div>
           </div>
 
-          {/* ── MOBILE: original card grid (unchanged) ────────────── */}
+          {/* ── MOBILE: card grid ── */}
           <div className="af-card-wrap">
             <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:12 }}>
               {shown.map(f => (
-                <FileCard key={f.id} f={f} onView={handleView} />
+                <FileCard key={f.id} f={f} orgId={orgId} onView={handleView} />
               ))}
             </div>
           </div>
@@ -687,18 +754,14 @@ export default function AdminFiles() {
 
       {modal && (
         <UploadModal
-          onClose={closeUpload}
-          orgId={orgId}
-          orgName={orgName}
-          orgData={orgData}
-          userData={userData}
+          onClose={closeUpload} orgId={orgId} orgName={orgName}
+          orgData={orgData} userData={userData}
         />
       )}
       {viewFile && (
         <ViewModal
-          file={viewFile}
-          onClose={closeView}
-          onDelete={handleDelete}
+          file={viewFile} orgId={orgId}
+          onClose={closeView} onDelete={handleDelete}
         />
       )}
     </div>

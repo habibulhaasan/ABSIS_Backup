@@ -72,7 +72,8 @@ export default function MemberFiles() {
     const matchSearch = !search
       || f.title.toLowerCase().includes(search.toLowerCase())
       || (f.description||'').toLowerCase().includes(search.toLowerCase());
-    return matchCat && matchSearch;
+    const isVisible   = f.visible !== false;   // ← ADD THIS
+    return matchCat && matchSearch && isVisible; // ← ADD isVisible here
   });
 
 
