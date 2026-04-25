@@ -6,11 +6,16 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 // ── Firebase Admin init ───────────────────────────────────────────────────────
 function getAdminDb() {
   if (!getApps().length) {
+    // Vercel mangles \n in private keys — this handles all cases
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY
+      ?.replace(/\\n/g, '\n')   // literal \n → real newline
+      ?.replace(/^"|"$/g, '');  // strip surrounding quotes if any
+
     initializeApp({
       credential: cert({
         projectId:   process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey:  process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        privateKey,
       }),
     });
   }
