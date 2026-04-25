@@ -10,23 +10,15 @@ import { createPortal } from 'react-dom';
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyQ6L2d3SfAynofqAHfb1jHSn6ZA18pv2ABgXZDLNDR-DHtEyIxYEb8tCCsDBwbk0RF/exec";
 const SECRET = "absis-secret-123";
 
-// 🔹 Upload to GAS (with user folder)
 async function uploadUserFileToGAS(file, idNo, userName, type, memberId, userFolderId) {
   const base64 = await toBase64(file);
   const res = await fetch(GAS_URL, {
     method: "POST",
-    headers: { 'Content-Type': 'text/plain' }, // avoids CORS preflight
+    headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify({
-      action:       "uploadProfileFile",
-      secret:       SECRET,
-      file:         base64.split(",")[1],
-      fileName:     file.name,
-      mimeType:     file.type,
-      userId:       idNo,
-      userName,
-      memberId,
-      userFolderId,
-      type,
+      action: "uploadProfileFile", secret: SECRET,
+      file: base64.split(",")[1], fileName: file.name, mimeType: file.type,
+      userId: idNo, userName, memberId, userFolderId, type,
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -43,6 +35,13 @@ function fmtTS(ts) {
   const d = ts.seconds ? new Date(ts.seconds*1000) : new Date(ts);
   return d.toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
 }
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = ts.seconds ? new Date(ts.seconds*1000) : (typeof ts==='string'?new Date(ts):ts);
+  if (!(d instanceof Date)||isNaN(d)) return String(ts);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+}
+function fmt(n) { return `৳${(Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:0})}`; }
 
 const toBase64 = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -51,6 +50,288 @@ const toBase64 = (file) => new Promise((resolve, reject) => {
   reader.onerror = (error) => reject(error);
 });
 
+// ── Convert any image URL → base64 (cross-origin safe) ───────────────────────
+async function toDataURL(src) {
+  if (!src) return null;
+  if (src.startsWith('data:')) return src;
+  try {
+    const res  = await fetch(src, { mode: 'cors' });
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload  = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  } catch { return null; }
+}
+
+// ── Build PDF HTML (same engine as admin page) ────────────────────────────────
+async function buildMemberPrintHTML({ member, org, fmtDate, fmtTS }) {
+  const [photoSrc, nomineeSrc, logoSrc] = await Promise.all([
+    toDataURL(member.photoURL),
+    toDataURL(member.nomineePhotoURL),
+    toDataURL(org?.logoURL),
+  ]);
+
+  const esc = (v) => String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const row = (label, value, shade) => {
+    if (!value) return '';
+    return `<tr style="background:${shade?'#f7f7f7':'#fff'}">
+      <td class="td-label">${esc(label)}</td>
+      <td class="td-value">${esc(value)}</td>
+    </tr>`;
+  };
+
+  const section = (title, pairs) => {
+    const rows = pairs.map(([l,v],i) => row(l,v,i%2!==0)).join('');
+    if (!rows.trim()) return '';
+    return `<div class="section">
+      <div class="section-head">${esc(title)}</div>
+      <table><tbody>${rows}</tbody></table>
+    </div>`;
+  };
+
+  const photoBox = (src, initials, w, h, label) => `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+      <div style="width:${w}px;height:${h}px;border:1.5px solid #999;border-radius:4px;
+        overflow:hidden;background:#eee;display:flex;align-items:center;
+        justify-content:center;font-size:${Math.round(w*0.35)}px;font-weight:700;color:#555">
+        ${src?`<img src="${src}" style="width:100%;height:100%;object-fit:cover"/>`:esc(initials)}
+      </div>
+      ${label?`<div style="font-size:8pt;color:#666;text-align:center">${esc(label)}</div>`:''}
+    </div>`;
+
+  const INFO = [
+    ['Member ID',              member.idNo],
+    ['Full Name (English)',    member.nameEnglish],
+    ['Full Name (বাংলা)',      member.nameBengali],
+    ["Father's Name (En)",    member.fatherNameEn],
+    ["Father's Name (বাংলা)", member.fatherNameBn],
+    ["Mother's Name (En)",    member.motherNameEn],
+    ["Mother's Name (বাংলা)", member.motherNameBn],
+    ['Date of Birth',         member.dob],
+    ['National ID (NID)',     member.nid],
+    ['Blood Group',           member.bloodGroup],
+    ['Marital Status',        member.maritalStatus],
+    ['Spouse Name (English)', member.spouseNameEn],
+    ['Spouse Name (বাংলা)',   member.spouseNameBn],
+    ['Education',             member.education],
+    ['Occupation',            member.occupation],
+    ['Monthly Income',        member.monthlyIncome],
+    ['Phone',                 member.phone],
+    ['Alternative Phone',     member.alternativePhone],
+    ['Email',                 member.email],
+    ['Joining Date',          fmtDate(member.joiningDate || member.createdAt)],
+  ];
+  const ADDR = [
+    ['Present Address (English)',   member.presentAddressEn],
+    ['Present Address (বাংলা)',     member.presentAddressBn],
+    ['Permanent Address (English)', member.permanentAddressEn],
+    ['Permanent Address (বাংলা)',   member.permanentAddressBn],
+  ];
+  const HEIR = [
+    ['Heir Name (English)',             member.heirNameEn],
+    ['Heir Name (বাংলা)',               member.heirNameBn],
+    ['Relationship',                    member.heirRelation],
+    ["Husband's/Father's Name (En)",    member.heirFatherHusbandEn],
+    ["Husband's/Father's Name (বাংলা)", member.heirFatherHusbandBn],
+    ['NID / Birth Certificate',         member.heirNID],
+    ['Heir Phone',                      member.heirPhone],
+    ['Heir Address (English)',           member.heirAddressEn],
+    ['Heir Address (বাংলা)',             member.heirAddressBn],
+  ];
+
+  const printedOn = new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'});
+  const updatedAt = member.profileUpdatedAt ? ` · Last updated: ${fmtTS(member.profileUpdatedAt)}` : '';
+
+  const quickFacts = [
+    ['Member ID',    member.idNo],
+    ['Joining Date', fmtDate(member.joiningDate || member.createdAt)],
+    ['Blood Group',  member.bloodGroup],
+    ['NID',          member.nid],
+    ['Phone',        member.phone],
+    ['Email',        member.email],
+  ].filter(([,v])=>v).map(([l,v]) => `
+    <div>
+      <div style="font-size:7pt;font-weight:700;color:#888;text-transform:uppercase;
+        letter-spacing:0.05em;margin-bottom:2px">${esc(l)}</div>
+      <div style="font-size:10pt;font-weight:600;color:#111">${esc(v)}</div>
+    </div>`).join('');
+
+  const orgName = org?.name_bn || org?.name_en || org?.name || 'Organization';
+  const orgNameEn = org?.name_en || org?.name || '';
+
+  return `<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8"/>
+<title>Member Profile — ${esc(member.nameEnglish || member.idNo)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Serif:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet"/>
+<style>
+  @page {
+    size: A4 portrait;
+    margin: 18mm 20mm 22mm 20mm;
+  }
+  @page {
+    @bottom-left   { content: "${esc(orgName)} — Confidential"; font-size:7pt;color:#888;font-family:'Noto Serif',serif; }
+    @bottom-center { content: "Member ID: ${esc(member.idNo||'—')}"; font-size:7pt;color:#888;font-family:'Noto Serif',serif; }
+    @bottom-right  { content: "Page " counter(page) " of " counter(pages); font-size:7pt;color:#888;font-family:'Noto Serif',serif; }
+  }
+  * { box-sizing:border-box;margin:0;padding:0; }
+  body {
+    font-family:'SolaimanLipi','Noto Sans Bengali','Vrinda','Shonar Bangla','Noto Serif',Georgia,serif;
+    font-size:10.5pt;color:#111;background:#fff;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact;
+  }
+  .letterhead { display:flex;align-items:flex-start;gap:12px;border-bottom:2.5px solid #000;padding-bottom:8px;margin-bottom:10px; }
+  .letterhead-logo { width:58px;height:58px;object-fit:contain;flex-shrink:0; }
+  .org-name   { font-size:18pt;font-weight:900;line-height:1.2; }
+  .org-sub    { font-size:10pt;color:#555;margin-top:2px; }
+  .org-slogan { font-size:8.5pt;color:#444;font-style:italic;margin:2px 0; }
+  .org-meta   { font-size:8pt;color:#333;display:flex;flex-wrap:wrap;gap:2px 10px;margin-top:3px; }
+  .doc-title-wrap { text-align:center;margin-bottom:10px; }
+  .doc-title { font-size:12pt;font-weight:900;letter-spacing:0.08em;text-transform:uppercase;color:#000;
+    border-bottom:1px solid #ccc;padding:0 16px 4px;display:inline-block; }
+  .doc-meta { font-size:7.5pt;color:#666;margin-top:4px; }
+  .strip { display:flex;gap:14px;align-items:flex-start;border:1px solid #ddd;border-radius:5px;
+    padding:9px 12px;background:#fafafa;margin-bottom:10px; }
+  .strip-facts { flex:1;display:grid;grid-template-columns:1fr 1fr;gap:4px 14px; }
+  .section { margin-bottom:9px;page-break-inside:avoid; }
+  .section-head { background:#1a1a1a;color:#fff;font-weight:800;font-size:8pt;
+    letter-spacing:0.07em;text-transform:uppercase;padding:3px 8px;border-radius:3px 3px 0 0; }
+  table { width:100%;border-collapse:collapse;border:1px solid #ddd;border-top:none; }
+  tr { page-break-inside:avoid; }
+  .td-label { padding:3px 8px;font-weight:700;font-size:8.5pt;color:#444;width:34%;
+    border-bottom:1px solid #e8e8e8;vertical-align:top;font-family:'Noto Serif',Georgia,serif; }
+  .td-value { padding:3px 8px;font-size:9pt;color:#111;border-bottom:1px solid #e8e8e8;
+    vertical-align:top;white-space:pre-wrap; }
+  .doc-footer { display:none; }
+  .page-break { page-break-before:always;break-before:page; }
+  .cont-header { display:flex;align-items:center;gap:10px;border-bottom:1.5px solid #000;
+    padding-bottom:8px;margin-bottom:14px; }
+  .cont-logo { width:32px;height:32px;object-fit:contain;flex-shrink:0; }
+  .cont-org-name { font-size:12pt;font-weight:900; }
+  .cont-sub { font-size:8pt;color:#555;margin-top:2px; }
+  .cont-page { font-size:8pt;color:#888;margin-left:auto; }
+  .sig-grid { display:grid;grid-template-columns:1fr 1fr;gap:48px;margin-top:36px; }
+  .sig-line  { border-bottom:1px solid #000;height:34px;margin-bottom:5px; }
+  .sig-label { font-size:8pt;color:#555;letter-spacing:0.03em;text-align:center; }
+  /* Member-generated watermark */
+  .watermark {
+    position:fixed;bottom:30mm;right:20mm;font-size:8pt;color:#bbb;
+    font-family:'Noto Serif',serif;text-align:right;line-height:1.6;
+    border:1px solid #ddd;padding:4px 8px;border-radius:4px;background:#fafafa;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════ PAGE 1 ════════════ -->
+<div class="letterhead">
+  ${logoSrc?`<img class="letterhead-logo" src="${logoSrc}" alt=""/>`:''}
+  <div>
+    <div class="org-name">${esc(orgName)}</div>
+    ${orgNameEn && orgNameEn!==orgName?`<div class="org-sub">${esc(orgNameEn)}</div>`:''}
+    ${org?.slogan?`<div class="org-slogan">${esc(org.slogan)}</div>`:''}
+    <div class="org-meta">
+      ${org?.email  ?`<span>✉ ${esc(org.email)}</span>`:''}
+      ${org?.phone  ?`<span>☎ ${esc(org.phone)}</span>`:''}
+      ${org?.website?`<span>🌐 ${esc(org.website)}</span>`:''}
+    </div>
+  </div>
+</div>
+
+<div class="doc-title-wrap">
+  <div class="doc-title">Member Information Record</div>
+  <div class="doc-meta">Printed: ${printedOn}${updatedAt}</div>
+</div>
+
+<div class="strip">
+  ${photoBox(photoSrc, member.nameEnglish?.[0]||'?', 88, 108, '')}
+  <div class="strip-facts">${quickFacts}</div>
+  ${nomineeSrc?photoBox(nomineeSrc,'?',58,72,'Nominee'):''}
+</div>
+
+${section('Personal Information', INFO)}
+${section('Address Information', ADDR)}
+
+<!-- ════════════ PAGE 2 ════════════ -->
+<div class="page-break"></div>
+
+<div class="cont-header">
+  ${logoSrc?`<img class="cont-logo" src="${logoSrc}" alt=""/>`:''}
+  <div>
+    <div class="cont-org-name">${esc(orgName)}</div>
+    <div class="cont-sub">Member Information Record (cont.)</div>
+  </div>
+  <div class="cont-page">Page 2 of 2</div>
+</div>
+
+${section('Nominee / Heir Details', HEIR)}
+
+<div class="sig-grid">
+  ${['Member Signature','Authorized Signatory'].map(l=>`
+    <div>
+      <div class="sig-line"></div>
+      <div class="sig-label">${l}</div>
+    </div>`).join('')}
+</div>
+
+<div class="watermark">
+  Self-generated by member<br/>
+  ${esc(member.nameEnglish||'')} · ${esc(member.idNo||'')}<br/>
+  ${printedOn}
+</div>
+
+</body>
+</html>`;
+}
+
+// ── Open print iframe ─────────────────────────────────────────────────────────
+async function generateMemberPDF(props) {
+  const html = await buildMemberPrintHTML(props);
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:210mm;height:297mm;border:none;';
+  document.body.appendChild(iframe);
+  await new Promise(resolve => { iframe.onload = resolve; iframe.srcdoc = html; });
+  await new Promise(r => setTimeout(r, 1400)); // wait for fonts + images
+  iframe.contentWindow.focus();
+  iframe.contentWindow.print();
+  setTimeout(() => iframe.remove(), 3000);
+}
+
+// ── Minimal PDF button component ──────────────────────────────────────────────
+function DownloadPDFButton({ form, orgData }) {
+  const [busy, setBusy] = useState(false);
+
+  const handle = async () => {
+    if (!form) return;
+    setBusy(true);
+    try {
+      await generateMemberPDF({ member: form, org: orgData || {}, fmtDate, fmtTS });
+    } catch(e) {
+      alert('PDF generation failed: ' + e.message);
+    }
+    setBusy(false);
+  };
+
+  return (
+    <button onClick={handle} disabled={busy}
+      style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',
+        background:'#fff',cursor:busy?'not-allowed':'pointer',
+        fontSize:13,fontWeight:600,color:'#475569',
+        display:'flex',alignItems:'center',gap:7,flexShrink:0,
+        opacity:busy?0.7:1}}>
+      {busy ? '⏳ Opening Print…' : '🖨 Download Profile PDF'}
+    </button>
+  );
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
 function Section({ title, children }) {
   return (
     <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
@@ -163,16 +444,14 @@ function FilePreviewModal({ file, onClose }) {
   );
 }
 
-// ── Uploaded files viewer (read-only for member) ──────────────────────────────
+// ── Uploaded files viewer ─────────────────────────────────────────────────────
 function MemberFileViewer({ legalFiles = [] }) {
   const [preview,   setPreview]   = useState(null);
   const [activeTab, setActiveTab] = useState('all');
 
   const adminFiles  = legalFiles.filter(f => f.uploadedBy === 'admin');
   const memberFiles = legalFiles.filter(f => f.uploadedBy !== 'admin');
-  const filtered    = activeTab === 'all'    ? legalFiles
-                    : activeTab === 'admin'  ? adminFiles
-                    : memberFiles;
+  const filtered    = activeTab==='all' ? legalFiles : activeTab==='admin' ? adminFiles : memberFiles;
 
   const fIcon = (mime='') => {
     if (mime.startsWith('image/')) return '🖼️';
@@ -199,8 +478,6 @@ function MemberFileViewer({ legalFiles = [] }) {
   return (
     <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
       overflow:'hidden',marginBottom:16}}>
-
-      {/* Header */}
       <div style={{padding:'11px 16px',background:'#f8fafc',
         borderBottom:'1px solid #e2e8f0',fontWeight:700,fontSize:13,color:'#0f172a',
         display:'flex',justifyContent:'space-between',alignItems:'center'}}>
@@ -209,41 +486,31 @@ function MemberFileViewer({ legalFiles = [] }) {
           {legalFiles.length} file{legalFiles.length!==1?'s':''}
         </span>
       </div>
-
-      {/* Tabs */}
       <div style={{display:'flex',gap:0,borderBottom:'1px solid #e2e8f0',background:'#f8fafc'}}>
-        {[
-          ['all',    'All Files',       legalFiles.length],
-          ['admin',  'From Admin',      adminFiles.length],
-          ['member', 'My Uploads',      memberFiles.length],
-        ].map(([key,label,count])=>(
+        {[['all','All Files',legalFiles.length],['admin','From Admin',adminFiles.length],['member','My Uploads',memberFiles.length]]
+          .map(([key,label,count])=>(
           <button key={key} onClick={()=>setActiveTab(key)}
             style={{padding:'8px 14px',border:'none',cursor:'pointer',fontSize:12,
-              fontWeight: activeTab===key ? 700 : 500,
-              color:      activeTab===key ? '#0f172a' : '#64748b',
-              background: activeTab===key ? '#fff' : 'transparent',
-              borderBottom: activeTab===key ? '2px solid #0f172a' : '2px solid transparent',
+              fontWeight:activeTab===key?700:500,color:activeTab===key?'#0f172a':'#64748b',
+              background:activeTab===key?'#fff':'transparent',
+              borderBottom:activeTab===key?'2px solid #0f172a':'2px solid transparent',
               transition:'all 0.15s'}}>
             {label}
             <span style={{marginLeft:5,fontSize:10,padding:'1px 5px',borderRadius:99,
-              background: activeTab===key ? '#0f172a' : '#e2e8f0',
-              color:      activeTab===key ? '#fff' : '#64748b'}}>
+              background:activeTab===key?'#0f172a':'#e2e8f0',
+              color:activeTab===key?'#fff':'#64748b'}}>
               {count}
             </span>
           </button>
         ))}
       </div>
-
-      {/* Files */}
-      {filtered.length === 0 ? (
-        <div style={{textAlign:'center',padding:'24px',color:'#94a3b8',fontSize:13}}>
-          No files in this category.
-        </div>
+      {filtered.length===0 ? (
+        <div style={{textAlign:'center',padding:'24px',color:'#94a3b8',fontSize:13}}>No files in this category.</div>
       ) : (
         <div>
-          {filtered.map((f, i) => {
-            const isAdmin = f.uploadedBy === 'admin';
-            const fileUrl = f.url || f.viewUrl;
+          {filtered.map((f,i)=>{
+            const isAdmin = f.uploadedBy==='admin';
+            const fileUrl = f.url||f.viewUrl;
             return (
               <div key={i} style={{display:'flex',alignItems:'flex-start',gap:10,
                 padding:'10px 16px',background:i%2===0?'#fff':'#fafafa',
@@ -252,33 +519,28 @@ function MemberFileViewer({ legalFiles = [] }) {
                 <div style={{flex:1,minWidth:0}}>
                   <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
                     overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                    {f.title || f.name}
+                    {f.title||f.name}
                   </div>
                   <div style={{display:'flex',gap:6,flexWrap:'wrap',marginTop:3,alignItems:'center'}}>
-                    {f.category && (
+                    {f.category&&(
                       <span style={{fontSize:10,fontWeight:700,padding:'1px 7px',borderRadius:999,
-                        background: isAdmin ? '#eff6ff' : '#f0fdf4',
-                        color:      isAdmin ? '#1d4ed8' : '#15803d',
-                        border:`1px solid ${isAdmin?'#bfdbfe':'#bbf7d0'}`}}>
-                        {f.category}
-                      </span>
+                        background:isAdmin?'#eff6ff':'#f0fdf4',color:isAdmin?'#1d4ed8':'#15803d',
+                        border:`1px solid ${isAdmin?'#bfdbfe':'#bbf7d0'}`}}>{f.category}</span>
                     )}
                     <span style={{fontSize:10,padding:'1px 7px',borderRadius:999,
-                      background: isAdmin ? '#fef3c7' : '#f1f5f9',
-                      color:      isAdmin ? '#92400e' : '#64748b',
+                      background:isAdmin?'#fef3c7':'#f1f5f9',color:isAdmin?'#92400e':'#64748b',
                       border:`1px solid ${isAdmin?'#fde68a':'#e2e8f0'}`}}>
-                      {isAdmin ? '👤 From Admin' : '🧑 My Upload'}
+                      {isAdmin?'👤 From Admin':'🧑 My Upload'}
                     </span>
-                    {f.uploadedAt && (
+                    {f.uploadedAt&&(
                       <span style={{fontSize:10,color:'#94a3b8'}}>
                         {new Date(f.uploadedAt).toLocaleDateString('en-GB')}
                       </span>
                     )}
                   </div>
-                  {f.description && (
-                    <div style={{fontSize:11,color:'#64748b',marginTop:4,
-                      overflow:'hidden',textOverflow:'ellipsis',
-                      display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
+                  {f.description&&(
+                    <div style={{fontSize:11,color:'#64748b',marginTop:4,overflow:'hidden',
+                      textOverflow:'ellipsis',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}}>
                       {f.description}
                     </div>
                   )}
@@ -289,7 +551,7 @@ function MemberFileViewer({ legalFiles = [] }) {
                       background:'#eff6ff',color:'#1d4ed8',fontSize:12,fontWeight:600,cursor:'pointer'}}>
                     👁 Preview
                   </button>
-                  {fileUrl && (
+                  {fileUrl&&(
                     <a href={fileUrl} target="_blank" rel="noreferrer"
                       style={{padding:'4px 10px',borderRadius:6,background:'#f1f5f9',
                         color:'#475569',fontSize:12,fontWeight:600,textDecoration:'none'}}>
@@ -302,13 +564,11 @@ function MemberFileViewer({ legalFiles = [] }) {
           })}
         </div>
       )}
-
       <FilePreviewModal file={preview} onClose={()=>setPreview(null)}/>
     </div>
   );
 }
 
-// ── Upload status badge ───────────────────────────────────────────────────────
 function UploadStatus({ result }) {
   if (!result) return null;
   return (
@@ -330,7 +590,7 @@ export default function ProfilePage() {
   const orgId    = userData?.activeOrgId;
   const photoRef   = useRef(null);
   const nomineeRef = useRef(null);
-  const otherRef   = useRef(null); // ref for the "other" file input
+  const otherRef   = useRef(null);
 
   const [form,          setForm]          = useState(null);
   const [saving,        setSaving]        = useState(false);
@@ -340,202 +600,126 @@ export default function ProfilePage() {
   const [profileLocked, setProfileLocked] = useState(false);
   const [legalFiles,    setLegalFiles]    = useState([]);
 
-  // Track upload results per type for inline status
   const [uploadResults, setUploadResults] = useState({
-    nid:          null,
-    nomineeNid:   null,
-    nomineePhoto: null,
-    others:       [], // array of {name, url} for multi-file
+    nid: null, nomineeNid: null, nomineePhoto: null, others: [],
   });
 
-  // Upload a single file and save to Firestore
   const handleUserFileUpload = async (file, type) => {
     if (!file) return;
     setProcessing(true);
     try {
       const res = await uploadUserFileToGAS(
-        file,
-        form?.idNo,
-        form.nameEnglish || "User",
-        type,
-        form?.idNo,
-        userData?.driveFolderId
+        file, form?.idNo, form.nameEnglish||"User", type, form?.idNo, userData?.driveFolderId
       );
-
       if (res.folderId) {
-        await updateDoc(doc(db, "users", viewUid), {
-          driveFolderId: res.folderId
-        });
+        await updateDoc(doc(db,"users",viewUid),{ driveFolderId:res.folderId });
       }
-
       if (!res.success) throw new Error(res.error);
-
-      // Build file record — always include fileId so preview iframe works
       const newFile = {
-        name:       file.name,
-        title:      file.name,
-        url:        res.url,
-        fileId:     res.fileId,   // ← required for Google Drive iframe preview
-        mimeType:   file.type,
-        uploadedBy: 'member',
-        uploadedAt: new Date().toISOString(),
-        category:   type === 'nid'           ? 'Identity Document'
-                  : type === 'nomineeNid'    ? 'Identity Document'
-                  : type === 'nomineePhoto'  ? 'Identity Document'
-                  : 'Other',
+        name: file.name, title: file.name, url: res.url, fileId: res.fileId,
+        mimeType: file.type, uploadedBy:'member', uploadedAt:new Date().toISOString(),
+        category: type==='nid'||type==='nomineeNid'||type==='nomineePhoto'?'Identity Document':'Other',
       };
-
       const updatedFiles = [...legalFiles, newFile];
-
-      // Persist to Firestore — admin can see it on the member details page
-      await updateDoc(doc(db, 'organizations', orgId, 'members', viewUid), {
-        legalFiles: updatedFiles,
-      });
+      await updateDoc(doc(db,'organizations',orgId,'members',viewUid),{ legalFiles:updatedFiles });
       setLegalFiles(updatedFiles);
-
-      // Update inline status
-      setUploadResults(prev => {
-        if (type === 'other') {
-          return { ...prev, others: [...prev.others, res] };
-        }
-        return { ...prev, [type]: res };
-      });
-
+      setUploadResults(prev => type==='other'
+        ? {...prev,others:[...prev.others,res]}
+        : {...prev,[type]:res});
       showToast("File uploaded successfully ✅");
-    } catch (e) {
-      showToast(e.message || 'Upload failed', true);
+    } catch(e) {
+      showToast(e.message||'Upload failed', true);
     }
     setProcessing(false);
   };
 
-  // Handle multiple "other" file uploads sequentially
   const handleMultipleOtherUploads = async (files) => {
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      await handleUserFileUpload(file, 'other');
-    }
-    // Reset the input so the same files can be re-selected if needed
-    if (otherRef.current) otherRef.current.value = '';
+    if (!files||files.length===0) return;
+    for (const file of Array.from(files)) await handleUserFileUpload(file,'other');
+    if (otherRef.current) otherRef.current.value='';
   };
 
-  const showToast = (msg, err=false) => {
-    setToast({msg,err}); setTimeout(()=>setToast(''),4000);
-  };
+  const showToast = (msg,err=false) => { setToast({msg,err}); setTimeout(()=>setToast(''),4000); };
 
-  useEffect(() => {
-    if (!user || !orgId) return;
+  useEffect(()=>{
+    if (!user||!orgId) return;
     const load = async () => {
-      const [uSnap, mSnap] = await Promise.all([
-        getDoc(doc(db, 'users', viewUid)),
-        getDoc(doc(db, 'organizations', orgId, 'members', viewUid)),
+      const [uSnap,mSnap] = await Promise.all([
+        getDoc(doc(db,'users',viewUid)),
+        getDoc(doc(db,'organizations',orgId,'members',viewUid)),
       ]);
-      const u = uSnap.exists() ? uSnap.data() : {};
-      const m = mSnap.exists() ? mSnap.data() : {};
-      const idNo = m.idNo || u.idNo || '';
-
+      const u = uSnap.exists()?uSnap.data():{};
+      const m = mSnap.exists()?mSnap.data():{};
+      const idNo = m.idNo||u.idNo||'';
       setForm({
-        nameEnglish:        u.nameEnglish || u.displayName || '',
-        nameBengali:        u.nameBengali || m.nameBengali || '',
-        // fatherName / motherName are old join-page keys; fatherNameEn is the new standard
-        fatherNameEn:       m.fatherNameEn || u.fatherNameEn || u.fatherName || '',
-        fatherNameBn:       m.fatherNameBn || u.fatherNameBn || '',
-        motherNameEn:       m.motherNameEn || u.motherNameEn || u.motherName || '',
-        motherNameBn:       m.motherNameBn || u.motherNameBn || '',
-        dob:                m.dob || u.dob || '',
-        // nid lives on both docs; prefer member doc
-        nid:                m.nid || u.nid || '',
-        bloodGroup:         m.bloodGroup || '',
-        maritalStatus:      m.maritalStatus || '',
-        spouseNameEn:       m.spouseNameEn || '',
-        spouseNameBn:       m.spouseNameBn || '',
-        education:          m.education || '',
-        occupation:         m.occupation  || u.occupation  || '',
-        monthlyIncome:      m.monthlyIncome || '',
-        phone:              u.phone || m.phone || '',
-        alternativePhone:   m.alternativePhone || '',
-        email:              u.email || '',
-        // address: old join-page stored as 'address'; new standard is presentAddressEn
-        presentAddressEn:   m.presentAddressEn || u.presentAddressEn || u.address || '',
-        presentAddressBn:   m.presentAddressBn || '',
-        permanentAddressEn: m.permanentAddressEn || '',
-        permanentAddressBn: m.permanentAddressBn || '',
-        heirNameEn:         m.heirNameEn || '',
-        heirNameBn:         m.heirNameBn || '',
-        heirRelation:       m.heirRelation || '',
-        heirFatherHusbandEn:m.heirFatherHusbandEn || '',
-        heirFatherHusbandBn:m.heirFatherHusbandBn || '',
-        heirNID:            m.heirNID || '',
-        heirPhone:          m.heirPhone || '',
-        heirAddressEn:      m.heirAddressEn || '',
-        heirAddressBn:      m.heirAddressBn || '',
-        photoURL:           u.photoURL || '',
-        nomineePhotoURL:    m.nomineePhotoURL || '',
-        idNo,
+        nameEnglish: u.nameEnglish||u.displayName||'', nameBengali: u.nameBengali||m.nameBengali||'',
+        fatherNameEn: m.fatherNameEn||u.fatherNameEn||u.fatherName||'',
+        fatherNameBn: m.fatherNameBn||u.fatherNameBn||'',
+        motherNameEn: m.motherNameEn||u.motherNameEn||u.motherName||'',
+        motherNameBn: m.motherNameBn||u.motherNameBn||'',
+        dob: m.dob||u.dob||'', nid: m.nid||u.nid||'',
+        bloodGroup: m.bloodGroup||'', maritalStatus: m.maritalStatus||'',
+        spouseNameEn: m.spouseNameEn||'', spouseNameBn: m.spouseNameBn||'',
+        education: m.education||'', occupation: m.occupation||u.occupation||'',
+        monthlyIncome: m.monthlyIncome||'', phone: u.phone||m.phone||'',
+        alternativePhone: m.alternativePhone||'', email: u.email||'',
+        presentAddressEn: m.presentAddressEn||u.presentAddressEn||u.address||'',
+        presentAddressBn: m.presentAddressBn||'',
+        permanentAddressEn: m.permanentAddressEn||'', permanentAddressBn: m.permanentAddressBn||'',
+        heirNameEn: m.heirNameEn||'', heirNameBn: m.heirNameBn||'',
+        heirRelation: m.heirRelation||'', heirFatherHusbandEn: m.heirFatherHusbandEn||'',
+        heirFatherHusbandBn: m.heirFatherHusbandBn||'', heirNID: m.heirNID||'',
+        heirPhone: m.heirPhone||'', heirAddressEn: m.heirAddressEn||'',
+        heirAddressBn: m.heirAddressBn||'', photoURL: u.photoURL||'',
+        nomineePhotoURL: m.nomineePhotoURL||'',
+        idNo, joiningDate: m.joiningDate||u.joiningDate||u.createdAt||null,
+        profileUpdatedAt: m.profileUpdatedAt||u.profileUpdatedAt||null,
       });
-
-      // Load existing legal files
-      setLegalFiles(m.legalFiles || []);
+      setLegalFiles(m.legalFiles||[]);
       setProfileLocked(!!m.profileSubmitted);
-      setLastUpdated(m.profileUpdatedAt || u.profileUpdatedAt || null);
+      setLastUpdated(m.profileUpdatedAt||u.profileUpdatedAt||null);
     };
     load();
-  }, [viewUid, orgId]);
+  },[viewUid,orgId]);
 
-  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
 
   const handlePhotoUpload = async (file, isNominee=false) => {
     if (!file) return;
-    if (file.size > 700 * 1024) {
-      showToast("Image is too large. Please use a file under 700KB.", true);
-      return;
-    }
+    if (file.size>700*1024) { showToast("Image is too large. Max 700KB.",true); return; }
     setProcessing(true);
     try {
       const base64 = await toBase64(file);
-      const urlKey = isNominee ? 'nomineePhotoURL' : 'photoURL';
-      setForm(p => ({...p, [urlKey]: base64}));
-    } catch(e) {
-      showToast(`Processing failed: ${e.message}`, true);
-    }
+      setForm(p=>({...p,[isNominee?'nomineePhotoURL':'photoURL']:base64}));
+    } catch(e) { showToast(`Processing failed: ${e.message}`,true); }
     setProcessing(false);
   };
 
   const handleSave = async () => {
-    if (!form || effectiveLocked) return;
+    if (!form||effectiveLocked) return;
     setSaving(true);
     try {
       const now = serverTimestamp();
-      await updateDoc(doc(db,'users',viewUid), {
-        idNo:             form.idNo,
-        nameEnglish:      form.nameEnglish,
-        nameBengali:       form.nameBengali,
-        phone:            form.phone,
-        photoURL:         form.photoURL,
-        bloodGroup:       form.bloodGroup,
-        occupation:       form.occupation,
-        profileUpdatedAt: now,
+      await updateDoc(doc(db,'users',viewUid),{
+        idNo:form.idNo, nameEnglish:form.nameEnglish, nameBengali:form.nameBengali,
+        phone:form.phone, photoURL:form.photoURL, bloodGroup:form.bloodGroup,
+        occupation:form.occupation, profileUpdatedAt:now,
       });
-      await setDoc(doc(db,'organizations',orgId,'members',viewUid), {
-        ...form,
-        profileUpdatedAt: now,
-        profileSubmitted: true,
-      }, { merge: true });
+      await setDoc(doc(db,'organizations',orgId,'members',viewUid),{
+        ...form, profileUpdatedAt:now, profileSubmitted:true,
+      },{merge:true});
       setProfileLocked(true);
-      setLastUpdated({ seconds: Date.now()/1000 });
+      setLastUpdated({seconds:Date.now()/1000});
       showToast('✅ Profile saved! Changes locked.');
-    } catch(e) {
-      console.error(e);
-      showToast(e.message, true);
-    }
+    } catch(e) { showToast(e.message,true); }
     setSaving(false);
   };
 
   if (!form) return <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>;
 
-  // SuperAdmin viewing as member: profile is read-only (SA sees the data, can't accidentally save)
-  const effectiveLocked = profileLocked || isViewingAsMember;
+  const effectiveLocked = profileLocked||isViewingAsMember;
 
-  const memberId    = userData?.idNo || '—';
+  const memberId    = userData?.idNo||'—';
   const joiningDate = (() => {
     const ts = userData?.joiningDate||userData?.createdAt;
     if (!ts) return '—';
@@ -555,12 +739,17 @@ export default function ProfilePage() {
                 : 'Fill in all details carefully. You can submit only once.'}
             </div>
           </div>
-          {!effectiveLocked && (
-            <button onClick={handleSave} disabled={saving||processing}
-              className="btn-primary" style={{padding:'10px 24px',flexShrink:0}}>
-              {saving?'Saving…':'Submit Profile'}
-            </button>
-          )}
+          {/* ── Action buttons row ── */}
+          <div style={{display:'flex',gap:8,flexWrap:'wrap',alignItems:'center'}}>
+            {/* PDF always visible once form is loaded */}
+            <DownloadPDFButton form={form} orgData={orgData}/>
+            {!effectiveLocked && (
+              <button onClick={handleSave} disabled={saving||processing}
+                className="btn-primary" style={{padding:'10px 24px',flexShrink:0}}>
+                {saving?'Saving…':'Submit Profile'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -575,11 +764,11 @@ export default function ProfilePage() {
         <div style={{padding:'8px 14px',borderRadius:8,background:'#f0f9ff',
           border:'1px solid #bae6fd',fontSize:12,color:'#1e40af',marginBottom:16}}>
           ✏️ Last updated: <strong>{fmtTS(lastUpdated)}</strong>
-          {profileLocked && ' — Locked. Contact admin to edit.'}
+          {profileLocked&&' — Locked. Contact admin to edit.'}
         </div>
       )}
 
-      {/* Photo + Member ID */}
+      {/* Photo + Member ID strip */}
       <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
         padding:'20px',marginBottom:16,display:'flex',gap:20,alignItems:'flex-start',flexWrap:'wrap'}}>
         <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8,flexShrink:0}}>
@@ -592,9 +781,8 @@ export default function ProfilePage() {
               ? <img src={form.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
               : (form.nameEnglish?.[0]||'?').toUpperCase()}
           </div>
-          {!effectiveLocked && (
-            <button onClick={()=>photoRef.current?.click()}
-              disabled={processing}
+          {!effectiveLocked&&(
+            <button onClick={()=>photoRef.current?.click()} disabled={processing}
               style={{padding:'5px 12px',borderRadius:7,border:'1px solid #e2e8f0',
                 background:'#fff',cursor:'pointer',fontSize:11,color:'#475569',fontWeight:600}}>
               {processing?'Processing...':'📷 Photo'}
@@ -695,9 +883,8 @@ export default function ProfilePage() {
                 ? <img src={form.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
                 : '👤'}
             </div>
-            {!effectiveLocked && (
-              <button onClick={()=>nomineeRef.current?.click()}
-                disabled={processing}
+            {!effectiveLocked&&(
+              <button onClick={()=>nomineeRef.current?.click()} disabled={processing}
                 style={{padding:'5px 12px',borderRadius:7,border:'1px solid #e2e8f0',
                   background:'#fff',cursor:'pointer',fontSize:11,color:'#475569',fontWeight:600}}>
                 {processing?'Processing...':'📷 Upload'}
@@ -733,89 +920,65 @@ export default function ProfilePage() {
         </Field>
       </Section>
 
-      {/* Document Uploads — always show, but inputs disabled when locked */}
       <Section title="📂 Document Uploads">
-
-        {/* NID */}
         <Field label="NID Document">
-          <input type="file"
-            disabled={profileLocked || processing}
-            onChange={e => handleUserFileUpload(e.target.files?.[0], 'nid')}
-          />
+          <input type="file" disabled={profileLocked||processing}
+            onChange={e=>handleUserFileUpload(e.target.files?.[0],'nid')}/>
           <UploadStatus result={uploadResults.nid}/>
         </Field>
-
-        {/* Nominee NID */}
         <Field label="Nominee NID">
-          <input type="file"
-            disabled={profileLocked || processing}
-            onChange={e => handleUserFileUpload(e.target.files?.[0], 'nomineeNid')}
-          />
+          <input type="file" disabled={profileLocked||processing}
+            onChange={e=>handleUserFileUpload(e.target.files?.[0],'nomineeNid')}/>
           <UploadStatus result={uploadResults.nomineeNid}/>
         </Field>
-
-        {/* Nominee Photo */}
         <Field label="Nominee Photo File">
-          <input type="file"
-            disabled={profileLocked || processing}
-            onChange={e => handleUserFileUpload(e.target.files?.[0], 'nomineePhoto')}
-          />
+          <input type="file" disabled={profileLocked||processing}
+            onChange={e=>handleUserFileUpload(e.target.files?.[0],'nomineePhoto')}/>
           <UploadStatus result={uploadResults.nomineePhoto}/>
-          {!effectiveLocked && (
+          {!effectiveLocked&&(
             <span style={{fontSize:12,color:'#fd0909',display:'block',marginTop:4}}>
               If not uploaded in Nominee / Heir section above
             </span>
           )}
         </Field>
-
-        {/* Other files — multi-file */}
         <Field label="Other Documents" full>
-          <input
-            ref={otherRef}
-            type="file"
-            multiple
-            disabled={profileLocked || processing}
-            onChange={e => handleMultipleOtherUploads(e.target.files)}
-          />
-          <div style={{fontSize:11,color:'#64748b',marginTop:4}}>
-            You can select multiple files at once.
-          </div>
-          {uploadResults.others.length > 0 && (
+          <input ref={otherRef} type="file" multiple disabled={profileLocked||processing}
+            onChange={e=>handleMultipleOtherUploads(e.target.files)}/>
+          <div style={{fontSize:11,color:'#64748b',marginTop:4}}>You can select multiple files at once.</div>
+          {uploadResults.others.length>0&&(
             <div style={{marginTop:6,display:'flex',flexDirection:'column',gap:4}}>
-              {uploadResults.others.map((f, i) => (
-                <UploadStatus key={i} result={f}/>
-              ))}
+              {uploadResults.others.map((f,i)=><UploadStatus key={i} result={f}/>)}
             </div>
           )}
         </Field>
-
-        {/* Processing indicator */}
-        {processing && (
+        {processing&&(
           <Field label="" full>
             <div style={{fontSize:12,color:'#64748b',display:'flex',alignItems:'center',gap:6}}>
-              <span style={{animation:'spin 1s linear infinite',display:'inline-block'}}>⏳</span>
-              Uploading to Drive, please wait…
+              <span>⏳</span> Uploading to Drive, please wait…
             </div>
           </Field>
         )}
       </Section>
 
-      {/* ── Uploaded files viewer ── */}
       <MemberFileViewer legalFiles={legalFiles}/>
 
-      {!effectiveLocked && (
-        <div style={{display:'flex',justifyContent:'flex-end',marginTop:8,gap:10}}>
-          {processing ? (
-            <span style={{fontSize:12,color:'#64748b',alignSelf:'center'}}>
-              ⏳ Waiting for upload to complete…
-            </span>
-          ) : null}
-          <button onClick={handleSave} disabled={saving||processing}
-            className="btn-primary" style={{padding:'12px 32px',fontSize:14}}>
-            {saving?'Saving…':'Submit Profile'}
-          </button>
-        </div>
-      )}
+      {/* Bottom action bar */}
+      <div style={{display:'flex',justifyContent:'flex-end',marginTop:8,gap:10,flexWrap:'wrap',alignItems:'center'}}>
+        <DownloadPDFButton form={form} orgData={orgData}/>
+        {!effectiveLocked&&(
+          <>
+            {processing&&(
+              <span style={{fontSize:12,color:'#64748b',alignSelf:'center'}}>
+                ⏳ Waiting for upload to complete…
+              </span>
+            )}
+            <button onClick={handleSave} disabled={saving||processing}
+              className="btn-primary" style={{padding:'12px 32px',fontSize:14}}>
+              {saving?'Saving…':'Submit Profile'}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
