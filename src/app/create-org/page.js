@@ -3,11 +3,15 @@ import { useState } from 'react';
 import { auth, db } from '@/lib/firebase';
 import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
+import { usePlatformSettings } from '@/hooks/usePlatformSettings';
+import PlatformGate from '@/components/PlatformGate';
 
 const ORG_TYPES = ['Donation Group','Savings Club','Investment Group','Welfare Fund','Community Fund','Other'];
 
 export default function CreateOrg() {
   const { user } = useAuth();
+  const { settings, loading: settingsLoading } = usePlatformSettings();
+
   const [form, setForm] = useState({
     name:'', type:'', description:'', currency:'BDT',
     baseAmount:'', dueDate:'10', penalty:'50', startDate:'',
@@ -36,7 +40,6 @@ export default function CreateOrg() {
     reader.readAsDataURL(file);
   };
 
-
   const set = (k, v) => setForm(p => ({...p, [k]: v}));
 
   const handleCreate = async (e) => {
@@ -45,8 +48,6 @@ export default function CreateOrg() {
     setLoading(true); setError('');
     try {
       const orgId = `org_${Date.now()}`;
-
-      // Always pending — superadmin must verify before org becomes active
       await setDoc(doc(db, 'organizations', orgId), {
         name: form.name, type: form.type, description: form.description,
         currency: form.currency,
@@ -63,25 +64,29 @@ export default function CreateOrg() {
         createdBy: user.uid,
         createdAt: serverTimestamp(),
       });
-
-      // Add creator as admin member (approved so they can manage org once superadmin approves it)
       await setDoc(doc(db, 'organizations', orgId, 'members', user.uid), {
         role: 'admin', approved: true, idNo: 'A-001', joinedAt: serverTimestamp(),
       });
-
-      // Track org in user doc
       const userSnap    = await getDoc(doc(db, 'users', user.uid));
       const existingIds = userSnap.exists() ? (userSnap.data().orgIds || []) : [];
       await setDoc(doc(db, 'users', user.uid), {
         activeOrgId: orgId,
         orgIds: existingIds.includes(orgId) ? existingIds : [...existingIds, orgId],
       }, { merge: true });
-
-      // Always redirect to pending — superadmin must approve
       window.location.href = '/org-pending';
     } catch (err) { setError(err.message); }
     setLoading(false);
   };
+
+  // ── Maintenance check ────────────────────────────────────────────────────
+  if (!settingsLoading && settings.maintenanceMode) {
+    return <PlatformGate type="maintenance" settings={settings} loading={false}><></></PlatformGate>;
+  }
+
+  // ── Org creation disabled check ──────────────────────────────────────────
+  if (!settingsLoading && !settings.allowOrgCreation) {
+    return <PlatformGate type="orgCreation" settings={settings} loading={false}><></></PlatformGate>;
+  }
 
   return (
     <div style={{ minHeight:'100vh', background:'#f8fafc', padding:24 }}>

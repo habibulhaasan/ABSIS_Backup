@@ -4,10 +4,11 @@ import { auth, db } from '@/lib/firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, setDoc } from 'firebase/firestore';
 import Link from 'next/link';
+import { usePlatformSettings } from '@/hooks/usePlatformSettings';
+import PlatformGate from '@/components/PlatformGate';
 
 const BLOOD_GROUPS = ['A+','A-','B+','B-','AB+','AB-','O+','O-'];
 
-// ⚠️ Defined OUTSIDE component so React never remounts them on re-render
 const Field = ({ label, name, type, placeholder, required, value, onChange, options }) => (
   <div className="form-group">
     <label className="form-label">{label}{required && <span style={{color:'#dc2626'}}> *</span>}</label>
@@ -17,18 +18,15 @@ const Field = ({ label, name, type, placeholder, required, value, onChange, opti
         {options.map(o => <option key={o} value={o}>{o}</option>)}
       </select>
     ) : (
-      <input
-        type={type || 'text'}
-        required={required}
-        placeholder={placeholder}
-        value={value}
-        onChange={e => onChange(name, e.target.value)}
-      />
+      <input type={type || 'text'} required={required} placeholder={placeholder}
+        value={value} onChange={e => onChange(name, e.target.value)} />
     )}
   </div>
 );
 
 export default function Register() {
+  const { settings, loading: settingsLoading } = usePlatformSettings();
+
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({
     nameEnglish:'', nameBengali:'', fatherName:'', motherName:'',
@@ -38,20 +36,14 @@ export default function Register() {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState('');
 
-  // Stable callback — won't cause child remount
   const handleChange = useCallback((key, val) => {
     setForm(prev => ({ ...prev, [key]: val }));
   }, []);
 
   const goStep2 = (e) => {
     e.preventDefault();
-    // Step 1 only requires name — phone/email are on step 2
-    if (!form.nameEnglish.trim()) {
-      setError('Full name is required.');
-      return;
-    }
-    setError('');
-    setStep(2);
+    if (!form.nameEnglish.trim()) { setError('Full name is required.'); return; }
+    setError(''); setStep(2);
   };
 
   const handleRegister = async (e) => {
@@ -64,20 +56,25 @@ export default function Register() {
       const res = await createUserWithEmailAndPassword(auth, form.email, form.password);
       const { password, confirmPassword, ...profile } = form;
       await setDoc(doc(db, 'users', res.user.uid), {
-        ...profile,
-        idNo: '',
-        role: 'member',
-        createdAt: new Date().toISOString(),
+        ...profile, idNo:'', role:'member', createdAt: new Date().toISOString(),
       });
       window.location.href = '/select-org';
     } catch (err) {
-      setError(
-        err.message.includes('email-already-in-use')
-          ? 'This email is already registered.'
-          : err.message.replace('Firebase: ', '')
-      );
+      setError(err.message.includes('email-already-in-use')
+        ? 'This email is already registered.'
+        : err.message.replace('Firebase: ', ''));
     } finally { setLoading(false); }
   };
+
+  // ── Maintenance check (highest priority) ──────────────────────────────────
+  if (!settingsLoading && settings.maintenanceMode) {
+    return <PlatformGate type="maintenance" settings={settings} loading={false}><></></PlatformGate>;
+  }
+
+  // ── Registration disabled check ────────────────────────────────────────────
+  if (!settingsLoading && !settings.allowNewRegistrations) {
+    return <PlatformGate type="registration" settings={settings} loading={false}><></></PlatformGate>;
+  }
 
   return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'#f8fafc' }}>
@@ -87,7 +84,6 @@ export default function Register() {
           <p style={{ fontSize:14, color:'#64748b' }}>Step {step} of 2 — {step===1 ? 'Personal Information' : 'Account Credentials'}</p>
         </div>
 
-        {/* Step indicator */}
         <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:28, justifyContent:'center' }}>
           {[1,2].map(s => (
             <div key={s} style={{ display:'flex', alignItems:'center', gap:8 }}>
@@ -114,13 +110,8 @@ export default function Register() {
               </div>
               <div className="form-group">
                 <label className="form-label">Address</label>
-                <textarea
-                  rows={2}
-                  placeholder="Full address"
-                  value={form.address}
-                  onChange={e => handleChange('address', e.target.value)}
-                  style={{ resize:'vertical' }}
-                />
+                <textarea rows={2} placeholder="Full address" value={form.address}
+                  onChange={e => handleChange('address', e.target.value)} style={{ resize:'vertical' }} />
               </div>
               <button type="submit" className="btn-primary" style={{ width:'100%', justifyContent:'center' }}>Next →</button>
             </form>
