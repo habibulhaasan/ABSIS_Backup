@@ -8,6 +8,9 @@ import { countMissedMonths, sortByMemberId } from '@/lib/fundCalculations';
 import { useAuth } from '@/context/AuthContext';
 import { createPortal } from 'react-dom';
 
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
+
 const BLOOD_GROUPS   = ['A+','A-','B+','B-','AB+','AB-','O+','O-'];
 const MARITAL_STATUS = ['Single','Married','Divorced','Widowed'];
 const EDUCATION      = ["No Formal Education","Primary","Secondary (SSC)",
@@ -96,6 +99,52 @@ async function deleteLegalFileFromGAS(fileId) {
   return await res.json();
 }
 
+// ── PDF generator ─────────────────────────────────────────────────────────────
+// ── Page-break aware PDF generator ───────────────────────────────────────────
+// Instead of slicing canvas blindly, we capture PAGE 1 and PAGE 2 elements
+// separately and place each on its own PDF page. No mid-content cuts.
+async function generatePDF(filename) {
+  const page1El = document.getElementById('mpp-page1');
+  const page2El = document.getElementById('mpp-page2');
+  if (!page1El) return;
+
+  const A4_W  = 595.28;   // pt
+  const A4_H  = 841.89;   // pt
+  const MARGIN = 28;       // pt (~10 mm)
+  const printW = A4_W - MARGIN * 2;
+
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+
+  const renderPage = async (el, addNew) => {
+    const canvas = await html2canvas(el, {
+      scale:           2,
+      useCORS:         true,
+      allowTaint:      false,
+      backgroundColor: '#ffffff',
+      scrollX:         0,
+      scrollY:         -window.scrollY,
+      windowWidth:     el.scrollWidth,
+      windowHeight:    el.scrollHeight,
+    });
+
+    const ratio  = printW / canvas.width;
+    const imgH   = canvas.height * ratio;
+    const imgData = canvas.toDataURL('image/png');
+
+    if (addNew) pdf.addPage();
+
+    // If content is taller than one A4, scale it to fit (shouldn't happen with the split)
+    const finalH = Math.min(imgH, A4_H - MARGIN * 2);
+    pdf.addImage(imgData, 'PNG', MARGIN, MARGIN, printW, finalH);
+  };
+
+  await renderPage(page1El, false);
+  if (page2El) await renderPage(page2El, true);
+
+  pdf.save(filename);
+}
+
+
 // ── CSV export ────────────────────────────────────────────────────────────────
 function memberToCSVRow(m) {
   const esc = v => `"${(v||'').toString().replace(/"/g,'""')}"`;
@@ -141,37 +190,67 @@ function downloadCSV(rows, filename) {
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },100);
 }
 
-// ── Print CSS ─────────────────────────────────────────────────────────────────
+
+// ── Print CSS (keep for window.print fallback only) ───────────────────────────
+
+// ── Print CSS — proper @page setup so browser print dialog shows page options ─
 const PRINT_CSS = `
+@page {
+  size: A4 portrait;
+  margin: 18mm 20mm;
+}
 @media print {
+  html, body {
+    width: 210mm;
+    height: 297mm;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
   body * { visibility: hidden !important; }
-  #mpp, #mpp * { visibility: visible !important; }
-  #mpp { position:fixed!important; top:0; left:0; width:100%;
-    font-family:'Times New Roman',serif; font-size:10.5pt; color:#000; }
-  .no-print { display:none!important; }
-  @page { margin:18mm 20mm; size:A4; }
-  table { page-break-inside:auto; }
-  tr    { page-break-inside:avoid; }
+  #print-root, #print-root * { visibility: visible !important; }
+  #print-root {
+    position: fixed !important;
+    top: 0; left: 0;
+    width: 100%;
+    font-family: 'Times New Roman', serif;
+    font-size: 10.5pt;
+    color: #000;
+  }
+  .no-print { display: none !important; }
+
+  /* Force page 2 content onto a new page */
+  #print-page2 {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  /* Prevent tables / sections from splitting mid-row */
+  table { page-break-inside: auto; }
+  tr    { page-break-inside: avoid; break-inside: avoid; }
+  .print-section { page-break-inside: avoid; break-inside: avoid; }
 }
 `;
 
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 function Letterhead({ org }) {
   return (
-    <div style={{borderBottom:'2.5px solid #000',paddingBottom:14,marginBottom:18,
-      display:'flex',alignItems:'flex-start',gap:16}}>
+    <div style={{ borderBottom: '2.5px solid #000', paddingBottom: 14, marginBottom: 18,
+      display: 'flex', alignItems: 'flex-start', gap: 16 }}>
       {org.logoURL && (
-        <img src={org.logoURL} alt="" style={{width:72,height:72,objectFit:'contain',flexShrink:0}}/>
+        <img src={org.logoURL} alt="" crossOrigin="anonymous"
+          style={{ width: 72, height: 72, objectFit: 'contain', flexShrink: 0 }} />
       )}
-      <div style={{flex:1}}>
-        <div style={{fontSize:22,fontWeight:900,color:'#000',letterSpacing:'0.01em',lineHeight:1.2}}>
-          {org.name||'Organization'}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 22, fontWeight: 900, color: '#000', lineHeight: 1.2 }}>
+          {org.name || 'Organization'}
         </div>
         {org.slogan && (
-          <div style={{fontSize:11,color:'#444',fontStyle:'italic',marginTop:2,marginBottom:4}}>
+          <div style={{ fontSize: 11, color: '#444', fontStyle: 'italic', marginTop: 2, marginBottom: 4 }}>
             {org.slogan}
           </div>
         )}
-        <div style={{fontSize:10,color:'#333',display:'flex',flexWrap:'wrap',gap:'3px 14px',marginTop:4}}>
+        <div style={{ fontSize: 10, color: '#333', display: 'flex', flexWrap: 'wrap', gap: '3px 14px', marginTop: 4 }}>
           {org.email   && <span>✉ {org.email}</span>}
           {org.phone   && <span>☎ {org.phone}</span>}
           {org.website && <span>🌐 {org.website}</span>}
@@ -181,197 +260,317 @@ function Letterhead({ org }) {
   );
 }
 
+
+function SmallLetterhead({ org }) {
+  // Compact letterhead for page 2 continuation header
+  return (
+    <div style={{ borderBottom: '1.5px solid #000', paddingBottom: 8, marginBottom: 14,
+      display: 'flex', alignItems: 'center', gap: 12 }}>
+      {org.logoURL && (
+        <img src={org.logoURL} alt="" crossOrigin="anonymous"
+          style={{ width: 36, height: 36, objectFit: 'contain', flexShrink: 0 }} />
+      )}
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 13, fontWeight: 900, color: '#000' }}>{org.name || 'Organization'}</div>
+        <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>Member Information Record (cont.)</div>
+      </div>
+      <div style={{ fontSize: 9, color: '#888', textAlign: 'right' }}>
+        Page 2 of 2
+      </div>
+    </div>
+  );
+}
+
+
 function TR({ label, value, shade }) {
   if (!value) return null;
   return (
-    <tr style={{background:shade?'#f7f7f7':'#fff'}}>
-      <td style={{padding:'5px 10px',fontWeight:700,fontSize:10,color:'#444',
-        width:'34%',borderBottom:'1px solid #e8e8e8',verticalAlign:'top'}}>
+    <tr style={{ background: shade ? '#f7f7f7' : '#fff' }}>
+      <td style={{ padding: '5px 10px', fontWeight: 700, fontSize: 10, color: '#444',
+        width: '34%', borderBottom: '1px solid #e8e8e8', verticalAlign: 'top' }}>
         {label}
       </td>
-      <td style={{padding:'5px 10px',fontSize:10.5,color:'#111',
-        borderBottom:'1px solid #e8e8e8',verticalAlign:'top',whiteSpace:'pre-wrap'}}>
+      <td style={{ padding: '5px 10px', fontSize: 10.5, color: '#111',
+        borderBottom: '1px solid #e8e8e8', verticalAlign: 'top', whiteSpace: 'pre-wrap' }}>
         {value}
       </td>
     </tr>
   );
 }
 
-function SectionTable({ title, rows }) {
-  const filtered = rows.filter(([,v])=>v);
+function SectionTable({ title, rows, className }) {
+  const filtered = rows.filter(([, v]) => v);
   if (!filtered.length) return null;
   return (
-    <div style={{marginBottom:18,pageBreakInside:'avoid'}}>
-      <div style={{background:'#1a1a1a',color:'#fff',fontWeight:800,fontSize:10,
-        letterSpacing:'0.07em',textTransform:'uppercase',
-        padding:'5px 10px',borderRadius:'3px 3px 0 0'}}>
+    <div className={className} style={{ marginBottom: 14 }}>
+      <div style={{ background: '#1a1a1a', color: '#fff', fontWeight: 800, fontSize: 10,
+        letterSpacing: '0.07em', textTransform: 'uppercase',
+        padding: '5px 10px', borderRadius: '3px 3px 0 0' }}>
         {title}
       </div>
-      <table style={{width:'100%',borderCollapse:'collapse',
-        border:'1px solid #ddd',borderTop:'none'}}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid #ddd', borderTop: 'none' }}>
         <tbody>
-          {filtered.map(([l,v],i)=><TR key={l} label={l} value={v} shade={i%2!==0}/>)}
+          {filtered.map(([l, v], i) => <TR key={l} label={l} value={v} shade={i % 2 !== 0} />)}
         </tbody>
       </table>
     </div>
   );
 }
 
-function PrintModal({ member, orgData, capital, onClose }) {
-  const org = orgData||{};
-  if (typeof document==='undefined') return null;
 
+
+// ── The shared document content, split into page 1 and page 2 ─────────────────
+function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
   const INFO = [
-    ['Member ID',             member.idNo],
-    ['Full Name (English)',   member.nameEnglish],
-    ['Full Name (বাংলা)',     member.nameBengali],
-    ["Father's Name (En)",   member.fatherNameEn||member.fatherName],
-    ["Father's Name (বাংলা)",member.fatherNameBn],
-    ["Mother's Name (En)",   member.motherNameEn||member.motherName],
-    ["Mother's Name (বাংলা)",member.motherNameBn],
-    ['Date of Birth',        member.dob],
-    ['National ID (NID)',    member.nid],
-    ['Blood Group',          member.bloodGroup],
-    ['Marital Status',       member.maritalStatus],
-    ['Spouse Name (English)',member.spouseNameEn],
-    ['Spouse Name (বাংলা)',  member.spouseNameBn],
-    ['Education',            member.education],
-    ['Occupation',           member.occupation],
-    ['Monthly Income',       member.monthlyIncome],
-    ['Phone',                member.phone],
-    ['Alternative Phone',    member.alternativePhone],
-    ['Email',                member.email],
-    ['Joining Date',         fmtDate(member.joiningDate||member.createdAt)],
+    ['Member ID',              member.idNo],
+    ['Full Name (English)',    member.nameEnglish],
+    ['Full Name (বাংলা)',      member.nameBengali],
+    ["Father's Name (En)",    member.fatherNameEn || member.fatherName],
+    ["Father's Name (বাংলা)", member.fatherNameBn],
+    ["Mother's Name (En)",    member.motherNameEn || member.motherName],
+    ["Mother's Name (বাংলা)", member.motherNameBn],
+    ['Date of Birth',         member.dob],
+    ['National ID (NID)',     member.nid],
+    ['Blood Group',           member.bloodGroup],
+    ['Marital Status',        member.maritalStatus],
+    ['Spouse Name (English)', member.spouseNameEn],
+    ['Spouse Name (বাংলা)',   member.spouseNameBn],
+    ['Education',             member.education],
+    ['Occupation',            member.occupation],
+    ['Monthly Income',        member.monthlyIncome],
+    ['Phone',                 member.phone],
+    ['Alternative Phone',     member.alternativePhone],
+    ['Email',                 member.email],
+    ['Joining Date',          fmtDate(member.joiningDate || member.createdAt)],
   ];
   const ADDR = [
-    ['Present Address (English)', member.presentAddressEn||member.presentAddress||member.address],
-    ['Present Address (বাংলা)',   member.presentAddressBn],
-    ['Permanent Address (English)',member.permanentAddressEn||member.permanentAddress],
-    ['Permanent Address (বাংলা)', member.permanentAddressBn],
+    ['Present Address (English)',   member.presentAddressEn || member.presentAddress || member.address],
+    ['Present Address (বাংলা)',     member.presentAddressBn],
+    ['Permanent Address (English)', member.permanentAddressEn || member.permanentAddress],
+    ['Permanent Address (বাংলা)',   member.permanentAddressBn],
   ];
+
+  return (
+    <div style={{ background: '#fff', width: 780, padding: '28px 32px', boxSizing: 'border-box', fontFamily: 'serif' }}>
+      <Letterhead org={org} />
+
+      {/* Document title */}
+      <div style={{ textAlign: 'center', marginBottom: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, letterSpacing: '0.1em',
+          textTransform: 'uppercase', color: '#000',
+          borderBottom: '1px solid #ccc', paddingBottom: 6,
+          display: 'inline-block', paddingLeft: 20, paddingRight: 20 }}>
+          Member Information Record
+        </div>
+        <div style={{ fontSize: 9, color: '#666', marginTop: 5 }}>
+          Printed: {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' })}
+          {member.profileUpdatedAt && ` · Last updated: ${fmtTS(member.profileUpdatedAt)}`}
+          &nbsp;· Page 1 of 2
+        </div>
+      </div>
+
+      {/* Photo strip */}
+      <div style={{ display: 'flex', gap: 20, marginBottom: 18,
+        border: '1px solid #ddd', borderRadius: 6, padding: '14px 16px', background: '#fafafa' }}>
+        <div style={{ width: 90, height: 110, border: '1.5px solid #999', borderRadius: 4,
+          overflow: 'hidden', flexShrink: 0, background: '#eee',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 32, fontWeight: 700, color: '#555' }}>
+          {member.photoURL
+            ? <img src={member.photoURL} alt="" crossOrigin="anonymous"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            : (member.nameEnglish?.[0] || '?')}
+        </div>
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 20px' }}>
+          {[
+            ['Member ID',    member.idNo],
+            ['Joining Date', fmtDate(member.joiningDate || member.createdAt)],
+            ['Status',       member.approved ? 'Active' : 'Pending'],
+            ['Blood Group',  member.bloodGroup],
+            ['NID',          member.nid],
+            ['Phone',        member.phone],
+          ].map(([l, v]) => v ? (
+            <div key={l}>
+              <div style={{ fontSize: 8, fontWeight: 700, color: '#888',
+                textTransform: 'uppercase', letterSpacing: '0.05em' }}>{l}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#111' }}>{v}</div>
+            </div>
+          ) : null)}
+        </div>
+        {member.nomineePhotoURL && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <div style={{ width: 60, height: 75, border: '1px solid #999', borderRadius: 3, overflow: 'hidden', background: '#eee' }}>
+              <img src={member.nomineePhotoURL} alt="" crossOrigin="anonymous"
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            </div>
+            <div style={{ fontSize: 8, color: '#666', textAlign: 'center' }}>Nominee</div>
+          </div>
+        )}
+      </div>
+
+      <SectionTable title="Personal Information" rows={INFO} className="print-section" />
+      <SectionTable title="Address Information"  rows={ADDR} className="print-section" />
+
+      {/* Page 1 footer */}
+      <div style={{ marginTop: 24, paddingTop: 8, borderTop: '1px solid #ddd',
+        display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#888' }}>
+        <span>{org.name || 'Organization'} — Confidential</span>
+        <span>Member ID: {member.idNo || '—'} · Continued on Page 2</span>
+      </div>
+    </div>
+  );
+}
+
+function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
   const HEIR = [
-    ['Heir Name (English)',          member.heirNameEn||member.heirName||member.nomineeNameEnglish],
-    ['Heir Name (বাংলা)',            member.heirNameBn||member.nomineenameBengali],
-    ['Relationship',                 member.heirRelation||member.nomineeRelationship],
-    ["Husband's/Father's Name (En)", member.heirFatherHusbandEn],
-    ["Husband's/Father's Name (বাংলা)",member.heirFatherHusbandBn],
-    ['NID / Birth Certificate',      member.heirNID||member.nomineeNID],
-    ['Heir Phone',                   member.heirPhone||member.nomineePhone],
-    ['Heir Address (English)',        member.heirAddressEn||member.heirAddress],
-    ['Heir Address (বাংলা)',          member.heirAddressBn],
+    ['Heir Name (English)',              member.heirNameEn || member.heirName || member.nomineeNameEnglish],
+    ['Heir Name (বাংলা)',                member.heirNameBn || member.nomineenameBengali],
+    ['Relationship',                     member.heirRelation || member.nomineeRelationship],
+    ["Husband's/Father's Name (En)",     member.heirFatherHusbandEn],
+    ["Husband's/Father's Name (বাংলা)",  member.heirFatherHusbandBn],
+    ['NID / Birth Certificate',          member.heirNID || member.nomineeNID],
+    ['Heir Phone',                       member.heirPhone || member.nomineePhone],
+    ['Heir Address (English)',            member.heirAddressEn || member.heirAddress],
+    ['Heir Address (বাংলা)',              member.heirAddressBn],
   ];
   const LEGAL = [
-    ['Application No.',      member.applicationNo],
-    ['Application Date',     member.applicationDate],
-    ['Agreement No.',        member.agreementNo],
-    ['Agreement Date',       member.agreementDate],
-    ['Legal Papers Link',    member.legalPapersLink],
+    ['Application No.',   member.applicationNo],
+    ['Application Date',  member.applicationDate],
+    ['Agreement No.',     member.agreementNo],
+    ['Agreement Date',    member.agreementDate],
+    ['Legal Papers Link', member.legalPapersLink],
   ];
 
-  return createPortal(
-    <div style={{position:'fixed',inset:0,zIndex:9999,background:'rgba(0,0,0,0.65)',
-      display:'flex',alignItems:'center',justifyContent:'center',padding:16}}>
-      <style>{PRINT_CSS}</style>
-      <div style={{background:'#fff',borderRadius:12,width:'min(860px,100%)',
-        height:'calc(100dvh - 32px)',display:'flex',flexDirection:'column',
-        overflow:'hidden',boxShadow:'0 32px 80px rgba(0,0,0,0.35)'}}>
+  return (
+    <div style={{ background: '#fff', width: 780, padding: '28px 32px', boxSizing: 'border-box', fontFamily: 'serif' }}>
+      <SmallLetterhead org={org} />
 
-        <div className="no-print" style={{padding:'10px 16px',borderBottom:'1px solid #e2e8f0',
-          display:'flex',alignItems:'center',gap:10,flexShrink:0}}>
-          <div style={{flex:1,fontWeight:700,fontSize:14,color:'#0f172a'}}>
+      <SectionTable title="Nominee / Heir Details"    rows={HEIR}  className="print-section" />
+
+      {capital && (
+        <SectionTable title="Capital Summary" className="print-section" rows={[
+          ['Total Capital',     fmt(capital.total)],
+          ['Verified Payments', `${capital.verifiedCount} payments`],
+          ['Pending Payments',  `${capital.pendingCount} pending`],
+        ]} />
+      )}
+
+      <SectionTable title="Legal & Agreement Details" rows={LEGAL} className="print-section" />
+
+      {/* Signature strip */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48, marginTop: 40 }}>
+        {['Member Signature', 'Authorized Signatory'].map(l => (
+          <div key={l} style={{ textAlign: 'center' }}>
+            <div style={{ borderBottom: '1px solid #000', height: 36, marginBottom: 6 }} />
+            <div style={{ fontSize: 9, color: '#555', letterSpacing: '0.03em' }}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Page 2 footer */}
+      <div style={{ marginTop: 32, paddingTop: 8, borderTop: '1px solid #ddd',
+        display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#888' }}>
+        <span>{org.name || 'Organization'} — Confidential</span>
+        <span>Member ID: {member.idNo || '—'} · Page 2 of 2</span>
+      </div>
+    </div>
+  );
+}
+
+
+// ── PrintModal ────────────────────────────────────────────────────────────────
+function PrintModal({ member, orgData, capital, onClose }) {
+  const org = orgData || {};
+  const [generating, setGenerating] = useState(false);
+
+  if (typeof document === 'undefined') return null;
+
+  const handleDownloadPDF = async () => {
+    setGenerating(true);
+    try {
+      await generatePDF(`member-${member.idNo || 'profile'}.pdf`);
+    } catch (err) {
+      alert('PDF generation failed: ' + err.message);
+    }
+    setGenerating(false);
+  };
+
+  const sharedProps = { member, org, capital, fmtDate, fmtTS, fmt };
+
+  return createPortal(
+    <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.65)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+
+      {/*
+        Print root: only #print-root is visible during browser print.
+        It contains both page divs; #print-page2 gets page-break-before via CSS.
+      */}
+      <style>{PRINT_CSS}</style>
+      <div id="print-root" style={{ display: 'none' }}>
+        <div id="print-page1">
+          <DocPage1 {...sharedProps} />
+        </div>
+        <div id="print-page2">
+          <DocPage2 {...sharedProps} />
+        </div>
+      </div>
+
+      {/* Modal shell */}
+      <div style={{ background: '#fff', borderRadius: 12, width: 'min(860px,100%)',
+        height: 'calc(100dvh - 32px)', display: 'flex', flexDirection: 'column',
+        overflow: 'hidden', boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
+
+        {/* Toolbar */}
+        <div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
+          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
             Print Preview — {member.nameEnglish}
           </div>
-          <button onClick={()=>window.print()}
-            style={{padding:'7px 18px',borderRadius:8,background:'#0f172a',
-              color:'#fff',border:'none',cursor:'pointer',fontSize:13,fontWeight:700}}>
-            🖨 Print / PDF
+          <button onClick={handleDownloadPDF} disabled={generating}
+            style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a',
+              color: '#fff', border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 150 }}>
+            {generating ? '⏳ Generating PDF…' : '⬇ Download PDF'}
           </button>
-          <button onClick={()=>downloadCSV([memberToCSVRow(member)],`member-${member.idNo||'profile'}.csv`)}
-            style={{padding:'7px 14px',borderRadius:8,border:'1px solid #e2e8f0',
-              background:'#fff',cursor:'pointer',fontSize:13,color:'#475569'}}>
+          <button onClick={() => window.print()}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
+            🖨 Print
+          </button>
+          <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
             ⬇ CSV
           </button>
           <button onClick={onClose}
-            style={{padding:'7px 12px',borderRadius:8,border:'1px solid #e2e8f0',
-              background:'#fff',cursor:'pointer',fontSize:16,color:'#64748b'}}>
-            ✕
+            style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 16, color: '#64748b' }}>✕
           </button>
         </div>
 
-        <div style={{flex:1,minHeight:0,overflowY:'auto',background:'#f0f0f0',padding:'20px'}}>
-          <div id="mpp" style={{background:'#fff',maxWidth:780,margin:'0 auto',
-            padding:'28px 32px',fontFamily:'serif',boxShadow:'0 2px 12px rgba(0,0,0,0.12)'}}>
-            <Letterhead org={org}/>
-            <div style={{textAlign:'center',marginBottom:20}}>
-              <div style={{fontSize:14,fontWeight:900,letterSpacing:'0.1em',
-                textTransform:'uppercase',color:'#000',
-                borderBottom:'1px solid #ccc',paddingBottom:6,display:'inline-block',
-                paddingLeft:20,paddingRight:20}}>
-                Member Information Record
-              </div>
-              <div style={{fontSize:9,color:'#666',marginTop:5}}>
-                Printed: {new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'})}
-                {member.profileUpdatedAt && ` · Last updated: ${fmtTS(member.profileUpdatedAt)}`}
+        {/* Scrollable two-page preview */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#e8e8e8', padding: '20px',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+
+          {/* Page 1 preview */}
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>PAGE 1</div>
+            <div style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
+              <div id="mpp-page1">
+                <DocPage1 {...sharedProps} />
               </div>
             </div>
-            <div style={{display:'flex',gap:20,marginBottom:20,
-              border:'1px solid #ddd',borderRadius:6,padding:'14px 16px',background:'#fafafa'}}>
-              <div style={{width:90,height:110,border:'1.5px solid #999',borderRadius:4,
-                overflow:'hidden',flexShrink:0,background:'#eee',
-                display:'flex',alignItems:'center',justifyContent:'center',
-                fontSize:32,fontWeight:700,color:'#555'}}>
-                {member.photoURL
-                  ? <img src={member.photoURL} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-                  : (member.nameEnglish?.[0]||'?')}
+          </div>
+
+          {/* Page 2 preview */}
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>PAGE 2</div>
+            <div style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
+              <div id="mpp-page2">
+                <DocPage2 {...sharedProps} />
               </div>
-              <div style={{flex:1,display:'grid',gridTemplateColumns:'1fr 1fr',gap:'6px 20px'}}>
-                {[
-                  ['Member ID',   member.idNo],
-                  ['Joining Date',fmtDate(member.joiningDate||member.createdAt)],
-                  ['Status',      member.approved?'Active':'Pending'],
-                  ['Blood Group', member.bloodGroup],
-                  ['NID',         member.nid],
-                  ['Phone',       member.phone],
-                ].map(([l,v])=>v?(
-                  <div key={l}>
-                    <div style={{fontSize:8,fontWeight:700,color:'#888',
-                      textTransform:'uppercase',letterSpacing:'0.05em'}}>{l}</div>
-                    <div style={{fontSize:11,fontWeight:600,color:'#111'}}>{v}</div>
-                  </div>
-                ):null)}
-              </div>
-              {member.nomineePhotoURL && (
-                <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4,flexShrink:0}}>
-                  <div style={{width:60,height:75,border:'1px solid #999',borderRadius:3,overflow:'hidden',background:'#eee'}}>
-                    <img src={member.nomineePhotoURL} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-                  </div>
-                  <div style={{fontSize:8,color:'#666',textAlign:'center'}}>Nominee</div>
-                </div>
-              )}
-            </div>
-            <SectionTable title="Personal Information"    rows={INFO}/>
-            <SectionTable title="Address Information"     rows={ADDR}/>
-            <SectionTable title="Nominee / Heir Details"  rows={HEIR}/>
-            {capital && (
-              <SectionTable title="Capital Summary" rows={[
-                ['Total Capital',    fmt(capital.total)],
-                ['Verified Payments',`${capital.verifiedCount} payments`],
-                ['Pending Payments', `${capital.pendingCount} pending`],
-              ]}/>
-            )}
-            <SectionTable title="Legal & Agreement Details" rows={LEGAL}/>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:48,marginTop:40}}>
-              {['Member Signature','Authorized Signatory'].map(l=>(
-                <div key={l} style={{textAlign:'center'}}>
-                  <div style={{borderBottom:'1px solid #000',height:36,marginBottom:6}}/>
-                  <div style={{fontSize:9,color:'#555',letterSpacing:'0.03em'}}>{l}</div>
-                </div>
-              ))}
-            </div>
-            <div style={{marginTop:32,paddingTop:8,borderTop:'1px solid #ddd',
-              display:'flex',justifyContent:'space-between',fontSize:8,color:'#888'}}>
-              <span>{org.name||'Organization'} — Confidential</span>
-              <span>Member ID: {member.idNo||'—'} | Page 1</span>
             </div>
           </div>
         </div>
@@ -380,6 +579,7 @@ function PrintModal({ member, orgData, capital, onClose }) {
     document.body
   );
 }
+
 
 // ── Section for view/edit ─────────────────────────────────────────────────────
 function ViewSection({ title, rows }) {
