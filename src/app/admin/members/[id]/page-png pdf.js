@@ -99,381 +99,48 @@ async function deleteLegalFileFromGAS(fileId) {
   return await res.json();
 }
 
-
-// ── Convert image src to base64 (so iframe can render cross-origin photos) ───
-
-// ── Convert image src to base64 (so iframe can render cross-origin photos) ───
-async function toDataURL(src) {
-  if (!src) return null;
-  if (src.startsWith('data:')) return src; // already base64
-  try {
-    const res  = await fetch(src, { mode: 'cors' });
-    const blob = await res.blob();
-    return await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload  = () => resolve(r.result);
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
-  } catch {
-    return null; // photo fails gracefully
-  }
-}
-
-
-// ── Build the full HTML document string for the PDF ──────────────────────────
-// ── Build the full HTML document string for the PDF ──────────────────────────
-async function buildPrintHTML({ member, org, capital, fmtDate, fmtTS, fmt }) {
-  const [photoSrc, nomineeSrc, logoSrc] = await Promise.all([
-    toDataURL(member.photoURL),
-    toDataURL(member.nomineePhotoURL),
-    toDataURL(org.logoURL),
-  ]);
-
-  const esc = (v) => String(v || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-  const row = (label, value, shade) => {
-    if (!value) return '';
-    return `
-      <tr style="background:${shade ? '#f7f7f7' : '#fff'}">
-        <td class="td-label">${esc(label)}</td>
-        <td class="td-value">${esc(value)}</td>
-      </tr>`;
-  };
-
-  const section = (title, pairs) => {
-    const rows = pairs.map(([l, v], i) => row(l, v, i % 2 !== 0)).join('');
-    if (!rows.trim()) return '';
-    return `
-      <div class="section">
-        <div class="section-head">${esc(title)}</div>
-        <table><tbody>${rows}</tbody></table>
-      </div>`;
-  };
-
-  const photoBox = (src, initials, w, h, label) => `
-    <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
-      <div style="width:${w}px;height:${h}px;border:1.5px solid #999;border-radius:4px;
-        overflow:hidden;background:#eee;display:flex;align-items:center;
-        justify-content:center;font-size:${Math.round(w*0.35)}px;font-weight:700;color:#555">
-        ${src ? `<img src="${src}" style="width:100%;height:100%;object-fit:cover"/>` : esc(initials)}
-      </div>
-      ${label ? `<div style="font-size:8pt;color:#666;text-align:center">${esc(label)}</div>` : ''}
-    </div>`;
-
-  const INFO = [
-    ['Member ID',               member.idNo],
-    ['Full Name (English)',      member.nameEnglish],
-    ['Full Name (বাংলা)',        member.nameBengali],
-    ["Father's Name (En)",      member.fatherNameEn || member.fatherName],
-    ["Father's Name (বাংলা)",   member.fatherNameBn],
-    ["Mother's Name (En)",      member.motherNameEn || member.motherName],
-    ["Mother's Name (বাংলা)",   member.motherNameBn],
-    ['Date of Birth',           member.dob],
-    ['National ID (NID)',       member.nid],
-    ['Blood Group',             member.bloodGroup],
-    ['Marital Status',          member.maritalStatus],
-    ['Spouse Name (English)',   member.spouseNameEn],
-    ['Spouse Name (বাংলা)',     member.spouseNameBn],
-    ['Education',               member.education],
-    ['Occupation',              member.occupation],
-    ['Monthly Income',          member.monthlyIncome],
-    ['Phone',                   member.phone],
-    ['Alternative Phone',       member.alternativePhone],
-    ['Email',                   member.email],
-    ['Joining Date',            fmtDate(member.joiningDate || member.createdAt)],
-  ];
-  const ADDR = [
-    ['Present Address (English)',   member.presentAddressEn || member.presentAddress || member.address],
-    ['Present Address (বাংলা)',     member.presentAddressBn],
-    ['Permanent Address (English)', member.permanentAddressEn || member.permanentAddress],
-    ['Permanent Address (বাংলা)',   member.permanentAddressBn],
-  ];
-  const HEIR = [
-    ['Heir Name (English)',              member.heirNameEn || member.heirName || member.nomineeNameEnglish],
-    ['Heir Name (বাংলা)',               member.heirNameBn || member.nomineenameBengali],
-    ['Relationship',                     member.heirRelation || member.nomineeRelationship],
-    ["Husband's/Father's Name (En)",     member.heirFatherHusbandEn],
-    ["Husband's/Father's Name (বাংলা)",  member.heirFatherHusbandBn],
-    ['NID / Birth Certificate',          member.heirNID || member.nomineeNID],
-    ['Heir Phone',                       member.heirPhone || member.nomineePhone],
-    ['Heir Address (English)',            member.heirAddressEn || member.heirAddress],
-    ['Heir Address (বাংলা)',              member.heirAddressBn],
-  ];
-  const LEGAL = [
-    ['Application No.',   member.applicationNo],
-    ['Application Date',  member.applicationDate],
-    ['Agreement No.',     member.agreementNo],
-    ['Agreement Date',    member.agreementDate],
-    ['Legal Papers Link', member.legalPapersLink],
-  ];
-
-  const capitalSection = capital ? section('Capital Summary', [
-    ['Total Capital',     fmt(capital.total)],
-    ['Verified Payments', `${capital.verifiedCount} payments`],
-    ['Pending Payments',  `${capital.pendingCount} pending`],
-  ]) : '';
-
-  const printedOn = new Date().toLocaleDateString('en-GB', { day:'2-digit', month:'long', year:'numeric' });
-  const updatedAt = member.profileUpdatedAt ? ` · Last updated: ${fmtTS(member.profileUpdatedAt)}` : '';
-
-  const quickFacts = [
-    ['Member ID',    member.idNo],
-    ['Joining Date', fmtDate(member.joiningDate || member.createdAt)],
-    ['Status',       member.approved ? 'Active' : 'Pending'],
-    ['Blood Group',  member.bloodGroup],
-    ['NID',          member.nid],
-    ['Phone',        member.phone],
-  ].filter(([, v]) => v).map(([l, v]) => `
-    <div>
-      <div style="font-size:7pt;font-weight:700;color:#888;text-transform:uppercase;
-        letter-spacing:0.05em;margin-bottom:2px">${esc(l)}</div>
-      <div style="font-size:10pt;font-weight:600;color:#111">${esc(v)}</div>
-    </div>`).join('');
-
-  return `<!DOCTYPE html>
-<html lang="bn">
-<head>
-<meta charset="UTF-8"/>
-<title>Member — ${esc(member.nameEnglish || member.idNo)}</title>
-
-<!--
-  Load Noto Sans Bengali (covers all Bangla glyphs) + Noto Serif for Latin.
-  SolaimanLipi is a local font; we fall back to Noto Sans Bengali when it is
-  unavailable inside the print iframe.
--->
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Serif:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet"/>
-
-<style>
-  /* ── Page layout ── */
-  @page {
-    size: A4 portrait;
-    margin: 18mm 20mm 22mm 20mm; /* extra bottom margin for the running footer */
-  }
-
-  /* Running footer — prints on every page automatically */
-  @page {
-    @bottom-left   { content: "${esc(org.name || 'Organization')} — Confidential"; font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
-    @bottom-center { content: "Member ID: ${esc(member.idNo || '—')}"; font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
-    @bottom-right  { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
-  }
-
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    /*
-      Priority order:
-        1. SolaimanLipi  — widely installed on BD govt machines / user devices
-        2. Noto Sans Bengali — loaded from Google Fonts, covers all glyphs
-        3. Vrinda / Shonar Bangla — Windows built-in Bengali fonts
-        4. Generic serif fallback
-    */
-    font-family:
-      'SolaimanLipi',
-      'Noto Sans Bengali',
-      'Vrinda',
-      'Shonar Bangla',
-      'Noto Serif',
-      Georgia,
-      serif;
-    font-size: 10.5pt;
-    color: #111;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-
-  /* ── Letterhead ── */
-  .letterhead {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    border-bottom: 2.5px solid #000;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
-  }
-  .letterhead-logo { width: 58px; height: 58px; object-fit: contain; flex-shrink: 0; }
-  .org-name   { font-size: 18pt; font-weight: 900; line-height: 1.2; }
-  .org-slogan { font-size: 8.5pt; color: #444; font-style: italic; margin: 2px 0; }
-  .org-meta   { font-size: 8pt; color: #333; display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; }
-
-  /* ── Doc title ── */
-  .doc-title-wrap { text-align: center; margin-bottom: 10px; }
-  .doc-title {
-    font-size: 12pt; font-weight: 900; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #000;
-    border-bottom: 1px solid #ccc; padding-bottom: 4px;
-    display: inline-block; padding-left: 16px; padding-right: 16px;
-  }
-  .doc-meta { font-size: 7.5pt; color: #666; margin-top: 4px; }
-
-  /* ── Quick-facts strip ── */
-  .strip {
-    display: flex; gap: 14px; align-items: flex-start;
-    border: 1px solid #ddd; border-radius: 5px;
-    padding: 9px 12px; background: #fafafa; margin-bottom: 10px;
-  }
-  .strip-facts {
-    flex: 1; display: grid;
-    grid-template-columns: 1fr 1fr; gap: 4px 14px;
-  }
-
-  /* ── Sections ── */
-  .section { margin-bottom: 9px; page-break-inside: avoid; }
-  .section-head {
-    background: #1a1a1a; color: #fff; font-weight: 800;
-    font-size: 8pt; letter-spacing: 0.07em; text-transform: uppercase;
-    padding: 3px 8px; border-radius: 3px 3px 0 0;
-  }
-  table {
-    width: 100%; border-collapse: collapse;
-    border: 1px solid #ddd; border-top: none;
-  }
-  tr { page-break-inside: avoid; }
-  .td-label {
-    padding: 3px 8px; font-weight: 700; font-size: 8.5pt; color: #444;
-    width: 34%; border-bottom: 1px solid #e8e8e8; vertical-align: top;
-    /* Latin labels look sharper in Noto Serif */
-    font-family: 'Noto Serif', Georgia, serif;
-  }
-  .td-value {
-    padding: 3px 8px; font-size: 9pt; color: #111;
-    border-bottom: 1px solid #e8e8e8; vertical-align: top; white-space: pre-wrap;
-  }
-
-  /* ── Page 1 / Page 2 wrapper ── */
-  /*
-    We rely on the @page running footer above instead of an in-flow footer div.
-    The .doc-footer divs at the bottom of each page are therefore HIDDEN —
-    the running footer handles it on every printed page automatically.
-    (Uncomment .doc-footer if you ever need it visible in screen/preview mode.)
-  */
-  .doc-footer { display: none; }
-
-  /* ── Page break ── */
-  .page-break { page-break-before: always; break-before: page; }
-
-  /* ── Continuation header (page 2) ── */
-  .cont-header {
-    display: flex; align-items: center; gap: 10px;
-    border-bottom: 1.5px solid #000; padding-bottom: 8px; margin-bottom: 14px;
-  }
-  .cont-logo { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
-  .cont-org-name { font-size: 12pt; font-weight: 900; }
-  .cont-sub  { font-size: 8pt; color: #555; margin-top: 2px; }
-  .cont-page { font-size: 8pt; color: #888; margin-left: auto; }
-
-  /* ── Signatures ── */
-  .sig-grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 48px; margin-top: 36px;
-  }
-  .sig-line  { border-bottom: 1px solid #000; height: 34px; margin-bottom: 5px; }
-  .sig-label { font-size: 8pt; color: #555; letter-spacing: 0.03em; text-align: center; }
-</style>
-</head>
-<body>
-
-<!-- ════════════ PAGE 1 ════════════ -->
-<div class="letterhead">
-  ${logoSrc ? `<img class="letterhead-logo" src="${logoSrc}" alt=""/>` : ''}
-  <div>
-    <div class="org-name">${esc(org.name || 'Organization')}</div>
-    ${org.slogan ? `<div class="org-slogan">${esc(org.slogan)}</div>` : ''}
-    <div class="org-meta">
-      ${org.email   ? `<span>✉ ${esc(org.email)}</span>`   : ''}
-      ${org.phone   ? `<span>☎ ${esc(org.phone)}</span>`   : ''}
-      ${org.website ? `<span>🌐 ${esc(org.website)}</span>` : ''}
-    </div>
-  </div>
-</div>
-
-<div class="doc-title-wrap">
-  <div class="doc-title">Member Information Record</div>
-  <div class="doc-meta">Printed: ${printedOn}${updatedAt}</div>
-</div>
-
-<div class="strip">
-  ${photoBox(photoSrc, member.nameEnglish?.[0] || '?', 88, 108, '')}
-  <div class="strip-facts">${quickFacts}</div>
-  ${nomineeSrc ? photoBox(nomineeSrc, '?', 58, 72, 'Nominee') : ''}
-</div>
-
-${section('Personal Information', INFO)}
-${section('Address Information', ADDR)}
-
-<!-- ════════════ PAGE 2 ════════════ -->
-<div class="page-break"></div>
-
-<div class="cont-header">
-  ${logoSrc ? `<img class="cont-logo" src="${logoSrc}" alt=""/>` : ''}
-  <div>
-    <div class="cont-org-name">${esc(org.name || 'Organization')}</div>
-    <div class="cont-sub">Member Information Record (cont.)</div>
-  </div>
-  <div class="cont-page">Page 2 of 2</div>
-</div>
-
-${section('Nominee / Heir Details', HEIR)}
-${capitalSection}
-${section('Legal & Agreement Details', LEGAL)}
-
-<div class="sig-grid">
-  ${['Member Signature', 'Authorized Signatory'].map(l => `
-    <div>
-      <div class="sig-line"></div>
-      <div class="sig-label">${l}</div>
-    </div>`).join('')}
-</div>
-
-</body>
-</html>`;
-}
-
-
 // ── PDF generator ─────────────────────────────────────────────────────────────
+async function generatePDF(filename) {
+  const page1El = document.getElementById('mpp-page1');
+  const page2El = document.getElementById('mpp-page2');
+  if (!page1El) return;
 
-// ── Open iframe, print to PDF, then remove iframe ─────────────────────────────
-async function generatePDF(props, filename) {
-  const html = await buildPrintHTML(props);
+  const A4_W  = 595.28;   // pt
+  const A4_H  = 841.89;   // pt
+  const MARGIN = 28;       // pt (~10 mm)
+  const printW = A4_W - MARGIN * 2;
 
-  const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:210mm;height:297mm;border:none;';
-  document.body.appendChild(iframe);
+  const pdf = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
 
-  await new Promise((resolve) => {
-    iframe.onload = resolve;
-    iframe.srcdoc = html;
-  });
+  const renderPage = async (el, addNew) => {
+    const canvas = await html2canvas(el, {
+      scale:           2,
+      useCORS:         true,
+      allowTaint:      false,
+      backgroundColor: '#ffffff',
+      scrollX:         0,
+      scrollY:         -window.scrollY,
+      windowWidth:     el.scrollWidth,
+      windowHeight:    el.scrollHeight,
+    });
 
-  // Wait for fonts/images inside iframe to load
-  await new Promise(r => setTimeout(r, 1200));
+    const ratio  = printW / canvas.width;
+    const imgH   = canvas.height * ratio;
+    const imgData = canvas.toDataURL('image/png');
 
-  // Trigger print dialog on the iframe's window
-  iframe.contentWindow.focus();
-  iframe.contentWindow.print();
+    if (addNew) pdf.addPage();
 
-  // Clean up after a delay (dialog is async)
-  setTimeout(() => iframe.remove(), 3000);
+    // If content is taller than one A4, scale it to fit (shouldn't happen with the split)
+    const finalH = Math.min(imgH, A4_H - MARGIN * 2);
+    pdf.addImage(imgData, 'PNG', MARGIN, MARGIN, printW, finalH);
+  };
+
+  await renderPage(page1El, false);
+  if (page2El) await renderPage(page2El, true);
+
+  pdf.save(filename);
 }
 
-// ── Screen-only print CSS (browser print button now goes through iframe) ──────
-
-// ── Screen-only print CSS (browser print button now goes through iframe) ──────
-const PRINT_CSS = `
-@page { size: A4 portrait; margin: 18mm 20mm; }
-@media print {
-  body > * { display: none !important; }
-  #print-root { display: block !important; position: static !important; width: 100% !important; }
-  #print-page2 { page-break-before: always; break-before: page; }
-  #print-page1 > div, #print-page2 > div { width: 100% !important; box-shadow: none !important; padding: 0 !important; }
-  table { page-break-inside: auto; }
-  tr { page-break-inside: avoid; break-inside: avoid; }
-  .print-section { page-break-inside: avoid; break-inside: avoid; }
-}
-`;
 
 // ── CSV export ────────────────────────────────────────────────────────────────
 function memberToCSVRow(m) {
@@ -522,6 +189,67 @@ function downloadCSV(rows, filename) {
 
 
 // ── Print CSS (keep for window.print fallback only) ───────────────────────────
+
+const PRINT_CSS = `
+@page {
+  size: A4 portrait;
+  margin: 18mm 20mm;
+}
+@media print {
+  html, body {
+    width: 210mm;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide everything */
+  body > * { display: none !important; }
+
+  /* Show only the portal root that contains our print content */
+  body > div:last-of-type { display: block !important; }
+
+  /* Hide all modal chrome — overlay, toolbar, preview cards */
+  .modal-overlay,
+  .modal-shell,
+  .no-print,
+  .preview-card { display: none !important; }
+
+  /* Show only the hidden print root */
+  #print-root {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    font-family: 'Times New Roman', serif;
+    font-size: 10.5pt;
+    color: #000;
+  }
+
+  /* Each page div fills one A4 page */
+  #print-page1,
+  #print-page2 {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  /* Hard page break before page 2 */
+  #print-page2 {
+    page-break-before: always;
+    break-before: page;
+  }
+
+  /* Kill fixed widths set for screen preview — let it reflow to 100% */
+  #print-page1 > div,
+  #print-page2 > div {
+    width: 100% !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  table { page-break-inside: auto; }
+  tr    { page-break-inside: avoid; break-inside: avoid; }
+  .print-section { page-break-inside: avoid; break-inside: avoid; }
+}
+`;
 
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -612,6 +340,8 @@ function SectionTable({ title, rows, className }) {
     </div>
   );
 }
+
+
 
 // ── The shared document content, split into page 1 and page 2 ─────────────────
 function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
@@ -774,43 +504,49 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
 
 // ── PrintModal ────────────────────────────────────────────────────────────────
 
-// ── PrintModal ────────────────────────────────────────────────────────────────
 function PrintModal({ member, orgData, capital, onClose }) {
   const org = orgData || {};
   const [generating, setGenerating] = useState(false);
-  if (typeof document === 'undefined') return null;
 
-  const sharedProps = { member, org, capital, fmtDate, fmtTS, fmt };
+  if (typeof document === 'undefined') return null;
 
   const handleDownloadPDF = async () => {
     setGenerating(true);
     try {
       const safeName = (member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_');
-      const safeId   = (member.idNo || 'profile').replace(/\s+/g, '-');
-      await generatePDF(sharedProps, `${safeId}_${safeName}.pdf`);
+      const safeId   = member.idNo || 'profile';
+      await generatePDF(`${safeId}_${safeName}.pdf`);
+
     } catch (err) {
       alert('PDF generation failed: ' + err.message);
     }
     setGenerating(false);
   };
 
+  const sharedProps = { member, org, capital, fmtDate, fmtTS, fmt };
+
   return createPortal(
-    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 9999,
-      background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center',
-      justifyContent: 'center', padding: 16 }}>
+    <div className="modal-overlay" style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.65)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+
       <style>{PRINT_CSS}</style>
 
-      {/* Hidden print root for browser 🖨 Print button fallback */}
-      <div id="print-root" style={{ position: 'absolute', left: '-9999px', top: 0,
-        width: 780, overflow: 'hidden', pointerEvents: 'none', opacity: 0 }}>
+      {/*
+        Print root sits OUTSIDE the modal shell so print CSS can target it cleanly.
+        Visually hidden on screen via position+opacity trick (display:none blocks print).
+      */}
+      <div id="print-root" style={{
+        position: 'absolute', left: '-9999px', top: 0,
+        width: 780, overflow: 'hidden', pointerEvents: 'none', opacity: 0,
+      }}>
         <div id="print-page1"><DocPage1 {...sharedProps} /></div>
         <div id="print-page2"><DocPage2 {...sharedProps} /></div>
       </div>
 
-      <div className="modal-shell" style={{ background: '#fff', borderRadius: 12,
-        width: 'min(860px,100%)', height: 'calc(100dvh - 32px)',
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
+      {/* Modal shell */}
+      <div className="modal-shell" style={{ background: '#fff', borderRadius: 12, width: 'min(860px,100%)',
+        height: 'calc(100dvh - 32px)', display: 'flex', flexDirection: 'column',
+        overflow: 'hidden', boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
 
         {/* Toolbar */}
         <div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
@@ -819,10 +555,15 @@ function PrintModal({ member, orgData, capital, onClose }) {
             Print Preview — {member.nameEnglish}
           </div>
           <button onClick={handleDownloadPDF} disabled={generating}
-            style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a', color: '#fff',
-              border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
-              fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
-            {generating ? '⏳ Opening Print…' : '🖨 Print / Save PDF'}
+            style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a',
+              color: '#fff', border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 150 }}>
+            {generating ? '⏳ Generating PDF…' : '⬇ Download PDF'}
+          </button>
+          <button onClick={() => window.print()}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
+            🖨 Print
           </button>
           <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
             style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
@@ -835,26 +576,38 @@ function PrintModal({ member, orgData, capital, onClose }) {
           </button>
         </div>
 
-        {/* Two-page preview */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#e8e8e8',
-          padding: '20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-          {[['PAGE 1', <DocPage1 key="p1" {...sharedProps} />, 'mpp-page1'],
-            ['PAGE 2', <DocPage2 key="p2" {...sharedProps} />, 'mpp-page2']].map(([label, el, id]) => (
-            <div key={id}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
-                textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>{label}</div>
-              <div className="preview-card"
-                style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
-                <div id={id}>{el}</div>
+        {/* Scrollable two-page preview */}
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#e8e8e8', padding: '20px',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+
+          {/* Page 1 preview */}
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>PAGE 1</div>
+            <div style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
+              <div id="mpp-page1">
+                <DocPage1 {...sharedProps} />
               </div>
             </div>
-          ))}
+          </div>
+
+          {/* Page 2 preview */}
+          <div style={{ position: 'relative' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
+              textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>PAGE 2</div>
+            <div style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
+              <div id="mpp-page2">
+                <DocPage2 {...sharedProps} />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>,
     document.body
   );
 }
+
 
 // ── Section for view/edit ─────────────────────────────────────────────────────
 function ViewSection({ title, rows }) {
