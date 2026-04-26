@@ -14,7 +14,7 @@ import html2canvas from 'html2canvas';
 const BLOOD_GROUPS   = ['A+','A-','B+','B-','AB+','AB-','O+','O-'];
 const MARITAL_STATUS = ['Single','Married','Divorced','Widowed'];
 const EDUCATION      = ["No Formal Education","Primary","Secondary (SSC)",
-  "Higher Secondary (HSC)","Diploma","Bachelor's","Master's","PhD","Other"];
+  "Higher Secondary (HSC)","Diploma","Degree (Pass)","Bachelor's","Master's","PhD","Other"];
 
 // ── GAS CONFIG ────────────────────────────────────────────────────────────────
 const GAS_URL = "https://script.google.com/macros/s/AKfycbyQ6L2d3SfAynofqAHfb1jHSn6ZA18pv2ABgXZDLNDR-DHtEyIxYEb8tCCsDBwbk0RF/exec";
