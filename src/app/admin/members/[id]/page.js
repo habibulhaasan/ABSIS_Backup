@@ -465,6 +465,44 @@ async function generatePDF(props, filename) {
   setTimeout(() => iframe.remove(), 3000);
 }
 
+// ── 1. ADD this new direct-download function (place right after generatePDF) ──
+async function downloadPDFDirect(pageIds, filename) {
+  const { default: jsPDF }       = await import('jspdf');
+  const { default: html2canvas } = await import('html2canvas');
+
+  // A4 dimensions in mm / pt
+  const A4_W_MM = 210, A4_H_MM = 297;
+  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  for (let i = 0; i < pageIds.length; i++) {
+    const el = document.getElementById(pageIds[i]);
+    if (!el) continue;
+
+    const canvas = await html2canvas(el, {
+      scale:            2,          // retina quality
+      useCORS:          true,
+      allowTaint:       false,
+      backgroundColor:  '#ffffff',
+      logging:          false,
+      // stretch to exactly A4 width so nothing is clipped
+      width:            el.scrollWidth,
+      windowWidth:      el.scrollWidth,
+    });
+
+    const imgData  = canvas.toDataURL('image/jpeg', 0.95);
+    const pxW      = canvas.width;
+    const pxH      = canvas.height;
+    // scale so image fills A4 width; height is proportional
+    const imgH_MM  = (pxH / pxW) * A4_W_MM;
+
+    if (i > 0) pdf.addPage();
+    pdf.addImage(imgData, 'JPEG', 0, 0, A4_W_MM, imgH_MM);
+  }
+
+  pdf.save(filename);
+}
+
+
 // ── Screen-only print CSS (browser print button now goes through iframe) ──────
 
 // ── Screen-only print CSS (browser print button now goes through iframe) ──────
@@ -819,27 +857,57 @@ function PrintModal({ member, orgData, capital, onClose }) {
         boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
 
         {/* Toolbar */}
-        <div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
-          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-          <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: '#0f172a' }}>
-            Print Preview — {member.nameEnglish}
-          </div>
-          <button onClick={handleDownloadPDF} disabled={generating}
-            style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a', color: '#fff',
-              border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
-              fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
-            {generating ? '⏳ Opening Print…' : '🖨 Print / Save PDF'}
-          </button>
-          <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
-            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
-              background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
-            ⬇ CSV
-          </button>
-          <button onClick={onClose}
-            style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0',
-              background: '#fff', cursor: 'pointer', fontSize: 16, color: '#64748b' }}>✕
-          </button>
-        </div>
+        
+// REPLACE with:
+<div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
+  display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+  <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: '#0f172a', minWidth: 120 }}>
+    Print Preview — {member.nameEnglish}
+  </div>
+
+  {/* ── existing print button (unchanged) ── */}
+  <button onClick={handleDownloadPDF} disabled={generating}
+    style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a', color: '#fff',
+      border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
+      fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
+    {generating ? '⏳ Opening Print…' : '🖨 Print / Save PDF'}
+  </button>
+
+  {/* ── NEW: direct download button ── */}
+  <button
+    disabled={generating}
+    onClick={async () => {
+      setGenerating(true);
+      try {
+        const safeName = (member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_');
+        const safeId   = (member.idNo || 'profile').replace(/\s+/g, '-');
+        // capture the two preview cards already visible in the modal
+        await downloadPDFDirect(
+          ['mpp-page1', 'mpp-page2'],
+          `${safeId}_${safeName}.pdf`,
+        );
+      } catch (err) {
+        alert('PDF download failed: ' + err.message);
+      }
+      setGenerating(false);
+    }}
+    style={{ padding: '7px 18px', borderRadius: 8,
+      background: generating ? '#94a3b8' : '#1d4ed8', color: '#fff',
+      border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
+      fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
+    {generating ? '⏳ Generating…' : '⬇ Download PDF'}
+  </button>
+
+  <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
+    style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+      background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
+    ⬇ CSV
+  </button>
+  <button onClick={onClose}
+    style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0',
+      background: '#fff', cursor: 'pointer', fontSize: 16, color: '#64748b' }}>✕
+  </button>
+</div>
 
         {/* Two-page preview */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#e8e8e8',
