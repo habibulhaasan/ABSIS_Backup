@@ -99,13 +99,10 @@ async function deleteLegalFileFromGAS(fileId) {
   return await res.json();
 }
 
-
-// ── Convert image src to base64 (so iframe can render cross-origin photos) ───
-
-// ── Convert image src to base64 (so iframe can render cross-origin photos) ───
+// ── Convert image src to base64 ───────────────────────────────────────────────
 async function toDataURL(src) {
   if (!src) return null;
-  if (src.startsWith('data:')) return src; // already base64
+  if (src.startsWith('data:')) return src;
   try {
     const res  = await fetch(src, { mode: 'cors' });
     const blob = await res.blob();
@@ -116,13 +113,11 @@ async function toDataURL(src) {
       r.readAsDataURL(blob);
     });
   } catch {
-    return null; // photo fails gracefully
+    return null;
   }
 }
 
-
-// ── Build the full HTML document string for the PDF ──────────────────────────
-// ── Build the full HTML document string for the PDF ──────────────────────────
+// ── Build the full HTML document string for the iframe print ─────────────────
 async function buildPrintHTML({ member, org, capital, fmtDate, fmtTS, fmt }) {
   const [photoSrc, nomineeSrc, logoSrc] = await Promise.all([
     toDataURL(member.photoURL),
@@ -236,157 +231,59 @@ async function buildPrintHTML({ member, org, capital, fmtDate, fmtTS, fmt }) {
 <head>
 <meta charset="UTF-8"/>
 <title>Member — ${esc(member.nameEnglish || member.idNo)}</title>
-
-<!--
-  Load Noto Sans Bengali (covers all Bangla glyphs) + Noto Serif for Latin.
-  SolaimanLipi is a local font; we fall back to Noto Sans Bengali when it is
-  unavailable inside the print iframe.
--->
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;600;700;800&family=Noto+Serif:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet"/>
-
 <style>
-  /* ── Page layout ── */
   @page {
     size: A4 portrait;
-    margin: 18mm 20mm 22mm 20mm; /* extra bottom margin for the running footer */
+    margin: 18mm 20mm 22mm 20mm;
   }
-
-  /* Running footer — prints on every page automatically */
   @page {
     @bottom-left   { content: "${esc(org.name || 'Organization')} — Confidential"; font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
     @bottom-center { content: "Member ID: ${esc(member.idNo || '—')}"; font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
     @bottom-right  { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #888; font-family: 'Noto Serif', serif; }
   }
-
   * { box-sizing: border-box; margin: 0; padding: 0; }
-
   body {
-    /*
-      Priority order:
-        1. SolaimanLipi  — widely installed on BD govt machines / user devices
-        2. Noto Sans Bengali — loaded from Google Fonts, covers all glyphs
-        3. Vrinda / Shonar Bangla — Windows built-in Bengali fonts
-        4. Generic serif fallback
-    */
-    font-family:
-      'SolaimanLipi',
-      'Noto Sans Bengali',
-      'Vrinda',
-      'Shonar Bangla',
-      'Noto Serif',
-      Georgia,
-      serif;
-    font-size: 10.5pt;
-    color: #111;
-    background: #fff;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    font-family: 'SolaimanLipi', 'Noto Sans Bengali', 'Vrinda', 'Shonar Bangla', 'Noto Serif', Georgia, serif;
+    font-size: 10.5pt; color: #111; background: #fff;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
   }
-
-  /* ── Letterhead ── */
-  .letterhead {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    border-bottom: 2.5px solid #000;
-    padding-bottom: 8px;
-    margin-bottom: 10px;
-  }
-  .letterhead-logo { width: 58px; height: 58px; object-fit: contain; flex-shrink: 0; }
-  .org-name   { font-size: 18pt; font-weight: 900; line-height: 1.2; }
-  .org-slogan { font-size: 8.5pt; color: #444; font-style: italic; margin: 2px 0; }
-  .org-meta   { font-size: 8pt; color: #333; display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 3px; }
-
-  /* ── Doc title ── */
-  .doc-title-wrap { text-align: center; margin-bottom: 10px; }
-  .doc-title {
-    font-size: 12pt; font-weight: 900; letter-spacing: 0.08em;
-    text-transform: uppercase; color: #000;
-    border-bottom: 1px solid #ccc; padding-bottom: 4px;
-    display: inline-block; padding-left: 16px; padding-right: 16px;
-  }
-  .doc-meta { font-size: 7.5pt; color: #666; margin-top: 4px; }
-
-  /* ── Quick-facts strip ── */
-  .strip {
-    display: flex; gap: 14px; align-items: flex-start;
-    border: 1px solid #ddd; border-radius: 5px;
-    padding: 9px 12px; background: #fafafa; margin-bottom: 10px;
-  }
-  .strip-facts {
-    flex: 1; display: grid;
-    grid-template-columns: 1fr 1fr; gap: 4px 14px;
-  }
-
-  /* ── Sections ── */
-  .section { margin-bottom: 9px; page-break-inside: avoid; }
-  .section-head {
-    background: #1a1a1a; color: #fff; font-weight: 800;
-    font-size: 8pt; letter-spacing: 0.07em; text-transform: uppercase;
-    padding: 3px 8px; border-radius: 3px 3px 0 0;
-  }
-  table {
-    width: 100%; border-collapse: collapse;
-    border: 1px solid #ddd; border-top: none;
-  }
-  tr { page-break-inside: avoid; }
-  .td-label {
-    padding: 3px 8px; font-weight: 700; font-size: 8.5pt; color: #444;
-    width: 34%; border-bottom: 1px solid #e8e8e8; vertical-align: top;
-    /* Latin labels look sharper in Noto Serif */
-    font-family: 'Noto Serif', Georgia, serif;
-  }
-  .td-value {
-    padding: 3px 8px; font-size: 9pt; color: #111;
-    border-bottom: 1px solid #e8e8e8; vertical-align: top; white-space: pre-wrap;
-  }
-
-  /* ── Page 1 / Page 2 wrapper ── */
-  /*
-    We rely on the @page running footer above instead of an in-flow footer div.
-    The .doc-footer divs at the bottom of each page are therefore HIDDEN —
-    the running footer handles it on every printed page automatically.
-    (Uncomment .doc-footer if you ever need it visible in screen/preview mode.)
-  */
-  .doc-footer { display: none; }
-
-  /* ── Page break ── */
-  .page-break { page-break-before: always; break-before: page; }
-
-  /* ── Continuation header (page 2) ── */
-  .cont-header {
-    display: flex; align-items: center; gap: 10px;
-    border-bottom: 1.5px solid #000; padding-bottom: 8px; margin-bottom: 14px;
-  }
-  .cont-logo { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
-  .cont-org-name { font-size: 12pt; font-weight: 900; }
-  .cont-sub  { font-size: 8pt; color: #555; margin-top: 2px; }
-  .cont-page { font-size: 8pt; color: #888; margin-left: auto; }
-
-  /* ── Signatures ── */
-  .sig-grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 48px; margin-top: 36px;
-  }
-  .sig-line  { border-bottom: 1px solid #000; height: 34px; margin-bottom: 5px; }
-  .sig-label { font-size: 8pt; color: #555; letter-spacing: 0.03em; text-align: center; }
+  .letterhead { display:flex; align-items:flex-start; gap:12px; border-bottom:2.5px solid #000; padding-bottom:8px; margin-bottom:10px; }
+  .letterhead-logo { width:58px; height:58px; object-fit:contain; flex-shrink:0; }
+  .org-name   { font-size:18pt; font-weight:900; line-height:1.2; }
+  .org-slogan { font-size:8.5pt; color:#444; font-style:italic; margin:2px 0; }
+  .org-meta   { font-size:8pt; color:#333; display:flex; flex-wrap:wrap; gap:2px 10px; margin-top:3px; }
+  .doc-title-wrap { text-align:center; margin-bottom:10px; }
+  .doc-title { font-size:12pt; font-weight:900; letter-spacing:0.08em; text-transform:uppercase; color:#000; border-bottom:1px solid #ccc; padding-bottom:4px; display:inline-block; padding-left:16px; padding-right:16px; }
+  .doc-meta { font-size:7.5pt; color:#666; margin-top:4px; }
+  .strip { display:flex; gap:14px; align-items:flex-start; border:1px solid #ddd; border-radius:5px; padding:9px 12px; background:#fafafa; margin-bottom:10px; }
+  .strip-facts { flex:1; display:grid; grid-template-columns:1fr 1fr; gap:4px 14px; }
+  .section { margin-bottom:9px; page-break-inside:avoid; }
+  .section-head { background:#1a1a1a; color:#fff; font-weight:800; font-size:8pt; letter-spacing:0.07em; text-transform:uppercase; padding:3px 8px; border-radius:3px 3px 0 0; }
+  table { width:100%; border-collapse:collapse; border:1px solid #ddd; border-top:none; }
+  tr { page-break-inside:avoid; }
+  .td-label { padding:3px 8px; font-weight:700; font-size:8.5pt; color:#444; width:34%; border-bottom:1px solid #e8e8e8; vertical-align:top; font-family:'Noto Serif',Georgia,serif; }
+  .td-value { padding:3px 8px; font-size:9pt; color:#111; border-bottom:1px solid #e8e8e8; vertical-align:top; white-space:pre-wrap; }
+  .doc-footer { display:none; }
+  .page-break { page-break-before:always; break-before:page; }
+  .cont-header { display:flex; align-items:center; gap:10px; border-bottom:1.5px solid #000; padding-bottom:8px; margin-bottom:14px; }
+  .cont-logo { width:32px; height:32px; object-fit:contain; flex-shrink:0; }
+  .cont-org-name { font-size:12pt; font-weight:900; }
+  .cont-sub  { font-size:8pt; color:#555; margin-top:2px; }
+  .cont-page { font-size:8pt; color:#888; margin-left:auto; }
+  .sig-grid  { display:grid; grid-template-columns:1fr 1fr; gap:48px; margin-top:36px; }
+  .sig-line  { border-bottom:1px solid #000; height:34px; margin-bottom:5px; }
+  .sig-label { font-size:8pt; color:#555; letter-spacing:0.03em; text-align:center; }
 </style>
 </head>
 <body>
-
-<!-- ════════════ PAGE 1 ════════════ -->
 <div class="letterhead">
   ${logoSrc ? `<img class="letterhead-logo" src="${logoSrc}" alt=""/>` : ''}
   <div>
-    <div style={{fontSize:20,fontWeight:900,color:'#000',
-          fontFamily:"'SolaimanLipi','Arial',sans-serif",lineHeight:1.2}}>
-          ${org.name_bn||'Organization'}<br/>
-          <div style={{fontSize:12,color:'#64748b'}}>
-            ${org.name_en||'Organization'}
-          </div>
-        </div>
+    <div class="org-name">${esc(org.name_bn || org.name || 'Organization')}</div>
+    ${org.name_en && org.name_bn ? `<div style="font-size:12pt;color:#64748b;">${esc(org.name_en)}</div>` : ''}
     ${org.slogan ? `<div class="org-slogan">${esc(org.slogan)}</div>` : ''}
     <div class="org-meta">
       ${org.email   ? `<span>✉ ${esc(org.email)}</span>`   : ''}
@@ -395,24 +292,18 @@ async function buildPrintHTML({ member, org, capital, fmtDate, fmtTS, fmt }) {
     </div>
   </div>
 </div>
-
 <div class="doc-title-wrap">
   <div class="doc-title">Member Information Record</div>
   <div class="doc-meta">Printed: ${printedOn}${updatedAt}</div>
 </div>
-
 <div class="strip">
   ${photoBox(photoSrc, member.nameEnglish?.[0] || '?', 88, 108, '')}
   <div class="strip-facts">${quickFacts}</div>
   ${nomineeSrc ? photoBox(nomineeSrc, '?', 58, 72, 'Nominee') : ''}
 </div>
-
 ${section('Personal Information', INFO)}
 ${section('Address Information', ADDR)}
-
-<!-- ════════════ PAGE 2 ════════════ -->
 <div class="page-break"></div>
-
 <div class="cont-header">
   ${logoSrc ? `<img class="cont-logo" src="${logoSrc}" alt=""/>` : ''}
   <div>
@@ -421,11 +312,9 @@ ${section('Address Information', ADDR)}
   </div>
   <div class="cont-page">Page 2 of 2</div>
 </div>
-
 ${section('Nominee / Heir Details', HEIR)}
 ${capitalSection}
 ${section('Legal & Agreement Details', LEGAL)}
-
 <div class="sig-grid">
   ${['Member Signature', 'Authorized Signatory'].map(l => `
     <div>
@@ -433,44 +322,25 @@ ${section('Legal & Agreement Details', LEGAL)}
       <div class="sig-label">${l}</div>
     </div>`).join('')}
 </div>
-
 </body>
 </html>`;
 }
 
-
-// ── PDF generator ─────────────────────────────────────────────────────────────
-
-// ── Open iframe, print to PDF, then remove iframe ─────────────────────────────
-async function generatePDF(props, filename) {
+// ── Open iframe → print dialog ────────────────────────────────────────────────
+async function generatePDF(props) {
   const html = await buildPrintHTML(props);
-
   const iframe = document.createElement('iframe');
   iframe.style.cssText = 'position:fixed;left:-9999px;top:0;width:210mm;height:297mm;border:none;';
   document.body.appendChild(iframe);
-
-  await new Promise((resolve) => {
-    iframe.onload = resolve;
-    iframe.srcdoc = html;
-  });
-
-  // Wait for fonts/images inside iframe to load
+  await new Promise((resolve) => { iframe.onload = resolve; iframe.srcdoc = html; });
   await new Promise(r => setTimeout(r, 1200));
-
-  // Trigger print dialog on the iframe's window
   iframe.contentWindow.focus();
   iframe.contentWindow.print();
-
-  // Clean up after a delay (dialog is async)
   setTimeout(() => iframe.remove(), 3000);
 }
 
-// ── 1. ADD this new direct-download function (place right after generatePDF) ──
+// ── Direct PDF download via html2canvas + jsPDF ───────────────────────────────
 async function downloadPDFDirect(pageIds, filename) {
-  const { default: jsPDF }       = await import('jspdf');
-  const { default: html2canvas } = await import('html2canvas');
-
-  // A4 dimensions in mm / pt
   const A4_W_MM = 210, A4_H_MM = 297;
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
 
@@ -479,21 +349,17 @@ async function downloadPDFDirect(pageIds, filename) {
     if (!el) continue;
 
     const canvas = await html2canvas(el, {
-      scale:            2,          // retina quality
-      useCORS:          true,
-      allowTaint:       false,
-      backgroundColor:  '#ffffff',
-      logging:          false,
-      // stretch to exactly A4 width so nothing is clipped
-      width:            el.scrollWidth,
-      windowWidth:      el.scrollWidth,
+      scale:           2,
+      useCORS:         true,
+      allowTaint:      false,
+      backgroundColor: '#ffffff',
+      logging:         false,
+      width:           el.scrollWidth,
+      windowWidth:     el.scrollWidth,
     });
 
-    const imgData  = canvas.toDataURL('image/jpeg', 0.95);
-    const pxW      = canvas.width;
-    const pxH      = canvas.height;
-    // scale so image fills A4 width; height is proportional
-    const imgH_MM  = (pxH / pxW) * A4_W_MM;
+    const imgData = canvas.toDataURL('image/jpeg', 0.95);
+    const imgH_MM = (canvas.height / canvas.width) * A4_W_MM;
 
     if (i > 0) pdf.addPage();
     pdf.addImage(imgData, 'JPEG', 0, 0, A4_W_MM, imgH_MM);
@@ -502,10 +368,7 @@ async function downloadPDFDirect(pageIds, filename) {
   pdf.save(filename);
 }
 
-
-// ── Screen-only print CSS (browser print button now goes through iframe) ──────
-
-// ── Screen-only print CSS (browser print button now goes through iframe) ──────
+// ── Screen-only print CSS ─────────────────────────────────────────────────────
 const PRINT_CSS = `
 @page { size: A4 portrait; margin: 18mm 20mm; }
 @media print {
@@ -564,10 +427,6 @@ function downloadCSV(rows, filename) {
   setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); },100);
 }
 
-
-// ── Print CSS (keep for window.print fallback only) ───────────────────────────
-
-
 // ── Sub-components ────────────────────────────────────────────────────────────
 function Letterhead({ org }) {
   return (
@@ -575,14 +434,14 @@ function Letterhead({ org }) {
       display: 'flex', alignItems: 'flex-start', gap: 16 }}>
       {org.logoURL && (
         <img src={org.logoURL} alt="" crossOrigin="anonymous"
-          style={{ width: 72, height: 72, objectFit: 'contain',mixBlendMode: 'multiply',filter: 'contrast(1.1)', flexShrink: 0 }} />
+          style={{ width: 72, height: 72, objectFit: 'contain', mixBlendMode: 'multiply', filter: 'contrast(1.1)', flexShrink: 0 }} />
       )}
       <div style={{ flex: 1 }}>
-        <div style={{fontSize:20,fontWeight:900,color:'#000',
-          fontFamily:"'SolaimanLipi','Arial',sans-serif",lineHeight:1.2}}>
-          {org.name_bn||'Organization'}<br/>
-          <div style={{fontSize:12,color:'#64748b'}}>
-            {org.name_en||'Organization'}
+        <div style={{ fontSize: 20, fontWeight: 900, color: '#000',
+          fontFamily: "'SolaimanLipi','Arial',sans-serif", lineHeight: 1.2 }}>
+          {org.name_bn || 'Organization'}<br/>
+          <div style={{ fontSize: 12, color: '#64748b' }}>
+            {org.name_en || 'Organization'}
           </div>
         </div>
         {org.slogan && (
@@ -600,9 +459,7 @@ function Letterhead({ org }) {
   );
 }
 
-
 function SmallLetterhead({ org }) {
-  // Compact letterhead for page 2 continuation header
   return (
     <div style={{ borderBottom: '1.5px solid #000', paddingBottom: 8, marginBottom: 14,
       display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -614,13 +471,10 @@ function SmallLetterhead({ org }) {
         <div style={{ fontSize: 13, fontWeight: 900, color: '#000' }}>{org.name || 'Organization'}</div>
         <div style={{ fontSize: 9, color: '#555', marginTop: 1 }}>Member Information Record (cont.)</div>
       </div>
-      <div style={{ fontSize: 9, color: '#888', textAlign: 'right' }}>
-        Page 2 of 2
-      </div>
+      <div style={{ fontSize: 9, color: '#888', textAlign: 'right' }}>Page 2 of 2</div>
     </div>
   );
 }
-
 
 function TR({ label, value, shade }) {
   if (!value) return null;
@@ -657,7 +511,6 @@ function SectionTable({ title, rows, className }) {
   );
 }
 
-// ── The shared document content, split into page 1 and page 2 ─────────────────
 function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
   const INFO = [
     ['Member ID',              member.idNo],
@@ -691,8 +544,6 @@ function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
   return (
     <div style={{ background: '#fff', width: 780, padding: '28px 32px', boxSizing: 'border-box', fontFamily: 'serif' }}>
       <Letterhead org={org} />
-
-      {/* Document title */}
       <div style={{ textAlign: 'center', marginBottom: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 900, letterSpacing: '0.1em',
           textTransform: 'uppercase', color: '#000',
@@ -706,8 +557,6 @@ function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
           &nbsp;· Page 1 of 2
         </div>
       </div>
-
-      {/* Photo strip */}
       <div style={{ display: 'flex', gap: 20, marginBottom: 18,
         border: '1px solid #ddd', borderRadius: 6, padding: '14px 16px', background: '#fafafa' }}>
         <div style={{ width: 90, height: 110, border: '1.5px solid #999', borderRadius: 4,
@@ -745,11 +594,8 @@ function DocPage1({ member, org, capital, fmtDate, fmtTS, fmt }) {
           </div>
         )}
       </div>
-
       <SectionTable title="Personal Information" rows={INFO} className="print-section" />
       <SectionTable title="Address Information"  rows={ADDR} className="print-section" />
-
-      {/* Page 1 footer */}
       <div style={{ marginTop: 24, paddingTop: 8, borderTop: '1px solid #ddd',
         display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#888' }}>
         <span>{org.name || 'Organization'} — Confidential</span>
@@ -782,9 +628,7 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
   return (
     <div style={{ background: '#fff', width: 780, padding: '28px 32px', boxSizing: 'border-box', fontFamily: 'serif' }}>
       <SmallLetterhead org={org} />
-
       <SectionTable title="Nominee / Heir Details"    rows={HEIR}  className="print-section" />
-
       {capital && (
         <SectionTable title="Capital Summary" className="print-section" rows={[
           ['Total Capital',     fmt(capital.total)],
@@ -792,10 +636,7 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
           ['Pending Payments',  `${capital.pendingCount} pending`],
         ]} />
       )}
-
       <SectionTable title="Legal & Agreement Details" rows={LEGAL} className="print-section" />
-
-      {/* Signature strip */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 48, marginTop: 40 }}>
         {['Member Signature', 'Authorized Signatory'].map(l => (
           <div key={l} style={{ textAlign: 'center' }}>
@@ -804,8 +645,6 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
           </div>
         ))}
       </div>
-
-      {/* Page 2 footer */}
       <div style={{ marginTop: 32, paddingTop: 8, borderTop: '1px solid #ddd',
         display: 'flex', justifyContent: 'space-between', fontSize: 8, color: '#888' }}>
         <span>{org.name || 'Organization'} — Confidential</span>
@@ -815,27 +654,36 @@ function DocPage2({ member, org, capital, fmtDate, fmtTS, fmt }) {
   );
 }
 
-
-// ── PrintModal ────────────────────────────────────────────────────────────────
-
 // ── PrintModal ────────────────────────────────────────────────────────────────
 function PrintModal({ member, orgData, capital, onClose }) {
   const org = orgData || {};
-  const [generating, setGenerating] = useState(false);
+  const [generating,        setGenerating]        = useState(false);
+  const [downloadingPDF,    setDownloadingPDF]    = useState(false);
   if (typeof document === 'undefined') return null;
 
   const sharedProps = { member, org, capital, fmtDate, fmtTS, fmt };
 
-  const handleDownloadPDF = async () => {
+  // ── filename: {MemberID_MemberName.pdf} ──
+  const pdfFilename = `${(member.idNo || 'profile').replace(/\s+/g, '-')}_${(member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_')}.pdf`;
+
+  const handlePrint = async () => {
     setGenerating(true);
     try {
-      const safeName = (member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_');
-      const safeId   = (member.idNo || 'profile').replace(/\s+/g, '-');
-      await generatePDF(sharedProps, `${safeId}_${safeName}.pdf`);
+      await generatePDF(sharedProps);
     } catch (err) {
-      alert('PDF generation failed: ' + err.message);
+      alert('Print failed: ' + err.message);
     }
     setGenerating(false);
+  };
+
+  const handleDownloadPDF = async () => {
+    setDownloadingPDF(true);
+    try {
+      await downloadPDFDirect(['mpp-page1', 'mpp-page2'], pdfFilename);
+    } catch (err) {
+      alert('PDF download failed: ' + err.message);
+    }
+    setDownloadingPDF(false);
   };
 
   return createPortal(
@@ -844,7 +692,7 @@ function PrintModal({ member, orgData, capital, onClose }) {
       justifyContent: 'center', padding: 16 }}>
       <style>{PRINT_CSS}</style>
 
-      {/* Hidden print root for browser 🖨 Print button fallback */}
+      {/* Hidden print root for browser print fallback */}
       <div id="print-root" style={{ position: 'absolute', left: '-9999px', top: 0,
         width: 780, overflow: 'hidden', pointerEvents: 'none', opacity: 0 }}>
         <div id="print-page1"><DocPage1 {...sharedProps} /></div>
@@ -856,58 +704,43 @@ function PrintModal({ member, orgData, capital, onClose }) {
         display: 'flex', flexDirection: 'column', overflow: 'hidden',
         boxShadow: '0 32px 80px rgba(0,0,0,0.35)' }}>
 
-        {/* Toolbar */}
-        
-// REPLACE with:
-<div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
-  display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
-  <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: '#0f172a', minWidth: 120 }}>
-    Print Preview — {member.nameEnglish}
-  </div>
+        {/* ── Toolbar ── */}
+        <div className="no-print" style={{ padding: '10px 16px', borderBottom: '1px solid #e2e8f0',
+          display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, fontWeight: 700, fontSize: 14, color: '#0f172a', minWidth: 100 }}>
+            Print Preview — {member.nameEnglish}
+          </div>
 
-  {/* ── existing print button (unchanged) ── */}
-  <button onClick={handleDownloadPDF} disabled={generating}
-    style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a', color: '#fff',
-      border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
-      fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
-    {generating ? '⏳ Opening Print…' : '🖨 Print / Save PDF'}
-  </button>
+          {/* Print / Save PDF (opens browser print dialog) */}
+          <button onClick={handlePrint} disabled={generating || downloadingPDF}
+            style={{ padding: '7px 18px', borderRadius: 8, background: '#0f172a', color: '#fff',
+              border: 'none', cursor: (generating || downloadingPDF) ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700,
+              opacity: (generating || downloadingPDF) ? 0.7 : 1, minWidth: 170, whiteSpace: 'nowrap' }}>
+            {generating ? '⏳ Opening Print…' : '🖨 Print / Save PDF'}
+          </button>
 
-  {/* ── NEW: direct download button ── */}
-  <button
-    disabled={generating}
-    onClick={async () => {
-      setGenerating(true);
-      try {
-        const safeName = (member.nameEnglish || member.nameBengali || 'Member').trim().replace(/\s+/g, '_');
-        const safeId   = (member.idNo || 'profile').replace(/\s+/g, '-');
-        // capture the two preview cards already visible in the modal
-        await downloadPDFDirect(
-          ['mpp-page1', 'mpp-page2'],
-          `${safeId}_${safeName}.pdf`,
-        );
-      } catch (err) {
-        alert('PDF download failed: ' + err.message);
-      }
-      setGenerating(false);
-    }}
-    style={{ padding: '7px 18px', borderRadius: 8,
-      background: generating ? '#94a3b8' : '#1d4ed8', color: '#fff',
-      border: 'none', cursor: generating ? 'not-allowed' : 'pointer',
-      fontSize: 13, fontWeight: 700, opacity: generating ? 0.7 : 1, minWidth: 160 }}>
-    {generating ? '⏳ Generating…' : '⬇ Download PDF'}
-  </button>
+          {/* Direct Download PDF */}
+          <button onClick={handleDownloadPDF} disabled={generating || downloadingPDF}
+            style={{ padding: '7px 18px', borderRadius: 8, background: '#1d4ed8', color: '#fff',
+              border: 'none', cursor: (generating || downloadingPDF) ? 'not-allowed' : 'pointer',
+              fontSize: 13, fontWeight: 700,
+              opacity: (generating || downloadingPDF) ? 0.7 : 1, minWidth: 170, whiteSpace: 'nowrap' }}>
+            {downloadingPDF ? '⏳ Generating PDF…' : '⬇ Download PDF'}
+          </button>
 
-  <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
-    style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
-      background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569' }}>
-    ⬇ CSV
-  </button>
-  <button onClick={onClose}
-    style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0',
-      background: '#fff', cursor: 'pointer', fontSize: 16, color: '#64748b' }}>✕
-  </button>
-</div>
+          {/* CSV */}
+          <button onClick={() => downloadCSV([memberToCSVRow(member)], `member-${member.idNo || 'profile'}.csv`)}
+            style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 13, color: '#475569', whiteSpace: 'nowrap' }}>
+            ⬇ CSV
+          </button>
+
+          <button onClick={onClose}
+            style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #e2e8f0',
+              background: '#fff', cursor: 'pointer', fontSize: 16, color: '#64748b' }}>✕
+          </button>
+        </div>
 
         {/* Two-page preview */}
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: '#e8e8e8',
@@ -917,8 +750,7 @@ function PrintModal({ member, orgData, capital, onClose }) {
             <div key={id}>
               <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8',
                 textAlign: 'center', marginBottom: 6, letterSpacing: '0.06em' }}>{label}</div>
-              <div className="preview-card"
-                style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
+              <div style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.18)', borderRadius: 4, overflow: 'hidden' }}>
                 <div id={id}>{el}</div>
               </div>
             </div>
@@ -1100,7 +932,7 @@ function AdminPhotoUpload({ label, orgId, orgData, memberId, memberFolderId, onU
   );
 }
 
-// ── File row ─────────────────────────────────────────────────────────────────
+// ── File row ──────────────────────────────────────────────────────────────────
 function FileRow({ file, index, onPreview, onDelete }) {
   const fIcon = (mime='') => {
     if (mime.startsWith('image/')) return '🖼️';
@@ -1169,7 +1001,6 @@ function FileRow({ file, index, onPreview, onDelete }) {
             ↗ Open
           </a>
         )}
-        {/* ── RESTORED: Delete button ── */}
         {onDelete && (
           <button onClick={()=>onDelete(file)}
             title="Delete file from Drive and profile"
@@ -1296,7 +1127,6 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
     setUploading(false);
   };
 
-  // ── RESTORED: Delete file from Drive + Firestore ──
   const handleDeleteFile = async (file, originalIndex) => {
     const label = file.title || file.name || 'this file';
     if (!window.confirm(`Delete "${label}"?\n\nThis will permanently delete the file from Google Drive and remove it from this profile.`)) return;
@@ -1322,7 +1152,6 @@ function AdminMemberFiles({ member, orgId, onMemberUpdate }) {
 
   return (
     <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden',marginBottom:12}}>
-
       {/* Header */}
       <div style={{padding:'12px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0',
         display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,flexWrap:'wrap'}}>
@@ -1514,7 +1343,7 @@ function ExitWorkflow({ member, capital, orgId, orgData, memberId, onExited }) {
           memberExpenseShare: c.memberExpenseShare || 0,
           feesTotal:          c.feesTotal          || 0,
           loanOutstanding:    c.loanOutstanding    || 0,
-          profitTotal:        c.profitTotal         || 0,
+          profitTotal:        c.profitTotal        || 0,
           returnableCapital:  returnable,
           recordedAt:         new Date().toISOString(),
         },
@@ -1742,7 +1571,6 @@ export default function AdminMemberProfile() {
     } catch(e) { showToast(e.message,true); }
   };
 
-  // ── RESTORED: Allow Re-submit ──
   const handleAllowResubmit = async () => {
     if (!window.confirm('Allow this member to update their profile again? This will reset their submission status.')) return;
     setSaving(true);
@@ -1793,8 +1621,8 @@ export default function AdminMemberProfile() {
       const lateThresh2 = settings2.latePayerAfterMonths??1;
       const reregThresh2= settings2.reregAfterMonths??3;
 
-      const myPay       = paySnap.docs.map(d=>d.data());
-      const ver         = myPay.filter(p=>p.status==='verified'&&p.isContribution!==false);
+      const myPay         = paySnap.docs.map(d=>d.data());
+      const ver           = myPay.filter(p=>p.status==='verified'&&p.isContribution!==false);
       const memberCapital = ver.reduce((s,p)=>s+(p.amount||0)-(feeInAcct?0:(p.gatewayFee||0)),0);
       const orgCapital    = allPaySnap.docs.map(d=>d.data())
         .filter(p=>p.status==='verified'&&p.isContribution!==false)
@@ -1809,10 +1637,10 @@ export default function AdminMemberProfile() {
       const loanOutstanding = loanSnap.docs.map(d=>d.data())
         .filter(l=>l.status==='disbursed')
         .reduce((s,l)=>s+(l.outstandingBalance||0),0);
-      const orgExpenses       = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
-      const expenseProportion = orgCapital>0 ? memberCapital/orgCapital : 0;
-      const memberExpenseShare= Math.round(orgExpenses*expenseProportion);
-      const returnable        = memberCapital-memberExpenseShare-feesTotal-loanOutstanding+profitTotal;
+      const orgExpenses        = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+      const expenseProportion  = orgCapital>0 ? memberCapital/orgCapital : 0;
+      const memberExpenseShare = Math.round(orgExpenses*expenseProportion);
+      const returnable         = memberCapital-memberExpenseShare-feesTotal-loanOutstanding+profitTotal;
 
       setCapital({
         missedMonths:     missed2,
@@ -1836,108 +1664,98 @@ export default function AdminMemberProfile() {
   },[orgId,memberId]);
 
   const handleSave = async () => {
-  if (!form) return;
-  setSaving(true);
+    if (!form) return;
+    setSaving(true);
+    const clean = (v) => (v === undefined || v === null ? null : v);
+    try {
+      const now = serverTimestamp();
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{
+        nameEnglish:         clean(form.nameEnglish),
+        nameBengali:         clean(form.nameBengali),
+        fatherNameEn:        clean(form.fatherNameEn),
+        fatherNameBn:        clean(form.fatherNameBn),
+        motherNameEn:        clean(form.motherNameEn),
+        motherNameBn:        clean(form.motherNameBn),
+        dob:                 clean(form.dob),
+        nid:                 clean(form.nid),
+        bloodGroup:          clean(form.bloodGroup),
+        maritalStatus:       clean(form.maritalStatus),
+        spouseNameEn:        clean(form.spouseNameEn),
+        spouseNameBn:        clean(form.spouseNameBn),
+        education:           clean(form.education),
+        occupation:          clean(form.occupation),
+        monthlyIncome:       clean(form.monthlyIncome),
+        phone:               clean(form.phone),
+        alternativePhone:    clean(form.alternativePhone),
+        presentAddressEn:    clean(form.presentAddressEn),
+        presentAddressBn:    clean(form.presentAddressBn),
+        permanentAddressEn:  clean(form.permanentAddressEn),
+        permanentAddressBn:  clean(form.permanentAddressBn),
+        joiningDate:         clean(form.joiningDate),
+        heirNameEn:          clean(form.heirNameEn),
+        heirNameBn:          clean(form.heirNameBn),
+        heirRelation:        clean(form.heirRelation),
+        heirFatherHusbandEn: clean(form.heirFatherHusbandEn),
+        heirFatherHusbandBn: clean(form.heirFatherHusbandBn),
+        heirNID:             clean(form.heirNID),
+        heirPhone:           clean(form.heirPhone),
+        heirAddressEn:       clean(form.heirAddressEn),
+        heirAddressBn:       clean(form.heirAddressBn),
+        applicationNo:       clean(form.applicationNo),
+        applicationDate:     clean(form.applicationDate),
+        agreementNo:         clean(form.agreementNo),
+        agreementDate:       clean(form.agreementDate),
+        legalPapersLink:     clean(form.legalPapersLink),
+        profileUpdatedAt:    now,
+        profileSubmitted:    true,
+      });
+      await updateDoc(doc(db,'users',memberId),{
+        nameEnglish: clean(form.nameEnglish),
+        nameBengali: clean(form.nameBengali),
+        bloodGroup:  clean(form.bloodGroup),
+        occupation:  clean(form.occupation),
+        phone:       clean(form.phone),
+      });
+      setMember(prev=>({...prev,...form,profileUpdatedAt:{seconds:Date.now()/1000}}));
+      setEditMode(false);
+      showToast('✅ Profile updated!');
+    } catch(e) { showToast(e.message,true); }
+    setSaving(false);
+  };
 
-  // Firestore rejects `undefined` — convert every value to null if falsy/undefined
-  const clean = (v) => (v === undefined || v === null ? null : v);
+  const photoRef        = useRef(null);
+  const nomineePhotoRef = useRef(null);
+  const [photoUploading,        setPhotoUploading]        = useState(false);
+  const [nomineePhotoUploading, setNomineePhotoUploading] = useState(false);
 
-  try {
-    const now = serverTimestamp();
-    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), {
-      nameEnglish:         clean(form.nameEnglish),
-      nameBengali:         clean(form.nameBengali),
-      fatherNameEn:        clean(form.fatherNameEn),
-      fatherNameBn:        clean(form.fatherNameBn),
-      motherNameEn:        clean(form.motherNameEn),
-      motherNameBn:        clean(form.motherNameBn),
-      dob:                 clean(form.dob),
-      nid:                 clean(form.nid),
-      bloodGroup:          clean(form.bloodGroup),
-      maritalStatus:       clean(form.maritalStatus),
-      spouseNameEn:        clean(form.spouseNameEn),
-      spouseNameBn:        clean(form.spouseNameBn),
-      education:           clean(form.education),
-      occupation:          clean(form.occupation),
-      monthlyIncome:       clean(form.monthlyIncome),
-      phone:               clean(form.phone),
-      alternativePhone:    clean(form.alternativePhone),
-      presentAddressEn:    clean(form.presentAddressEn),
-      presentAddressBn:    clean(form.presentAddressBn),
-      permanentAddressEn:  clean(form.permanentAddressEn),
-      permanentAddressBn:  clean(form.permanentAddressBn),
-      joiningDate:         clean(form.joiningDate),
-      heirNameEn:          clean(form.heirNameEn),
-      heirNameBn:          clean(form.heirNameBn),
-      heirRelation:        clean(form.heirRelation),
-      heirFatherHusbandEn: clean(form.heirFatherHusbandEn),
-      heirFatherHusbandBn: clean(form.heirFatherHusbandBn),
-      heirNID:             clean(form.heirNID),
-      heirPhone:           clean(form.heirPhone),
-      heirAddressEn:       clean(form.heirAddressEn),
-      heirAddressBn:       clean(form.heirAddressBn),
-      applicationNo:       clean(form.applicationNo),
-      applicationDate:     clean(form.applicationDate),
-      agreementNo:         clean(form.agreementNo),
-      agreementDate:       clean(form.agreementDate),
-      legalPapersLink:     clean(form.legalPapersLink),
-      profileUpdatedAt:    now,
-      profileSubmitted:    true,
-    });
-    await updateDoc(doc(db, 'users', memberId), {
-      nameEnglish: clean(form.nameEnglish),
-      nameBengali: clean(form.nameBengali),
-      bloodGroup:  clean(form.bloodGroup),
-      occupation:  clean(form.occupation),
-      phone:       clean(form.phone),
-    });
-    setMember(prev => ({ ...prev, ...form, profileUpdatedAt: { seconds: Date.now() / 1000 } }));
-    setEditMode(false);
-    showToast('✅ Profile updated!');
-  } catch (e) {
-    showToast(e.message, true);
-  }
-  setSaving(false);
-};
+  const handleAdminPhotoUpload = async (file) => {
+    if (!file) return;
+    if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
+    setPhotoUploading(true);
+    try {
+      const base64 = await toBase64(file);
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{ photoURL:base64 });
+      await updateDoc(doc(db,'users',memberId),{ photoURL:base64 });
+      setMember(prev=>({...prev,photoURL:base64}));
+      setForm(prev=>({...prev,photoURL:base64}));
+      showToast('✅ Photo updated!');
+    } catch(e) { showToast(e.message,true); }
+    setPhotoUploading(false);
+  };
 
-
-const photoRef        = useRef(null);
-const nomineePhotoRef = useRef(null);
-const [photoUploading,         setPhotoUploading]         = useState(false);
-const [nomineePhotoUploading,  setNomineePhotoUploading]  = useState(false);
-
-
-// ── 2. Replace handleAdminPhotoUpload with two handlers ──────────────────────
-
-const handleAdminPhotoUpload = async (file) => {
-  if (!file) return;
-  if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
-  setPhotoUploading(true);
-  try {
-    const base64 = await toBase64(file);
-    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), { photoURL: base64 });
-    await updateDoc(doc(db, 'users', memberId), { photoURL: base64 });
-    setMember(prev => ({ ...prev, photoURL: base64 }));
-    setForm(prev   => ({ ...prev, photoURL: base64 }));
-    showToast('✅ Photo updated!');
-  } catch (e) { showToast(e.message, true); }
-  setPhotoUploading(false);
-};
-
-const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLER
-  if (!file) return;
-  if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
-  setNomineePhotoUploading(true);
-  try {
-    const base64 = await toBase64(file);
-    await updateDoc(doc(db, 'organizations', orgId, 'members', memberId), { nomineePhotoURL: base64 });
-    setMember(prev => ({ ...prev, nomineePhotoURL: base64 }));
-    setForm(prev   => ({ ...prev, nomineePhotoURL: base64 }));
-    showToast('✅ Nominee photo updated!');
-  } catch (e) { showToast(e.message, true); }
-  setNomineePhotoUploading(false);
-};
-
+  const handleAdminNomineePhotoUpload = async (file) => {
+    if (!file) return;
+    if (file.size > 700 * 1024) { showToast('Image too large. Max 700KB.', true); return; }
+    setNomineePhotoUploading(true);
+    try {
+      const base64 = await toBase64(file);
+      await updateDoc(doc(db,'organizations',orgId,'members',memberId),{ nomineePhotoURL:base64 });
+      setMember(prev=>({...prev,nomineePhotoURL:base64}));
+      setForm(prev=>({...prev,nomineePhotoURL:base64}));
+      showToast('✅ Nominee photo updated!');
+    } catch(e) { showToast(e.message,true); }
+    setNomineePhotoUploading(false);
+  };
 
   if (!isOrgAdmin) return null;
   if (loading) return <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>;
@@ -1973,15 +1791,15 @@ const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLE
     ['Permanent (বাংলা)',   displayData.permanentAddressBn],
   ];
   const VIEW_HEIR = [
-    ['Heir Name (En)',            displayData.heirNameEn||displayData.heirName||displayData.nomineeNameEnglish],
-    ['Heir Name (বাংলা)',         displayData.heirNameBn||displayData.nomineenameBengali],
-    ['Relationship',             displayData.heirRelation||displayData.nomineeRelationship],
-    ["Father/Husband (En)",      displayData.heirFatherHusbandEn],
-    ["Father/Husband (বাংলা)",   displayData.heirFatherHusbandBn],
-    ['Heir NID / Birth Cert',    displayData.heirNID||displayData.nomineeNID],
-    ['Heir Phone',               displayData.heirPhone||displayData.nomineePhone],
-    ['Heir Address (En)',        displayData.heirAddressEn||displayData.heirAddress],
-    ['Heir Address (বাংলা)',      displayData.heirAddressBn],
+    ['Heir Name (En)',          displayData.heirNameEn||displayData.heirName||displayData.nomineeNameEnglish],
+    ['Heir Name (বাংলা)',       displayData.heirNameBn||displayData.nomineenameBengali],
+    ['Relationship',           displayData.heirRelation||displayData.nomineeRelationship],
+    ["Father/Husband (En)",    displayData.heirFatherHusbandEn],
+    ["Father/Husband (বাংলা)", displayData.heirFatherHusbandBn],
+    ['Heir NID / Birth Cert',  displayData.heirNID||displayData.nomineeNID],
+    ['Heir Phone',             displayData.heirPhone||displayData.nomineePhone],
+    ['Heir Address (En)',      displayData.heirAddressEn||displayData.heirAddress],
+    ['Heir Address (বাংলা)',    displayData.heirAddressBn],
   ];
   const VIEW_LEGAL = [
     ['Application No.',  displayData.applicationNo],
@@ -2036,14 +1854,11 @@ const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLE
     ['legalPapersLink','Google Drive Link (Legal Papers)','text'],
   ];
 
-  // ── Capital card color logic ──────────────────────────────────────────────
-  // Green if capital is healthy (no missed months, no loans), amber if
-  // minor issues, red if late payer or loan outstanding or negative returnable
   const capColor = (() => {
     if (!capital) return { bg:'#f8fafc', border:'#e2e8f0', label:'#94a3b8' };
-    const hasLoan   = (capital.loanOutstanding||0) > 0;
-    const isLate    = capital.isLatePayer || capital.missedMonths > 0;
-    const isNeg     = capital.returnableRaw < 0;
+    const hasLoan = (capital.loanOutstanding||0) > 0;
+    const isLate  = capital.isLatePayer || capital.missedMonths > 0;
+    const isNeg   = capital.returnableRaw < 0;
     if (isNeg || (hasLoan && isLate)) return { bg:'#fef2f2', border:'#fca5a5', label:'#b91c1c', accent:'#dc2626' };
     if (isLate || hasLoan)            return { bg:'#fffbeb', border:'#fde68a', label:'#92400e', accent:'#d97706' };
     return                                   { bg:'#f0fdf4', border:'#86efac', label:'#166534', accent:'#16a34a' };
@@ -2110,7 +1925,6 @@ const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLE
                   className="btn-primary" style={{padding:'8px 18px'}}>
                   ✏️ Edit
                 </button>
-                {/* ── RESTORED: Allow Re-submit button ── */}
                 <button onClick={handleAllowResubmit} disabled={!member.profileSubmitted||saving}
                   title={member.profileSubmitted?'Allow member to update their profile again':'Profile not yet submitted'}
                   style={{padding:'8px 16px',borderRadius:8,fontSize:13,fontWeight:600,cursor:'pointer',
@@ -2133,117 +1947,147 @@ const handleAdminNomineePhotoUpload = async (file) => {   // ← ADD THIS HANDLE
         </div>
       )}
 
-      {/* ── Photo strip + Capital cards ──────────────────────────────────── */}
-    <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
-      padding:'16px 20px',marginBottom:14,
-      display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap'}}>
+      {/* ── Photo strip + Capital cards ───────────────────────────────────── */}
+      <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',
+        padding:'16px 20px',marginBottom:14,
+        display:'flex',gap:16,alignItems:'flex-start',flexWrap:'wrap'}}>
 
-      {/* ── Member photo ── */}
-      <div style={{position:'relative',flexShrink:0}}>
-        <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
-          border:'3px solid #bfdbfe',background:'#dbeafe',
-          display:'flex',alignItems:'center',justifyContent:'center',
-          fontSize:28,fontWeight:700,color:'#1d4ed8',cursor:'pointer'}}
-          onClick={()=>photoRef.current?.click()}>
-          {member.photoURL
-            ? <img src={member.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
-            : (member.nameEnglish?.[0]||'?')}
+        {/* Member photo */}
+        <div style={{position:'relative',flexShrink:0}}>
+          <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
+            border:'3px solid #bfdbfe',background:'#dbeafe',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            fontSize:28,fontWeight:700,color:'#1d4ed8',cursor:'pointer'}}
+            onClick={()=>photoRef.current?.click()}>
+            {member.photoURL
+              ? <img src={member.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+              : (member.nameEnglish?.[0]||'?')}
+          </div>
+          <button onClick={()=>photoRef.current?.click()} disabled={photoUploading}
+            style={{position:'absolute',bottom:0,right:0,width:24,height:24,borderRadius:'50%',
+              background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff'}}>
+            {photoUploading?'…':'📷'}
+          </button>
+          <input ref={photoRef} type="file" accept="image/*" style={{display:'none'}}
+            onChange={e=>handleAdminPhotoUpload(e.target.files?.[0])}/>
+          <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>MEMBER</div>
         </div>
-        <button onClick={()=>photoRef.current?.click()} disabled={photoUploading}
-          style={{position:'absolute',bottom:0,right:0,width:24,height:24,borderRadius:'50%',
-            background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#fff'}}>
-          {photoUploading?'…':'📷'}
-        </button>
-        <input ref={photoRef} type="file" accept="image/*" style={{display:'none'}}
-          onChange={e=>handleAdminPhotoUpload(e.target.files?.[0])}/>
-        <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>MEMBER</div>
-      </div>
 
-      {/* ── Nominee photo ── */}
-      <div style={{position:'relative',flexShrink:0}}>
-        <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
-          border:'2px solid #e2e8f0',background:'#f1f5f9',
-          display:'flex',alignItems:'center',justifyContent:'center',
-          fontSize:24,cursor:'pointer'}}
-          onClick={()=>nomineePhotoRef.current?.click()}>
-          {member.nomineePhotoURL
-            ? <img src={member.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="Nominee"/>
-            : '👤'}
+        {/* Nominee photo */}
+        <div style={{position:'relative',flexShrink:0}}>
+          <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
+            border:'2px solid #e2e8f0',background:'#f1f5f9',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            fontSize:24,cursor:'pointer'}}
+            onClick={()=>nomineePhotoRef.current?.click()}>
+            {member.nomineePhotoURL
+              ? <img src={member.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt="Nominee"/>
+              : '👤'}
+          </div>
+          <button onClick={()=>nomineePhotoRef.current?.click()} disabled={nomineePhotoUploading}
+            style={{position:'absolute',bottom:0,right:0,width:22,height:22,borderRadius:'50%',
+              background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff'}}>
+            {nomineePhotoUploading?'…':'📷'}
+          </button>
+          <input ref={nomineePhotoRef} type="file" accept="image/*" style={{display:'none'}}
+            onChange={e=>handleAdminNomineePhotoUpload(e.target.files?.[0])}/>
+          <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>NOMINEE</div>
         </div>
-        <button onClick={()=>nomineePhotoRef.current?.click()} disabled={nomineePhotoUploading}
-          style={{position:'absolute',bottom:0,right:0,width:22,height:22,borderRadius:'50%',
-            background:'#0f172a',border:'2px solid #fff',cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff'}}>
-          {nomineePhotoUploading?'…':'📷'}
-        </button>
-        <input ref={nomineePhotoRef} type="file" accept="image/*" style={{display:'none'}}
-          onChange={e=>handleAdminNomineePhotoUpload(e.target.files?.[0])}/>
-        <div style={{textAlign:'center',marginTop:4,fontSize:9,color:'#94a3b8',fontWeight:600}}>NOMINEE</div>
-      </div>
 
-      {/* ── Info cards ── */}
-      <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
-        {[
-          {label:'Member ID',   value:member.idNo,                      bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-          {label:'Blood Group', value:member.bloodGroup,                 bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-          {label:'Status',
-            value:(member.memberStatus==='archived'||memberStatus==='archived')?'📦 Archived'
-                :(member.memberStatus==='terminated'||memberStatus==='terminated')?'⛔ Terminated'
-                :member.approved?'✅ Active':'⏳ Pending',
-            bg:(member.memberStatus==='archived'||memberStatus==='archived')?'#fffbeb'
-              :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fef2f2'
-              :member.approved?'#f0fdf4':'#fffbeb',
-            border:(member.memberStatus==='archived'||memberStatus==='archived')?'#fde68a'
-                  :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fca5a5'
-                  :member.approved?'#86efac':'#fde68a',
-            color:(member.memberStatus==='archived'||memberStatus==='archived')?'#92400e'
-                :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#dc2626'
-                :member.approved?'#15803d':'#92400e'},
-          {label:'Profile',     value:member.profileSubmitted?'Submitted':'Not submitted',
-            bg:member.profileSubmitted?'#f0fdf4':'#f8fafc',
-            border:member.profileSubmitted?'#86efac':'#e2e8f0',
-            color:member.profileSubmitted?'#15803d':'#64748b'},
-          {label:'Last Updated',value:fmtTS(member.profileUpdatedAt),   bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
-        ].map(({label,value,bg,border,color})=>(
-          <div key={label} style={{background:bg,borderRadius:7,padding:'8px 10px',
-            border:`1px solid ${border}`}}>
+        {/* Info cards */}
+        <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))',gap:8}}>
+          {[
+            {label:'Member ID',   value:member.idNo,         bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+            {label:'Blood Group', value:member.bloodGroup,   bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+            {label:'Status',
+              value:(member.memberStatus==='archived'||memberStatus==='archived')?'📦 Archived'
+                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'⛔ Terminated'
+                   :member.approved?'✅ Active':'⏳ Pending',
+              bg:(member.memberStatus==='archived'||memberStatus==='archived')?'#fffbeb'
+                :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fef2f2'
+                :member.approved?'#f0fdf4':'#fffbeb',
+              border:(member.memberStatus==='archived'||memberStatus==='archived')?'#fde68a'
+                    :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#fca5a5'
+                    :member.approved?'#86efac':'#fde68a',
+              color:(member.memberStatus==='archived'||memberStatus==='archived')?'#92400e'
+                   :(member.memberStatus==='terminated'||memberStatus==='terminated')?'#dc2626'
+                   :member.approved?'#15803d':'#92400e'},
+            {label:'Profile',     value:member.profileSubmitted?'Submitted':'Not submitted',
+              bg:member.profileSubmitted?'#f0fdf4':'#f8fafc',
+              border:member.profileSubmitted?'#86efac':'#e2e8f0',
+              color:member.profileSubmitted?'#15803d':'#64748b'},
+            {label:'Last Updated',value:fmtTS(member.profileUpdatedAt), bg:'#f8fafc', border:'#e2e8f0', color:'#0f172a'},
+          ].map(({label,value,bg,border,color})=>(
+            <div key={label} style={{background:bg,borderRadius:7,padding:'8px 10px',
+              border:`1px solid ${border}`}}>
+              <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
+                textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{label}</div>
+              <div style={{fontSize:12,fontWeight:600,color}}>{value||'—'}</div>
+            </div>
+          ))}
+
+          {/* Capital card */}
+          <div style={{background:capColor.bg,borderRadius:7,padding:'8px 10px',
+            border:`1px solid ${capColor.border}`}}>
             <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
-              textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>{label}</div>
-            <div style={{fontSize:12,fontWeight:600,color}}>{value||'—'}</div>
-          </div>
-        ))}
-
-        {/* Capital card */}
-        <div style={{background:capColor.bg,borderRadius:7,padding:'8px 10px',
-          border:`1px solid ${capColor.border}`}}>
-          <div style={{fontSize:9,fontWeight:700,color:'#94a3b8',
-            textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>Capital</div>
-          <div style={{fontSize:14,fontWeight:800,color:capColor.accent||capColor.label}}>
-            {capital ? fmt(capital.total) : '…'}
-          </div>
-          {capital && capital.loanOutstanding>0 && (
-            <div style={{fontSize:9,color:capColor.label,marginTop:2,fontWeight:600}}>
-              Loan: {fmt(capital.loanOutstanding)}
+              textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:2}}>Capital</div>
+            <div style={{fontSize:14,fontWeight:800,color:capColor.accent||capColor.label}}>
+              {capital ? fmt(capital.total) : '…'}
             </div>
-          )}
-          {capital && capital.missedMonths>0 && (
-            <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
-              {capital.missedMonths} missed Installments
-            </div>
-          )}
+            {capital && capital.loanOutstanding>0 && (
+              <div style={{fontSize:9,color:capColor.label,marginTop:2,fontWeight:600}}>
+                Loan: {fmt(capital.loanOutstanding)}
+              </div>
+            )}
+            {capital && capital.missedMonths>0 && (
+              <div style={{fontSize:9,color:capColor.label,marginTop:1,fontWeight:600}}>
+                {capital.missedMonths} missed Installments
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
 
       {editMode ? (
         <>
           <div style={{background:'#fff',borderRadius:12,border:'1px solid #e2e8f0',padding:'16px 20px',marginBottom:12}}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0f172a',marginBottom:12}}>📷 Photos</div>
+            <div style={{display:'flex',gap:24,flexWrap:'wrap'}}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+                <div style={{width:80,height:80,borderRadius:'50%',overflow:'hidden',
+                  border:'3px solid #bfdbfe',background:'#dbeafe',
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:28,fontWeight:700,color:'#1d4ed8'}}>
+                  {form.photoURL
+                    ? <img src={form.photoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+                    : (form.nameEnglish?.[0]||'?')}
+                </div>
+                <AdminPhotoUpload label="Member Photo" currentUrl={form.photoURL}
+                  orgId={orgId} orgData={orgData} memberId={memberId}
+                  memberFolderId={form.memberDriveFolderId}
+                  onUploaded={url=>set('photoURL',url)}/>
+              </div>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:8}}>
+                <div style={{width:60,height:75,borderRadius:8,overflow:'hidden',
+                  border:'2px solid #e2e8f0',background:'#f1f5f9',
+                  display:'flex',alignItems:'center',justifyContent:'center',fontSize:24}}>
+                  {form.nomineePhotoURL
+                    ? <img src={form.nomineePhotoURL} style={{width:'100%',height:'100%',objectFit:'cover'}} alt=""/>
+                    : '👤'}
+                </div>
+                <AdminPhotoUpload label="Nominee Photo" currentUrl={form.nomineePhotoURL}
+                  orgId={orgId} orgData={orgData} memberId={memberId}
+                  memberFolderId={form.memberDriveFolderId}
+                  onUploaded={url=>set('nomineePhotoURL',url)}/>
+              </div>
+            </div>
           </div>
-          <EditSection title="👤 Personal"           fields={EDIT_PERSONAL} form={form} set={set}/>
-          <EditSection title="📍 Address"            fields={EDIT_ADDR}     form={form} set={set}/>
-          <EditSection title="👨‍👩‍👧 Nominee"            fields={EDIT_HEIR}     form={form} set={set}/>
-          <EditSection title="📋 Legal & Agreement"  fields={EDIT_LEGAL}    form={form} set={set}/>
+          <EditSection title="👤 Personal"          fields={EDIT_PERSONAL} form={form} set={set}/>
+          <EditSection title="📍 Address"           fields={EDIT_ADDR}     form={form} set={set}/>
+          <EditSection title="👨‍👩‍👧 Nominee"           fields={EDIT_HEIR}     form={form} set={set}/>
+          <EditSection title="📋 Legal & Agreement" fields={EDIT_LEGAL}    form={form} set={set}/>
         </>
       ) : (
         <>
