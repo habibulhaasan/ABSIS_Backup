@@ -444,6 +444,36 @@ export default function AdminDashboard() {
     fees.reduce((s,f) => s+(f.amount||0), 0),
   [fees]);
 
+  
+// (place after the totalFeeIncome useMemo)
+
+  const totalEntryFees = useMemo(() =>
+    fees.reduce((s,f) => s+(f.amount||0), 0),
+  [fees]);
+
+  // Re-registration fees paid through investments collection
+  const totalReregFees = useMemo(() =>
+    payments
+      .filter(p => p.status==='verified' && p.paymentType==='reregistration_fee')
+      .reduce((s,p) => s+(p.amount||0)-(p.gatewayFee||0), 0),
+  [payments]);
+
+  // Entry fees paid through investments collection (isContribution===false)
+  const totalEntryFeeInv = useMemo(() =>
+    payments
+      .filter(p => p.status==='verified' && p.paymentType==='entry_fee' && p.isContribution===false)
+      .reduce((s,p) => s+(p.amount||0)-(p.gatewayFee||0), 0),
+  [payments]);
+
+  // True org net balance = capital + all fee income + profit - expenses - loss - loans out
+  const totalLoansOut = useMemo(() =>
+    loans
+      .filter(l => l.status==='disbursed')
+      .reduce((s,l) => s+(l.outstandingBalance||l.amount||0), 0),
+  [loans]);
+
+  const allFeeIncome = totalEntryFees + totalEntryFeeInv + totalReregFees;
+
   const activeProjects = useMemo(() =>
     projects.filter(p => p.status==='active'),
   [projects]);
@@ -470,7 +500,7 @@ export default function AdminDashboard() {
     };
   }, [dists]);
 
-  const net = totalCapital + totalProfit - totalExpenses - totalLoss;
+  const net = totalCapital + allFeeIncome + totalProfit - totalExpenses - totalLoss;
 
   // ── Full org entries (for Recent Transactions) ────────────────────────────
   const allEntries = useMemo(() =>
@@ -541,6 +571,8 @@ export default function AdminDashboard() {
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10 }}>
         <SB label="Total Capital"    value={fmt(totalCapital)}   color="#15803d" bg="#f0fdf4"
           sub={`${verified.length} payments`}/>
+        <SB label="Fee Income"       value={fmt(allFeeIncome)}   color="#0d9488" bg="#f0fdfa"
+          sub={`entry + re-reg fees`}/>
         <SB label="Total Expenses"   value={fmt(totalExpenses)}  color="#dc2626" bg="#fef2f2"
           sub={`${expenses.length} records`}/>
         <SB label="Penalties"        value={fmt(totalPenalties)} color="#d97706" bg="#fffbeb"/>
@@ -562,7 +594,7 @@ export default function AdminDashboard() {
         <div>
           <div style={{ fontSize:11, fontWeight:600, color:'#64748b', textTransform:'uppercase',
             letterSpacing:'0.07em', marginBottom:3 }}>Net Balance</div>
-          <div style={{ fontSize:12, color:'#64748b' }}>Capital + Profit − Expenses − Loss</div>
+          <div style={{ fontSize:12, color:'#64748b' }}>Capital + Fees + Profit − Expenses − Loss</div>
         </div>
         <div style={{ textAlign:'right' }}>
           <div style={{ fontSize:26, fontWeight:700, color:net>=0?'#16a34a':'#dc2626' }}>{fmt(net)}</div>
