@@ -519,7 +519,8 @@ export default function AdminExpenses() {
         <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
 
           {/* Column headers */}
-          <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 90px 36px',
+          <div style={{display:'grid',// WITH:
+gridTemplateColumns:'110px 1fr 110px 100px 36px',
             padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
             {['Date','Description','Category','Amount',''].map(h=>(
               <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',
@@ -550,8 +551,10 @@ export default function AdminExpenses() {
                 {e.notes&&<div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
               </div>
               <div>
-                <span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
-                  color:'#92400e',fontSize:11,fontWeight:600}}>{e.category}</span>
+                
+<span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
+  color:'#92400e',fontSize:11,fontWeight:600,whiteSpace:'nowrap'}}>{e.category}</span>
+
               </div>
               <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(e.amount)}</div>
 
@@ -572,7 +575,7 @@ export default function AdminExpenses() {
           {/* Footer total */}
           <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 90px 36px',
             padding:'10px 16px',background:'#fef2f2',borderTop:'2px solid #fca5a5'}}>
-            <div style={{fontWeight:700,fontSize:13,gridColumn:'1/4'}}>Total ({filtered.length} entries)</div>
+            <div style={{fontWeight:700,fontSize:13,gridColumn:'1/5'}}>Total ({filtered.length} entries)</div>
             <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(filteredTotal)}</div>
             <div/>
           </div>
@@ -620,24 +623,31 @@ export default function AdminExpenses() {
             </>
           ) : (
             <>
-              {/* Detail view */}
-              <div style={{display:'flex',flexDirection:'column',gap:14}}>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                  <span style={{padding:'3px 10px',borderRadius:6,background:'#fef3c7',
-                    color:'#92400e',fontSize:12,fontWeight:600}}>{viewTarget.category}</span>
-                  <span style={{fontSize:12,color:'#94a3b8'}}>
-                    {fmtDate(viewTarget.date)||tsDate(viewTarget.createdAt)}
-                  </span>
-                </div>
-                <div style={{fontSize:18,fontWeight:700,color:'#0f172a',lineHeight:1.3}}>{viewTarget.title}</div>
-                <div style={{fontSize:26,fontWeight:800,color:'#dc2626'}}>{fmt(viewTarget.amount)}</div>
-                {viewTarget.notes && (
-                  <div style={{fontSize:13,color:'#64748b',background:'#f8fafc',
-                    borderRadius:8,padding:'10px 14px',lineHeight:1.5}}>
-                    {viewTarget.notes}
-                  </div>
-                )}
-              </div>
+              // FIND and REPLACE the entire {/* Detail view */} section (the non-editTarget branch):
+{/* Detail view */}
+<div style={{display:'flex',flexDirection:'column',gap:14}}>
+  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+    <span style={{padding:'3px 10px',borderRadius:6,background:'#fef3c7',
+      color:'#92400e',fontSize:12,fontWeight:600}}>{viewTarget.category}</span>
+    <span style={{fontSize:12,color:'#94a3b8'}}>
+      {fmtDate(viewTarget.date)||tsDate(viewTarget.createdAt)}
+    </span>
+  </div>
+  <div style={{fontSize:18,fontWeight:700,color:'#0f172a',lineHeight:1.3}}>{viewTarget.title}</div>
+  <div style={{
+    background:'#fef2f2',borderRadius:10,
+    padding:'12px 16px',display:'inline-block',
+  }}>
+    <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:3}}>Amount</div>
+    <div style={{fontSize:26,fontWeight:800,color:'#dc2626',lineHeight:1}}>{fmt(viewTarget.amount)}</div>
+  </div>
+  {viewTarget.notes && (
+    <div style={{background:'#f8fafc',borderRadius:10,padding:'12px 14px'}}>
+      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:5}}>Notes</div>
+      <div style={{fontSize:13,color:'#475569',lineHeight:1.6}}>{viewTarget.notes}</div>
+    </div>
+  )}
+</div>
 
               <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0',flexWrap:'wrap'}}>
                 <button onClick={()=>startEdit(viewTarget)} className="btn-primary" style={{padding:'10px 22px'}}>
