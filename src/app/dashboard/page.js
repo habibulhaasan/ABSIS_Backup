@@ -130,6 +130,20 @@ export default function Dashboard() {
       );
 
       const usedExpenses   = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+// ADD right after: const usedExpenses = expSnap.docs.reduce((s,d)=>s+(d.data().amount||0),0);
+
+const expenseItems = expSnap.docs.map(d => d.data());
+const expensesThisMonth = (() => {
+  const n = new Date();
+  return expenseItems
+    .filter(i => {
+      if (!i.date) return false;
+      const d = new Date(i.date+'T00:00:00');
+      return d.getMonth()===n.getMonth() && d.getFullYear()===n.getFullYear();
+    })
+    .reduce((s,i)=>s+(i.amount||0),0);
+})();
+const expenseCount = expenseItems.length;
       const projs = projSnap.docs.map(d=>d.data());
       const usedInvestment = projs.reduce((s,p) => {
         if (p.fundSources) return s + (Number(p.fundSources.investment)||0);
@@ -144,6 +158,8 @@ export default function Dashboard() {
 
       setData({
         myCapital, myCapPct, myPending, myVerified, myTotalProfit, myLatestShare, latestDist,
+// Inside setData({...}), add alongside the existing fields:
+expensesThisMonth, expenseCount,
         activeLoans:activeLoans.length, outstanding, myPayments,
         totalCapital, usedExpenses, usedInvestment, usedReserve, usedBenevolent,
         paidThisMonth, nextRepayment,
@@ -171,6 +187,8 @@ export default function Dashboard() {
   const name = userData?.nameEnglish||userData?.displayName||'Member';
 
   const showMyCapital          = s.showMyCapital          !== false;
+// ADD alongside the other show* consts:
+const showExpensesCard = !!s.showExpensesCard;
   const showPendingWarning     = s.showPendingWarning     !== false;
   const showFund               = s.showFund               !== false;
   const showFundBreakdown      = !!s.showFundBreakdown;
@@ -356,6 +374,40 @@ export default function Dashboard() {
                 alloc={getFundAlloc('expenses',data.totalCapital,s)}   used={data.usedExpenses}/>
             </div>
           )}
+
+
+{/* ── Expenses Summary Card ── */}
+{showExpensesCard && data.usedExpenses > 0 && (
+  <Link href="/expenses" style={{textDecoration:'none'}}>
+    <div style={{
+      background:'#fff', borderRadius:12, border:'1px solid #e2e8f0',
+      padding:'16px 20px', marginBottom:16, cursor:'pointer',
+      transition:'border-color 0.15s',
+    }}
+      onMouseEnter={e=>e.currentTarget.style.borderColor='#fca5a5'}
+      onMouseLeave={e=>e.currentTarget.style.borderColor='#e2e8f0'}
+    >
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:14,color:'#0f172a'}}>🧾 Organisation Expenses</div>
+        <span style={{fontSize:12,color:'#2563eb',fontWeight:600}}>View all →</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+        <div style={{background:'#fef2f2',borderRadius:8,padding:'10px 12px'}}>
+          <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:3}}>Total Spent</div>
+          <div style={{fontSize:18,fontWeight:800,color:'#dc2626'}}>{fmt(data.usedExpenses)}</div>
+          <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>{data.expenseCount} entries</div>
+        </div>
+        <div style={{background:'#fff7ed',borderRadius:8,padding:'10px 12px'}}>
+          <div style={{fontSize:11,color:'#64748b',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.06em',marginBottom:3}}>This Month</div>
+          <div style={{fontSize:18,fontWeight:800,color:'#c2410c'}}>{fmt(data.expensesThisMonth)}</div>
+          <div style={{fontSize:11,color:'#94a3b8',marginTop:2}}>
+            {new Date().toLocaleDateString('en-GB',{month:'short',year:'numeric'})}
+          </div>
+        </div>
+      </div>
+    </div>
+  </Link>
+)}
 
           {/* ── Latest Distribution ── */}
           {showLatestDistribution && data.latestDist && (
