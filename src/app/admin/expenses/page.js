@@ -17,7 +17,6 @@ function tsDate(ts) {
   return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 }
 
-// Convert ISO date string "2026-04-22" → "22 Apr 2026"
 function fmtDate(dateStr) {
   if (!dateStr) return '—';
   const d = new Date(dateStr + 'T00:00:00');
@@ -26,6 +25,27 @@ function fmtDate(dateStr) {
 
 const CATEGORIES = ['Office','Meeting','Travel','Utilities','Maintenance','Marketing','Legal','Other'];
 const EMPTY_FORM  = { title:'', amount:'', category:'Office', date:new Date().toISOString().split('T')[0], notes:'' };
+
+const CATEGORY_COLORS = {
+  Office:      { bg:'#eff6ff', color:'#1d4ed8' },
+  Meeting:     { bg:'#f0fdf4', color:'#15803d' },
+  Travel:      { bg:'#fdf4ff', color:'#7c3aed' },
+  Utilities:   { bg:'#fff7ed', color:'#c2410c' },
+  Maintenance: { bg:'#fefce8', color:'#a16207' },
+  Marketing:   { bg:'#fdf2f8', color:'#be185d' },
+  Legal:       { bg:'#f0f9ff', color:'#0369a1' },
+  Other:       { bg:'#f8fafc', color:'#475569' },
+};
+
+function CategoryBadge({ category }) {
+  const c = CATEGORY_COLORS[category] || CATEGORY_COLORS.Other;
+  return (
+    <span style={{
+      padding:'2px 9px', borderRadius:99, fontSize:11, fontWeight:700,
+      whiteSpace:'nowrap', background:c.bg, color:c.color,
+    }}>{category || 'Other'}</span>
+  );
+}
 
 // ── Date range helpers ────────────────────────────────────────────────────────
 function getDateRange(preset, custom) {
@@ -387,6 +407,9 @@ export default function AdminExpenses() {
 
   if (!isOrgAdmin) return null;
 
+  // ── Shared grid layout for table rows, header and footer ──────────────────
+  const ROW_GRID = '110px 1fr 120px 110px 40px';
+
   return (
     <div className="page-wrap animate-fade">
       <div className="page-header">
@@ -407,7 +430,7 @@ export default function AdminExpenses() {
           color:toast.startsWith('Error')?'#b91c1c':'#15803d'}}>{toast}</div>
       )}
 
-      {/* Fund balance banner */}
+      {/* ── Fund balance banner ── */}
       {expenseBudget > 0 && (
         <div style={{padding:'14px 16px',borderRadius:12,marginBottom:20,
           background:overBudget?'#fef2f2':'#f0fdf4',
@@ -436,7 +459,7 @@ export default function AdminExpenses() {
         </div>
       )}
 
-      {/* Stats */}
+      {/* ── Stats ── */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',gap:12,marginBottom:24}}>
         <Stat label="Total Expenses" value={fmt(totalUsed)} color="#dc2626" bg="#fef2f2"/>
         <Stat label="This Month"
@@ -449,7 +472,7 @@ export default function AdminExpenses() {
           color={overBudget?'#dc2626':'#15803d'} bg={overBudget?'#fef2f2':'#f0fdf4'}/>}
       </div>
 
-      {/* Filters */}
+      {/* ── Filters ── */}
       <div style={{display:'flex',gap:10,marginBottom:10,flexWrap:'wrap'}}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search expenses…"
           style={{flex:1,minWidth:160,padding:'9px 14px',borderRadius:8,border:'1px solid #e2e8f0',fontSize:13}}/>
@@ -471,7 +494,7 @@ export default function AdminExpenses() {
         </select>
       </div>
 
-      {/* Custom range */}
+      {/* ── Custom range ── */}
       {datePreset==='custom' && (
         <div style={{display:'flex',gap:10,marginBottom:10,flexWrap:'wrap',alignItems:'center'}}>
           <span style={{fontSize:12,color:'#64748b',fontWeight:600}}>From</span>
@@ -485,7 +508,7 @@ export default function AdminExpenses() {
         </div>
       )}
 
-      {/* Filter badge + export */}
+      {/* ── Filter badge + export ── */}
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14,flexWrap:'wrap',gap:8}}>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {datePreset!=='all' && (
@@ -505,7 +528,7 @@ export default function AdminExpenses() {
         </div>
       </div>
 
-      {/* Table */}
+      {/* ── Table ── */}
       {loading ? (
         <div style={{textAlign:'center',padding:'60px',color:'#94a3b8'}}>Loading…</div>
       ) : filtered.length===0 ? (
@@ -518,47 +541,54 @@ export default function AdminExpenses() {
       ) : (
         <div style={{borderRadius:12,border:'1px solid #e2e8f0',overflow:'hidden'}}>
 
-          {/* Column headers */}
-          <div style={{display:'grid',// WITH:
-gridTemplateColumns:'110px 1fr 110px 100px 36px',
-            padding:'9px 16px',background:'#f8fafc',borderBottom:'1px solid #e2e8f0'}}>
-            {['Date','Description','Category','Amount',''].map(h=>(
-              <div key={h} style={{fontSize:11,fontWeight:700,color:'#64748b',textTransform:'uppercase',
-                letterSpacing:'0.06em',textAlign:h==='Amount'?'right':'left'}}>{h}</div>
+          {/* ── Column headers ── */}
+          <div style={{
+            display:'grid', gridTemplateColumns:ROW_GRID,
+            padding:'9px 16px', background:'#f8fafc', borderBottom:'1px solid #e2e8f0',
+            alignItems:'center',
+          }}>
+            {['Date','Title','Category','Amount'].map(h => (
+              <div key={h} style={{
+                fontSize:11, fontWeight:700, color:'#64748b',
+                textTransform:'uppercase', letterSpacing:'0.06em',
+                textAlign:h==='Amount'?'right':'left',
+              }}>{h}</div>
             ))}
+            {/* Placeholder to align with delete button column */}
+            <div/>
           </div>
 
-          {filtered.map((e,i)=>(
+          {/* ── Rows ── */}
+          {filtered.map((e,i) => (
             <div
               key={e.id}
               onClick={()=>openView(e)}
               style={{
-                display:'grid',
-                gridTemplateColumns:'110px 1fr 90px 90px 36px',
+                display:'grid', gridTemplateColumns:ROW_GRID,
                 padding:'10px 16px',
                 background:i%2===0?'#fff':'#fafafa',
                 borderBottom:'1px solid #f1f5f9',
-                alignItems:'center',
-                cursor:'pointer',
+                alignItems:'center', cursor:'pointer',
                 transition:'background 0.12s',
               }}
               onMouseEnter={ev=>ev.currentTarget.style.background='#f1f5f9'}
               onMouseLeave={ev=>ev.currentTarget.style.background=i%2===0?'#fff':'#fafafa'}
             >
               <div style={{fontSize:12,color:'#475569'}}>{fmtDate(e.date)||tsDate(e.createdAt)}</div>
-              <div>
-                <div style={{fontWeight:600,fontSize:13,color:'#0f172a'}}>{e.title}</div>
-                {e.notes&&<div style={{fontSize:11,color:'#94a3b8'}}>{e.notes}</div>}
-              </div>
-              <div>
-                
-<span style={{padding:'2px 8px',borderRadius:5,background:'#fef3c7',
-  color:'#92400e',fontSize:11,fontWeight:600,whiteSpace:'nowrap'}}>{e.category}</span>
 
+              {/* Title only — notes shown in detail modal */}
+              <div style={{fontWeight:600,fontSize:13,color:'#0f172a',
+                overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',paddingRight:8}}>
+                {e.title}
               </div>
-              <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(e.amount)}</div>
 
-              {/* Desktop-only delete X — stopPropagation prevents opening the view modal */}
+              <div><CategoryBadge category={e.category}/></div>
+
+              <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>
+                {fmt(e.amount)}
+              </div>
+
+              {/* Delete button — stopPropagation so it doesn't open the view modal */}
               <div style={{display:'flex',justifyContent:'center'}}>
                 <button
                   onClick={ev=>{ ev.stopPropagation(); handleDelete(e); }}
@@ -572,17 +602,24 @@ gridTemplateColumns:'110px 1fr 110px 100px 36px',
             </div>
           ))}
 
-          {/* Footer total */}
-          <div style={{display:'grid',gridTemplateColumns:'110px 1fr 90px 90px 36px',
-            padding:'10px 16px',background:'#fef2f2',borderTop:'2px solid #fca5a5'}}>
-            <div style={{fontWeight:700,fontSize:13,gridColumn:'1/5'}}>Total ({filtered.length} entries)</div>
-            <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>{fmt(filteredTotal)}</div>
+          {/* ── Footer total ── */}
+          <div style={{
+            display:'grid', gridTemplateColumns:ROW_GRID,
+            padding:'10px 16px', background:'#fef2f2', borderTop:'2px solid #fca5a5',
+            alignItems:'center',
+          }}>
+            <div style={{fontWeight:700,fontSize:13,color:'#0f172a',gridColumn:'1/4'}}>
+              Total ({filtered.length} entries)
+            </div>
+            <div style={{textAlign:'right',fontWeight:700,fontSize:13,color:'#dc2626'}}>
+              {fmt(filteredTotal)}
+            </div>
             <div/>
           </div>
         </div>
       )}
 
-      {/* ADD modal */}
+      {/* ── ADD modal ── */}
       {showAdd && (
         <Modal title="Add Expense" onClose={()=>{setShowAdd(false);setForm(EMPTY_FORM);}}>
           <ExpenseForm form={form} set={set} expenseBudget={expenseBudget}
@@ -594,12 +631,14 @@ gridTemplateColumns:'110px 1fr 110px 100px 36px',
               {saving?'Saving…':'Record Expense'}
             </button>
             <button onClick={()=>{setShowAdd(false);setForm(EMPTY_FORM);}}
-              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>Cancel</button>
+              style={{padding:'10px 20px',borderRadius:8,border:'1px solid #e2e8f0',background:'#fff',cursor:'pointer',fontSize:13,color:'#64748b'}}>
+              Cancel
+            </button>
           </div>
         </Modal>
       )}
 
-      {/* VIEW / EDIT modal — triggered by clicking a row */}
+      {/* ── VIEW / EDIT modal ── */}
       {viewTarget && (
         <Modal
           title={editTarget ? 'Edit Expense' : 'Expense Details'}
@@ -623,38 +662,47 @@ gridTemplateColumns:'110px 1fr 110px 100px 36px',
             </>
           ) : (
             <>
-              // FIND and REPLACE the entire {/* Detail view */} section (the non-editTarget branch):
-{/* Detail view */}
-<div style={{display:'flex',flexDirection:'column',gap:14}}>
-  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-    <span style={{padding:'3px 10px',borderRadius:6,background:'#fef3c7',
-      color:'#92400e',fontSize:12,fontWeight:600}}>{viewTarget.category}</span>
-    <span style={{fontSize:12,color:'#94a3b8'}}>
-      {fmtDate(viewTarget.date)||tsDate(viewTarget.createdAt)}
-    </span>
-  </div>
-  <div style={{fontSize:18,fontWeight:700,color:'#0f172a',lineHeight:1.3}}>{viewTarget.title}</div>
-  <div style={{
-    background:'#fef2f2',borderRadius:10,
-    padding:'12px 16px',display:'inline-block',
-  }}>
-    <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:3}}>Amount</div>
-    <div style={{fontSize:26,fontWeight:800,color:'#dc2626',lineHeight:1}}>{fmt(viewTarget.amount)}</div>
-  </div>
-  {viewTarget.notes && (
-    <div style={{background:'#f8fafc',borderRadius:10,padding:'12px 14px'}}>
-      <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:5}}>Notes</div>
-      <div style={{fontSize:13,color:'#475569',lineHeight:1.6}}>{viewTarget.notes}</div>
-    </div>
-  )}
-</div>
+              {/* ── Detail view ── */}
+              <div style={{display:'flex',flexDirection:'column',gap:14}}>
 
+                {/* Category + Date */}
+                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                  <CategoryBadge category={viewTarget.category}/>
+                  <span style={{fontSize:12,color:'#94a3b8'}}>
+                    {fmtDate(viewTarget.date)||tsDate(viewTarget.createdAt)}
+                  </span>
+                </div>
+
+                {/* Title */}
+                <div style={{fontSize:17,fontWeight:700,color:'#0f172a',lineHeight:1.35}}>
+                  {viewTarget.title}
+                </div>
+
+                {/* Amount chip */}
+                <div style={{
+                  background:'#fef2f2',borderRadius:10,
+                  padding:'12px 16px',display:'inline-block',
+                }}>
+                  <div style={{fontSize:10,fontWeight:600,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.07em',marginBottom:3}}>Amount</div>
+                  <div style={{fontSize:26,fontWeight:800,color:'#dc2626',lineHeight:1}}>{fmt(viewTarget.amount)}</div>
+                </div>
+
+                {/* Notes — only when present */}
+                {viewTarget.notes && (
+                  <div style={{background:'#f8fafc',borderRadius:10,padding:'12px 14px'}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'0.08em',marginBottom:5}}>Notes</div>
+                    <div style={{fontSize:13,color:'#475569',lineHeight:1.6}}>{viewTarget.notes}</div>
+                  </div>
+                )}
+              </div>
+
+              {/* Action buttons */}
               <div style={{display:'flex',gap:10,marginTop:20,paddingTop:20,borderTop:'1px solid #e2e8f0',flexWrap:'wrap'}}>
                 <button onClick={()=>startEdit(viewTarget)} className="btn-primary" style={{padding:'10px 22px'}}>
                   ✏️ Edit
                 </button>
                 <button
-                  onClick={()=>handleDelete(viewTarget, true)}
+                  onClick={()=>handleDelete(viewTarget,true)}
                   style={{padding:'10px 22px',borderRadius:8,border:'1px solid #fca5a5',
                     background:'#fef2f2',cursor:'pointer',fontSize:13,fontWeight:600,color:'#dc2626'}}>
                   🗑 Delete
