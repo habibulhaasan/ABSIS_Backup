@@ -1029,7 +1029,6 @@ export default function AdminSettings() {
               value={settings.showPendingWarning !== false}
               onChange={() => set('showPendingWarning', settings.showPendingWarning === false ? true : false)}
             />
-// ADD after the "Show Pending Payments Warning" Toggle, still inside the same card:
 <Toggle
   label="Show Expenses Card"
   sub="Members see a summary card of organisation expenses on their dashboard."
