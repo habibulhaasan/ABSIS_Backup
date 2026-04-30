@@ -1,3 +1,5 @@
+//src/app/superadmin/admins/page.js
+
 'use client';
 import { useState, useEffect } from 'react';
 import { db } from '@/lib/firebase';
